@@ -6558,13 +6558,15 @@ export class CourseView {
     if (overBig && !e.shiftKey && !tool.dragSelect && !this.readOnly) {
       const tree = this.treeAtScreen(e.clientX, e.clientY);
       if (tree) {
-        // (a press on a tree or bush never moves what it stands on, picked or not: a drag from it
-        // moves the map; a wood, underbrush or path picked moves from its own ground or handles)
-        stop();
+        // (a press on a tree or bush never moves the area it stands in, picked or not: a drag from
+        // it moves the map, and a picked area moves from its edge; a picked house or line under
+        // the leaves moves, as it's what's picked there)
+        const moves = !!hitItem && hit === this.selectedId && !hitItem.locked && hitItem.type !== "area";
+        if (moves) e.stopPropagation(); else stop();
         this.gesture(e, {
           // (picked like any tree: the same panel, moved once picked, deleted with Del)
           click: () => this.cb.onAdoptTree(tree, this.lookOf(tree)),
-          drag: s => this.panDrag(s)
+          drag: moves ? s => this.itemDrag(s, hit!) : s => this.panDrag(s)
         });
         return;
       }
