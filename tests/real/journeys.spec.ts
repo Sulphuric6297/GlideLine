@@ -196,8 +196,12 @@ test("dragging a house: each step quick, letting go quick, back with one undo", 
   await draw(page, false);
   const was = (await course(page)).items.find((i: any) => i.id === "t-house").points[0];
   await page.evaluate(() => (window as any).__dgActions.select("t-house"));
+  // (the house framed, wherever the checks before left the map: clear of the panels over it)
+  await frame(page, { minX: was.x - 150, minY: was.y - 150, maxX: was.x + 150, maxY: was.y + 150 });
+  await frames(page);
   // (off the middle of the roof: its height handle is there in 3D)
   const c = await at(page, 1612, 242, 12);
+  expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName, [c.x, c.y]), "the roof, on the map").toBe("CANVAS");
   await page.mouse.move(c.x, c.y);
   await page.mouse.down();
   const steps: number[] = [];
