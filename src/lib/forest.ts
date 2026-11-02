@@ -309,6 +309,8 @@ const bandWorkers = () => {
   return Math.min(4, cores - 2);
 };
 let pool: Worker[] = [], poolBusy = false, jobNo = 0, laidIn = 0;
+/** (the job the workers are on: let go, it's painted on the page instead) */
+let letGo: (() => void)[] = [];
 const terrainIds = new WeakMap<object, number>(), sentTerrain = new WeakMap<Worker, number>();
 let terrainNo = 0;
 /** (for the tests: how many paintings had their bands painted by workers) */
@@ -324,7 +326,8 @@ const paintBands = (doc: CourseDoc, view: ForestView, stats: HoleStats[], opts: 
   const n = bandWorkers();
   if (n < 2) return null;
   // (a painting asked for while the last is still out: the workers it's waiting on let go, fresh ones taken)
-  if (poolBusy) { pool.forEach(w => w.terminate()); pool = []; }
+  // (and the painting that was waiting on them told to paint on the page: never left waiting)
+  if (poolBusy) { pool.forEach(w => w.terminate()); pool = []; letGo.forEach(f => f()); letGo = []; }
   try {
     while (pool.length < n) pool.push(new Worker(new URL("./forest.worker.ts", import.meta.url), { type: "module" }));
   } catch {
@@ -339,13 +342,14 @@ const paintBands = (doc: CourseDoc, view: ForestView, stats: HoleStats[], opts: 
   const job = Promise.all(workers.map((w, j) => new Promise<Band | null>(done => {
     const rows: [number, number] = [Math.round((H * j) / n), Math.round((H * (j + 1)) / n)];
     const fail = () => done(null);
+    letGo.push(fail);
     w.onmessage = (e: MessageEvent<{ id: number } & Partial<Band>>) => { if (e.data.id === id) done(e.data.o && e.data.pre && e.data.bits ? (e.data as Band) : null); };
     w.onerror = fail;
     const terrain = sentTerrain.get(w) === terrainId ? null : doc.terrainHeights;
     sentTerrain.set(w, terrainId);
     w.postMessage({ id, doc: plain, terrainId, terrain, view, stats, opts: { ...opts, keep: false, parallel: false, rows }, standing });
   }))).then(bands => (bands.every(Boolean) ? (bands as Band[]) : null)).catch(() => null);
-  void job.finally(() => { if (jobNo === id) poolBusy = false; });
+  void job.finally(() => { if (jobNo === id) { poolBusy = false; letGo = []; } });
   return job;
 };
 let kept: { key: string; canopy: unknown; terrain: unknown; rerun: (s: MapStyle) => Steps } | null = null;

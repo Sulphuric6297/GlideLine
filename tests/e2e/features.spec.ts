@@ -50,8 +50,13 @@ test("an area's corners can be dragged, a mid dot adds one, and the picked area 
   await drag(page, inside, { x: inside.x + 60, y: inside.y });
   await page.waitForTimeout(300);
   expect((await course(page)).items[0].points[1].x).toBe(before);
-  // Drag its edge (a quarter of the way along the closing side, clear of the dots): the whole area moves
-  const edge = await screenOf(page, 512.5, 437.5);
+  // Drag its edge (as drawn: water's runs round; a quarter of the way along the closing side, clear
+  // of the dots): the whole area moves
+  const on = await page.evaluate(() => {
+    const v = (window as any).__dgView, a = (window as any).__dgCourse().items[0];
+    return v.shapeOf(a).pts.reduce((b: any, p: any) => (Math.hypot(p.x - 512.5, p.y - 437.5) < Math.hypot(b.x - 512.5, b.y - 437.5) ? p : b));
+  });
+  const edge = await screenOf(page, on.x, on.y);
   await drag(page, edge, { x: edge.x + 60, y: edge.y });
   await expect.poll(async () => (await course(page)).items[0].points[1].x).toBeGreaterThan(before + 20);
 });
