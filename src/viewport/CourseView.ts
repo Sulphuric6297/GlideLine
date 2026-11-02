@@ -2462,7 +2462,14 @@ export class CourseView {
     const width = Math.max(1, Math.round(r.width));
     const height = Math.max(1, Math.round(r.height));
     if (width === this.size.width && height === this.size.height) return;
+    const was = this.size.height;
     this.size = { width, height };
+    // (the map keeping its scale as its box grows or shrinks, a phone's steps making way for a bar
+    // say: more of it shows, nothing zooms; not standing on the course, where the view is the eye's)
+    if (this.fitted && was > 1 && !this.povHole && !this.eye) {
+      const d = clamp(this.controls.distance * (height / was), this.controls.minDistance, this.controls.maxDistance);
+      void this.controls.dollyTo(d, false);
+    }
     this.renderer.setSize(width, height, false);
     this.renderer.domElement.style.width = `${width}px`;
     this.renderer.domElement.style.height = `${height}px`;

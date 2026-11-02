@@ -391,7 +391,7 @@ test.describe("phone", () => {
     await expect(page.getByTestId("draw-bar")).toHaveCount(0);
     // The tool stays on for the next hole; X goes back to Select
     expect((await editorState(page)).tool).toBe("add-hole");
-    await page.getByTestId("tool-close").tap();
+    await page.getByTestId("bar-done").tap();
     expect((await editorState(page)).tool).toBe("select");
   });
 
@@ -399,6 +399,8 @@ test.describe("phone", () => {
     await oneHole(page);
     await nav(page).getByRole("button", { name: /Design/ }).tap();
     await page.locator('[data-tool="rules"]').tap();
+    // (what it puts down: Kind, on the tool's bar)
+    await page.getByTestId("tool-options").tap();
     await page.getByTestId("area-kind-ob").tap();
     await expect(page.getByTestId("tool-hint")).toHaveText("Tap the corners");
     for (const [x, y] of [[350, 300], [550, 300], [550, 420], [350, 420]]) await tapPlan(page, x, y);
@@ -412,8 +414,8 @@ test.describe("phone", () => {
     expect(area.kind).toBe("ob");
     expect(area.points.length).toBe(3);
     expect((await editorState(page)).tool).toBe("select");
-    // (the drawn area picked, its strip up: back to the tools)
-    await page.getByTestId("selection-back").tap();
+    // (the drawn area picked, its bar up: ✓ puts it down, back to the tools)
+    await page.getByTestId("bar-done").tap();
     // Cancel drops what is being drawn
     await page.locator('[data-tool="paths"]').tap();
     await tapPlan(page, 300, 250);
@@ -905,10 +907,10 @@ test.describe("phone", () => {
     test.setTimeout(180_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
-    // (the hole's strip starts with Tee view and Fly over; the header's eye does the same)
-    await expect(page.getByTestId("strip-teeview")).toBeVisible();
-    await expect(page.getByTestId("strip-flyover")).toBeVisible();
-    await page.getByTestId("selection-header").getByRole("button", { name: "View from the tee" }).tap();
+    // (the hole's name opens View from the tee and Fly over the hole)
+    await page.getByTestId("pill-open").tap();
+    await expect(page.getByTestId("pill-menu").getByRole("button", { name: "Fly over the hole" })).toBeVisible();
+    await page.getByTestId("menu-tee-view").tap();
     await expect(page.getByTestId("tee-view-hud")).toBeVisible();
     await expect(page.getByTestId("tee-view-hud")).toContainText("Par 3");
     // The card slim at first: a tap opens the hole's profile, another closes it
@@ -937,7 +939,8 @@ test.describe("phone", () => {
     test.setTimeout(180_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
-    await page.getByTestId("selection-header").getByRole("button", { name: "View from the tee" }).tap();
+    await page.getByTestId("pill-open").tap();
+    await page.getByTestId("menu-tee-view").tap();
     const tile = page.getByTestId("hud-settings");
     const open = () => page.evaluate(() => !!(window as any).__dgEditor().teeSettings);
     const box = (await tile.boundingBox())!;
@@ -984,7 +987,8 @@ test.describe("phone", () => {
     await oneHole(page);
     await tapPlan(page, 450, 500);
     // (the header's eye: the hole's panel under it has a View from the tee button too)
-    await page.getByTestId("selection-header").getByRole("button", { name: "View from the tee" }).tap();
+    await page.getByTestId("pill-open").tap();
+    await page.getByTestId("menu-tee-view").tap();
     await page.getByTestId("hud-more").tap();
     await page.getByTestId("hud-freecam").tap();
     await expect(page.getByTestId("camera-hud")).toBeVisible();
@@ -1048,7 +1052,7 @@ test.describe("phone", () => {
 test.describe("phone on its side", () => {
   test.use(device("iPhone 13 landscape"));
 
-  test("a rail of steps on the left, the panel beside it (it folds away), the map on the right", async ({ page }) => {
+  test("a rail of steps on the left, the panel beside it (it folds away), the map on the right; a thing picked, its bar up the right edge", async ({ page }) => {
     await oneHole(page);
     await expect(page.getByTestId("nav-rail")).toBeVisible();
     await expect(page.getByTestId("bottom-nav")).toHaveCount(0);
@@ -1067,8 +1071,15 @@ test.describe("phone on its side", () => {
     // (the map back at its width before the hole is tapped where it shows)
     await expect.poll(mapW).toBeLessThan(w + 2);
     await page.waitForTimeout(300);
+    // A hole picked: its bar up the right edge, the panel out of the map's way
     await tapPlan(page, 450, 500);
-    await expect(side.getByTestId("inspector")).toBeVisible();
+    await expect(page.getByTestId("hole-strip")).toBeVisible();
+    await expect(side).toHaveCount(0);
+    const bar = (await page.getByTestId("hole-strip").boundingBox())!;
+    expect(bar.x).toBeGreaterThan(page.viewportSize()!.width - 130);
+    expect(bar.height).toBeGreaterThan(page.viewportSize()!.height * 0.8);
+    await page.getByTestId("bar-done").tap();
+    await expect(side).toBeVisible();
   });
 });
 
