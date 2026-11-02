@@ -3144,6 +3144,54 @@ export class CourseView {
    */
   private syncShapes() {
     timed("3D shapes made again", () => this.syncShapesAll());
+    this.syncSeeThrough();
+  }
+
+  /** A building, a road or a path selected (its shape being changed): see-through, so the map
+   * under it shows while its corners and edges are dragged; solid again once it's let go. */
+  private seeThrough: { obj: THREE.Object3D } | null = null;
+  private syncSeeThrough() {
+    const it = this.selectedId ? this.item(this.selectedId) : null;
+    const key = it?.type === "structure" ? `struct:${it.id}` : it?.type === "line" && (it.kind === "road" || it.kind === "path" || it.kind === "walk") ? `line:${it.id}` : null;
+    const obj = key ? this.shapes.get(key)?.obj ?? null : null;
+    if (this.seeThrough?.obj === obj) return;
+    this.solidAgain();
+    if (!obj || !it) return;
+    const building = it.type === "structure";
+    obj.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || !m.material) return;
+      m.userData.solid = { material: m.material, castShadow: m.castShadow };
+      const see = (mat: THREE.Material) => {
+        const c = mat.clone();
+        c.transparent = true;
+        c.opacity = Math.min(mat.opacity, building ? 0.45 : 0.4);
+        // (a building's walls still hide its own far side; a road lies flat on the ground)
+        c.depthWrite = building;
+        return c;
+      };
+      m.material = Array.isArray(m.material) ? m.material.map(see) : see(m.material);
+      m.castShadow = false;
+    });
+    this.seeThrough = { obj };
+    this.shadowsDirty = true;
+    this.invalidate();
+  }
+  private solidAgain() {
+    const was = this.seeThrough;
+    if (!was) return;
+    this.seeThrough = null;
+    was.obj.traverse(o => {
+      const m = o as THREE.Mesh;
+      const solid = m.userData.solid as { material: THREE.Material | THREE.Material[]; castShadow: boolean } | undefined;
+      if (!solid) return;
+      (Array.isArray(m.material) ? m.material : [m.material]).forEach(x => x.dispose());
+      m.material = solid.material;
+      m.castShadow = solid.castShadow;
+      delete m.userData.solid;
+    });
+    this.shadowsDirty = true;
+    this.invalidate();
   }
   private syncShapesAll() {
     const doc = this.doc!;
@@ -3162,6 +3210,8 @@ export class CourseView {
       // (and made a few at a time, over the frames after: see drainSlow)
       if (slow) { this.slowQueue.set(key, { sig, make, group }); this.dirty = true; return; }
       if (entry) {
+        // (made again while see-through: its own materials back first, so they're freed with it)
+        if (this.seeThrough?.obj === entry.obj) this.solidAgain();
         entry.obj.parent?.remove(entry.obj);
         disposeObjectDeep(entry.obj);
         this.shapes.delete(key);
@@ -3851,6 +3901,7 @@ export class CourseView {
     }
     for (const [key, entry] of this.shapes) {
       if (seen.has(key)) continue;
+      if (this.seeThrough?.obj === entry.obj) this.solidAgain();
       entry.obj.parent?.remove(entry.obj);
       disposeObjectDeep(entry.obj);
       this.shapes.delete(key);
