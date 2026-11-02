@@ -1015,6 +1015,12 @@ test.describe("phone", () => {
     // (a tap on the view closes it, and nothing else)
     await page.getByTestId("bar-away").tap();
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
+    // (Speed at its slowest, so the flyover is still under way when it's paused below)
+    await bar.getByTestId("strip-speed").tap();
+    await page.getByTestId("bar-menu").getByTestId("dial").focus();
+    for (let i = 0; i < 16; i++) await page.keyboard.press("ArrowLeft");
+    await expect.poll(() => page.evaluate(() => (window as any).__dgCourse().flyover?.speed)).toBe(0.25);
+    await page.getByTestId("bar-away").tap();
     // Tap mode Select: a thing selected brings its own bar in the flyover bar's place, the switch
     // still over it; ✓ puts it down and the flyover bar is back
     await page.getByTestId("tap-edit").tap();
