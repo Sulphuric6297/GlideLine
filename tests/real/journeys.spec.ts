@@ -115,7 +115,7 @@ test("picking in 3D: a roof in front of a tree picks the house; the path in fron
   expect(await pickAt(await at(page, BEHIND.x, BEHIND.y, 36))).toBe("t-behind");
 });
 
-test("only what's drawn is picked: no tree with the trees hidden, no underbrush past where it's drawn; an area's edge picks the area, and the pointer over it outlines and names it", async () => {
+test("only what's drawn is picked: no tree with the trees hidden, no underbrush past where it's drawn; an area's edge picks the area, the pointer over it outlines and names it, and a picked area moves only from its edge", async () => {
   await draw(page, false);
   const sweep = () => page.evaluate(() => {
     const v = (window as any).__dgView, doc = (window as any).__dgCourse(), r = v.container.getBoundingClientRect(), cam = v.mainEye().cam.position;
@@ -148,6 +148,40 @@ test("only what's drawn is picked: no tree with the trees hidden, no underbrush 
   await expect.poll(() => page.evaluate(() => (window as any).__dgView.hoverId)).toBe(e.id);
   await expect(page.getByTestId("stand-tip")).toContainText(/edge$/, { timeout: 3000 });
   await page.mouse.move(5, 5);
+  // (an area picked, then a drag from inside it, here from a tree standing in it: the map moves,
+  // not the area; then a drag from its edge: the area moves)
+  const onTree = await page.evaluate(() => {
+    const v = (window as any).__dgView, doc = (window as any).__dgCourse(), r = v.container.getBoundingClientRect();
+    for (let y = r.top + 80; y < r.bottom - 80; y += 9) for (let x = r.left + 80; x < r.right - 80; x += 9) {
+      const t = v.clickTarget(x, y);
+      if (!t.tree) continue;
+      const under = v.pick(x, y), it = doc.items.find((i: any) => i.id === under);
+      if (it?.type === "area" && !v.pickedEdge && !it.locked) return { x, y, id: under };
+    }
+    return null;
+  });
+  expect(onTree, "a tree standing in an area, in view").not.toBeNull();
+  await page.evaluate(id => (window as any).__dgActions.select(id), onTree!.id);
+  const before = JSON.stringify((await course(page)).items.find((i: any) => i.id === onTree!.id).points);
+  await page.mouse.move(onTree!.x, onTree!.y);
+  await page.mouse.down();
+  await page.mouse.move(onTree!.x + 40, onTree!.y + 25, { steps: 6 });
+  await page.mouse.up();
+  expect(JSON.stringify((await course(page)).items.find((i: any) => i.id === onTree!.id).points), "the picked area, after a drag from a tree in it").toBe(before);
+  const edgeAt = await page.evaluate(id => {
+    const v = (window as any).__dgView, r = v.container.getBoundingClientRect();
+    for (let y = r.top + 80; y < r.bottom - 80; y += 3) for (let x = r.left + 80; x < r.right - 80; x += 3) if (v.pick(x, y) === id && v.pickedEdge && !v.clickTarget(x, y).tree) return { x, y };
+    return null;
+  }, onTree!.id);
+  expect(edgeAt, "the picked area's edge, in view").not.toBeNull();
+  await page.mouse.move(edgeAt!.x, edgeAt!.y);
+  await page.mouse.down();
+  await page.mouse.move(edgeAt!.x + 40, edgeAt!.y + 25, { steps: 6 });
+  await page.mouse.up();
+  expect(JSON.stringify((await course(page)).items.find((i: any) => i.id === onTree!.id).points), "the picked area, after a drag from its edge").not.toBe(before);
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => JSON.stringify((await course(page)).items.find((i: any) => i.id === onTree!.id).points)).toBe(before);
+  await page.keyboard.press("Escape");
 });
 
 test("dragging a house: each step quick, letting go quick, back with one undo", async () => {

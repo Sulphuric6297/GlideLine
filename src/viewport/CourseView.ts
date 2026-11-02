@@ -4065,10 +4065,17 @@ export class CourseView {
 
   /** The tree or bush the pointer is over (not an item of its own), outlined as a hovered thing is. */
   private hoverTree: ReturnType<CourseView["treeAt"]> = null;
+  /** Whether the pointer is on the hovered area's edge (where a picked area is moved from). */
+  private hoverEdge = false;
   private setHover(id: string | null, tree: ReturnType<CourseView["treeAt"]> = null) {
-    if (id === this.hoverId && JSON.stringify(tree) === JSON.stringify(this.hoverTree)) return;
+    const edge = !!id && this.pickedEdge;
+    if (id === this.hoverId && JSON.stringify(tree) === JSON.stringify(this.hoverTree)) {
+      if (edge !== this.hoverEdge) { this.hoverEdge = edge; this.updateCursor(); }
+      return;
+    }
     this.hoverId = id;
     this.hoverTree = tree;
+    this.hoverEdge = edge;
     if (this.hoverFx) {
       this.fx.remove(this.hoverFx);
       disposeObjectDeep(this.hoverFx);
@@ -6512,12 +6519,13 @@ export class CourseView {
     if (overBig && !e.shiftKey && !tool.dragSelect && !this.readOnly) {
       const tree = this.treeAtScreen(e.clientX, e.clientY);
       if (tree) {
-        const moves = !!hitItem && hit === this.selectedId && !hitItem.locked;
-        if (moves) e.stopPropagation(); else stop();
+        // (a press on a tree or bush never moves what it stands on, picked or not: a drag from it
+        // moves the map; a wood, underbrush or path picked moves from its own ground or handles)
+        stop();
         this.gesture(e, {
           // (picked like any tree: the same panel, moved once picked, deleted with Del)
           click: () => this.cb.onAdoptTree(tree, this.lookOf(tree)),
-          drag: moves ? s => this.itemDrag(s, hit!) : s => this.panDrag(s)
+          drag: s => this.panDrag(s)
         });
         return;
       }
@@ -6569,11 +6577,21 @@ export class CourseView {
       this.gesture(e, { click: () => this.cb.onSelect(hit), drag: boxing ? s => this.boxDrag(s, false) : s => this.panDrag(s) });
       return;
     }
-    e.stopPropagation();
+    // An area picked moves only from its edge (its line, within a few pixels): a drag from inside
+    // it moves the map, so a wood, the tall grass or a fairway is never slid by accident
     const picked = hit === this.selectedId;
-    if (!picked) this.cb.onSelect(hit);
     // (the field already picked: a click picks the part of it there)
     const field = picked && item.type === "area" && item.kind === "field" ? item : null;
+    if (picked && item.type === "area" && !(this.pickedEdge && !domItem)) {
+      stop();
+      this.gesture(e, {
+        drag: s => this.panDrag(s),
+        ...(field ? { click: (ev: PointerEvent) => { const g = this.groundAt(ev.clientX, ev.clientY); this.cb.onFieldPart?.(g ? fieldPartAt(field, { x: g.x, y: g.z }) : null); } } : {})
+      });
+      return;
+    }
+    e.stopPropagation();
+    if (!picked) this.cb.onSelect(hit);
     this.gesture(e, {
       drag: s => this.itemDrag(s, hit),
       ...(field ? { click: (ev: PointerEvent) => { const g = this.groundAt(ev.clientX, ev.clientY); this.cb.onFieldPart?.(g ? fieldPartAt(field, { x: g.x, y: g.z }) : null); } } : {})
@@ -7597,7 +7615,7 @@ export class CourseView {
     else if (t.mode !== "select") c = "crosshair";
     else if (this.hoverId) {
       const it = this.item(this.hoverId);
-      c = !it || ((it.type === "area" || it.type === "line" || it.type === "structure") && this.hoverId !== this.selectedId && !this.group.includes(this.hoverId)) ? "pointer" : "move";
+      c = !it || ((it.type === "area" || it.type === "line" || it.type === "structure") && this.hoverId !== this.selectedId && !this.group.includes(this.hoverId)) ? "pointer" : it.type === "area" && !this.hoverEdge && !this.group.includes(this.hoverId) ? "grab" : "move";
     } else if (this.hoverTree) c = "pointer";
     this.container.style.cursor = c;
   }
