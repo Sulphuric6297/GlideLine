@@ -81,9 +81,9 @@ function BrushRow({ on, onSwitch, tune, onTune, open, onOpen, acres, from, surve
     <div data-testid="review-underbrush-row">
       <div className={`flex items-center gap-2 px-2 py-1 rounded-[10px] text-[12.5px] ${on ? "text-zinc-100" : "text-zinc-500"}`}>
         <span className="w-[11px] h-[11px] rounded-[3px] shrink-0" style={{ background: SOURCES.underbrush.color, opacity: on ? 1 : 0.35 }} />
-        <span className="truncate">Underbrush<span className="text-zinc-400 text-[11.5px]"> {SOURCES.underbrush.who}</span></span>
+        <span className="truncate">Underbrush</span>
         <HelpLink topic="underbrush-import" label="Underbrush" />
-        <span className="ml-auto tabular-nums text-zinc-300" data-testid="review-underbrush-acres">{total < 10 ? total.toFixed(1) : Math.round(total)} ac</span>
+        <span className="ml-auto tabular-nums text-zinc-300 whitespace-nowrap" data-testid="review-underbrush-acres">{total < 10 ? total.toFixed(1) : Math.round(total)} ac</span>
         <button type="button" role="switch" aria-checked={on} aria-label="Trees and bushes: Underbrush" data-testid="review-underbrush" onClick={() => onSwitch(!on)}
           className={`relative w-[30px] h-[17px] rounded-full shrink-0 ${on ? "bg-[#a2cf6a]" : "bg-white/[0.14]"}`}>
           <span className={`absolute top-[2px] w-[13px] h-[13px] rounded-full ${on ? "right-[2px] bg-zinc-900" : "left-[2px] bg-zinc-400"}`} />
