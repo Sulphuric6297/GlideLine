@@ -6913,6 +6913,15 @@ export class CourseView {
     };
   }
 
+  /** The brush's ring in the middle of the map at its true size, while its size is being slid on a
+   * phone's edge (null: hidden). */
+  previewBrush(r: number | null) {
+    if (r === null) { this.showBrush(null, 0); return; }
+    const box = this.container.getBoundingClientRect();
+    const g = this.groundAt(box.left + box.width / 2, box.top + this.topInset + (box.height - this.topInset - this.bottomInset) / 2);
+    if (g) this.showBrush({ x: g.x, y: g.z }, r);
+  }
+
   private brushRing: { obj: THREE.Object3D; r: number } | null = null;
   /** The brush's circle on the ground under the pointer (null: hidden). Made once for a size and
    * moved after (made again every move, its line's material went with it, and that's slow). */

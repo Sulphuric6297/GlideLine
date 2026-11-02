@@ -9,8 +9,9 @@
 // a thing opens its menu (the right-click), or on open ground what can start there.
 import { Woods } from "../Woods";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
-import { Axe, Compass, LayoutGrid, Menu, ChevronDown, ListChecks, ChevronLeft, Copy, Ellipsis, Eye, FilePlus, FolderOpen, HelpCircle, LocateFixed, PanelLeftClose, PanelLeftOpen, Redo2, Save, Search, Trash2, TreeDeciduous, Undo2, X } from "lucide-react";
+import { Axe, Circle, Compass, Flag, Gauge, LayoutGrid, Menu, ChevronDown, ListChecks, ChevronLeft, Copy, Ellipsis, Eye, FilePlus, FolderOpen, HelpCircle, LocateFixed, PanelLeftClose, PanelLeftOpen, Redo2, Save, Search, Trash2, TreeDeciduous, Undo2, X } from "lucide-react";
 import { holeLabel } from "../../lib/course";
+import { AREA_KINDS } from "../../constants";
 import { EXAMPLE_ID } from "../../lib/example";
 import { courseIssues, courseStats, courseTotals, holeStats, openIssues, playsOf } from "../../lib/holeStats";
 import { fmtArea, fmtDist, fmtElev } from "../../lib/units";
@@ -18,8 +19,8 @@ import { deleteSelection, duplicateSelection, select } from "../../state/actions
 import { getDoc, useCourse, useEditor, type Step } from "../../state/course";
 import { deleteRecent, newCourse, openCourseFile, openRecent, recentCourses, saveCourseFile } from "../../state/files";
 import type { PlanMeta } from "../../lib/storage";
-import type { P } from "../../types";
-import { HoleSteps } from "../HoleSteps";
+import type { CourseItem, Hole, P } from "../../types";
+import { HoleSteps, stepHole } from "../HoleSteps";
 import { InspectorBody, groupSummary, itemTitle, useSelection } from "../Inspector";
 import { MapViewport } from "../MapViewport";
 import { getView } from "../../state/view";
@@ -30,12 +31,14 @@ import { TeeViewHud } from "../TeeViewHud";
 import { OnSite } from "../OnSite";
 import { useOnSite } from "../../state/onSite";
 import { CameraHud } from "../CameraHud";
-import { STEP_TOOLS, TOOLS, pickTool, toolHelp, toolHint, toolOf, toolOptions, toolShapes } from "../Toolbar";
+import { STEP_TOOLS, TOOLS, phoneToolSettings, pickTool, toolHelp, toolHint, toolOf, toolOptions, toolShapes } from "../Toolbar";
 import { ExportProgressPill } from "../ExportProgress";
 import { ActionSheet, type SheetAction } from "./ActionSheet";
 import { BottomSheet, type Detent } from "./BottomSheet";
 import { PageTools } from "./PageTools";
-import { HoleStrip, ItemStrip } from "./HoleStrip";
+import { useHoleSettings, useItemSettings } from "./HoleStrip";
+import { ActRow, EdgeSlider, GlassBar, useBarNav, type BarSetting } from "./GlassBar";
+import { MoveCornerHere, MoveHere } from "../PlaceByGps";
 import { GettingStarted, openGettingStarted } from "../GettingStarted";
 import { accountActions, CourseChip, SaveAlert } from "../../auth/AccountMenu";
 import { LOCKED, LockBadge, showLocked, type LockedId } from "../DemoNote";
@@ -44,7 +47,7 @@ import { useExportJob } from "../../state/exportJob";
 import { ViewToggle } from "../ViewToggle";
 import { groupActions, groundActions, itemActions, type ItemAction } from "../itemActions";
 import { treeActions, treesAt, treeTitle, underAction } from "../treeActions";
-import { HelpLink } from "../ui";
+import { HelpLink, askHelp } from "../ui";
 import { ago } from "../../auth/Home";
 import { goDemoHome } from "../DemoHome";
 import { startTour } from "../Tour";
@@ -445,6 +448,162 @@ export function GroundMenu({ info, onClose }: { info: MenuInfo; onClose: () => v
   return <ActionSheet title={here ? "This spot" : "Trees here"} subtitle={ground?.hole} actions={a} onClose={onClose} testid={here ? "map-menu-here" : "map-menu"} />;
 }
 
+// ---------------------------------------------------------------------------------- the glass bar
+
+/** Every tool, as a tool's pill opens them: the one in use lit, its help at the foot. */
+function ToolGrid() {
+  const ed = useEditor();
+  const nav = useBarNav();
+  const t = toolOf(ed);
+  const help = toolHelp(ed);
+  // (the step's own tools, and whichever is in use)
+  const main = STEP_TOOLS[ed.step] ?? STEP_TOOLS.design;
+  const list = TOOLS.filter(x => x.id !== "select" && (ed.step !== "site" || main.includes(x.id) || x.id === t?.id));
+  return (
+    <div className="p-1">
+      <div className="grid grid-cols-4 gap-1.5" role="menu" aria-label="Tools" data-testid="tool-grid">
+        {list.map(x => {
+          const on = x.id === t?.id;
+          return (
+            <button key={x.id} role="menuitem" aria-current={on || undefined} aria-label={touchWords(x.label)} data-testid={`tool-${x.id}`}
+              onClick={() => { if (!on) { stopDrawing(); pickTool(x); } nav.close(); }}
+              className={`min-h-[66px] px-1 rounded-[18px] flex flex-col items-center justify-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "bg-orange-300 text-zinc-950" : "bg-white/[0.07] text-zinc-200 active:bg-white/[0.13]"}`}>
+              {x.icon}
+              <span className="text-[11.5px] leading-tight font-semibold text-center">{x.short}</span>
+            </button>
+          );
+        })}
+      </div>
+      {help && t && <div className="mt-1.5"><ActRow icon={<HelpCircle size={18} />} label={`Help on ${toolTitle(t).toLowerCase()}`} hint="How it works, step by step" onClick={() => askHelp(help)} testid="tool-help" /></div>}
+    </div>
+  );
+}
+
+/** A thing's or a hole's own rows in its pill's menu: the same as holding a finger on it. */
+const PillActions = ({ id }: { id: string }) => (
+  <div className="flex flex-col gap-0.5">
+    {itemActions(id, null).map(a => <ActRow key={a.label} label={a.label} icon={a.icon ? <a.icon size={18} /> : undefined} danger={a.danger} onClick={a.run} testid={a.testid} />)}
+  </div>
+);
+
+/** What a finger working on the map does to the bar: it fades almost away, after a moment (a quick
+ * tap doesn't flicker it), and comes back when the finger lifts. */
+function useFingerDown(on: boolean) {
+  const [down, setDown] = useState(false);
+  useEffect(() => {
+    if (!on) { setDown(false); return; }
+    let t = 0;
+    const map = () => document.querySelector<HTMLElement>('[data-testid="plan"]');
+    const press = (e: PointerEvent) => {
+      const el = map();
+      if (!el || !el.contains(e.target as Node)) return;
+      window.clearTimeout(t);
+      t = window.setTimeout(() => setDown(true), 140);
+    };
+    const lift = () => { window.clearTimeout(t); setDown(false); };
+    window.addEventListener("pointerdown", press, true);
+    window.addEventListener("pointerup", lift, true);
+    window.addEventListener("pointercancel", lift, true);
+    return () => { window.clearTimeout(t); window.removeEventListener("pointerdown", press, true); window.removeEventListener("pointerup", lift, true); window.removeEventListener("pointercancel", lift, true); };
+  }, [on]);
+  return down;
+}
+
+type BarProps = { faded: boolean; side?: boolean; onHeight: (px: number) => void; mainH: number };
+
+/** The tool in use: its pill (every tool from it), its settings, the brush's size (and the ground
+ * brush's strength) on the edge, and its hint for a few seconds as it starts. */
+function PhoneToolBar({ faded, side, onHeight, mainH }: BarProps) {
+  const ed = useEditor();
+  const units = useCourse(s => s.doc.units);
+  const t = toolOf(ed);
+  const { settings, edge } = phoneToolSettings(ed);
+  const drawing = ed.drawPoints > 0;
+  const own = useCourse(s => (ed.reshapeId ? s.doc.items.find(i => i.id === ed.reshapeId) : undefined));
+  // The hint: for a few seconds as the tool, or how it draws, changes (not over an open menu)
+  const [hint, setHint] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const said = toolHint(ed, true) ?? null;
+  const changed = `${ed.tool}|${t?.id}|${ed.drawShape}|${ed.areaBrush}|${ed.groundBrush}|${ed.reshapeId}`;
+  useEffect(() => {
+    setHint(said);
+    if (!said) return;
+    const tm = window.setTimeout(() => setHint(null), 4500);
+    return () => window.clearTimeout(tm);
+  }, [changed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const kind = own && own.type === "area" ? (own.kind === "woods" ? ((own.bushes ?? 0) >= 1 ? "underbrush" : "wood") : AREA_KINDS[own.kind].label.toLowerCase()) : "";
+  const pill = own
+    ? { name: "Reshaping", small: `just this ${kind}`, icon: t?.icon }
+    : { name: t ? t.short : "", icon: t?.icon, small: drawing ? `${ed.drawPoints} ${ed.drawPoints === 1 ? "point" : "points"}` : undefined };
+  const done = () => { stopDrawing(); ed.set({ tool: "select", reshapeId: null }); };
+  // (the sliders between the top bar and the bar, on the left)
+  const top = 128, room = Math.max(160, mainH - top - 160);
+  const sizeH = Math.min(250, edge.strength ? room * 0.55 : room * 0.8);
+  const ring = (v: number | null) => getView()?.previewBrush(v);
+  return (
+    <>
+      {hint && !drawing && !faded && !menuOpen && <div className="absolute left-1/2 -translate-x-1/2 z-[33] max-w-[calc(100%-24px)] px-4 py-2 rounded-full glass border border-white/10 shadow-xl text-[13.5px] font-semibold text-zinc-50 text-center pointer-events-none dg-fade-in" style={{ bottom: 146 }} data-testid="tool-hint">{hint}</div>}
+      {edge.size && (
+        <EdgeSlider testid="brush-size" label="Brush size" value={ed.brushSize} min={4} max={150} step={1} format={v => fmtDist(v * 2, units)} icon={<Circle size={18} />}
+          top={top} height={sizeH} faded={faded} onChange={v => { ed.set({ brushSize: v }); ring(v); }} onSlide={on => ring(on ? useEditor.getState().brushSize : null)} />
+      )}
+      {edge.strength && (
+        <EdgeSlider testid="brush-strength" label="Brush strength" value={ed.brushStrength} min={1} max={10} step={1} format={v => `${v * 10}%`} icon={<Gauge size={18} />}
+          top={top + sizeH + 16} height={Math.min(200, room - sizeH - 16)} faded={faded} onChange={v => ed.set({ brushStrength: v })} />
+      )}
+      <GlassBar remember={`tool:${t?.id ?? ed.tool}`} pill={pill} pillMenu={own ? undefined : <ToolGrid />} pillWide settings={drawing ? [] : settings} onDone={done} doneLabel={own ? "Done reshaping" : "Done: back to Select"}
+        replace={drawing ? <div className="h-[64px]" aria-hidden /> : undefined} faded={faded} side={side} onHeight={onHeight} onOpen={setMenuOpen} testid="tool-bar" />
+    </>
+  );
+}
+
+/** A hole picked: its pill (with the holes either side), every setting it has, and ✓. */
+function PhoneHoleBar({ hole, faded, side, onHeight }: BarProps & { hole: Hole }) {
+  const doc = useCourse(s => s.doc);
+  const s = holeStats(doc, hole);
+  const settings = useHoleSettings(hole);
+  const many = doc.holes.length > 1;
+  const pill = { name: `Hole ${holeLabel(doc, hole.id)}`, small: s.complete ? `${fmtDist(s.length, doc.units)} · Par ${s.par}` : s.teeId ? "Needs a basket" : "Needs a tee", prev: many ? () => stepHole(-1) : undefined, next: many ? () => stepHole(1) : undefined, testid: "selection-header" };
+  return <GlassBar remember="hole" pill={pill} pillMenu={<PillActions id={hole.id} />} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
+}
+
+/** Anything else picked: its pill (its hole, and what can be done with it), every setting it has. */
+function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: CourseItem }) {
+  const doc = useCourse(s => s.doc);
+  const settings = useItemSettings(item);
+  const holeId = "holeId" in item ? item.holeId : undefined;
+  const kind = item.type === "area" || item.type === "line" || item.type === "structure" ? `${item.type}:${item.kind}` : item.type;
+  const pill = { name: itemTitle(item), small: holeId ? `Hole ${holeLabel(doc, holeId)}` : item.locked ? "Locked in place" : undefined, testid: "selection-header" };
+  const placeable = item.type !== "area" && item.type !== "line" && item.type !== "structure";
+  const menu = (
+    <div className="flex flex-col gap-0.5">
+      {holeId && <ActRow icon={<Flag size={18} />} label={`Hole ${holeLabel(doc, holeId)}`} hint="Its par, fairway, tees and pins" onClick={() => select(holeId)} testid="pill-hole" />}
+      {placeable ? <div className="px-1.5 py-1 empty:hidden"><MoveHere item={item} wide /></div> : (item.type === "area" || item.type === "line") && <div className="px-1.5 py-1 empty:hidden"><MoveCornerHere item={item} /></div>}
+      <PillActions id={item.id} />
+    </div>
+  );
+  return <GlassBar remember={kind} pill={pill} pillMenu={menu} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="item-strip" />;
+}
+
+/** Things picked together: what they are, and what can be done with them all. */
+function PhoneGroupBar({ group, faded, side, onHeight }: BarProps & { group: CourseItem[] }) {
+  const doc = useCourse(s => s.doc);
+  const parts = groupSummary(doc, group);
+  const settings: BarSetting[] = groupActions().map((a, i) => ({ id: `g${i}`, name: `All ${group.length}`, value: a.label.replace(/ \d+$/, ""), run: a.run, testid: a.testid }));
+  return <GlassBar remember="group" pill={{ name: `${group.length} selected`, small: parts.slice(0, 2).join(" · "), testid: "selection-header" }} settings={settings} onDone={() => select(null)} doneLabel="Done: put them down" faded={faded} side={side} onHeight={onHeight} testid="group-strip" />;
+}
+
+/** The bar for what the screen is on: the tool in use, or what's picked. */
+function PhoneBar(props: BarProps) {
+  const mode = useMode();
+  const { hole, item, group } = useSelection();
+  if (mode === "tool") return <PhoneToolBar {...props} />;
+  if (hole) return <PhoneHoleBar key={hole.id} hole={hole} {...props} />;
+  if (item) return <PhoneItemBar key={item.id} item={item} {...props} />;
+  if (group.length) return <PhoneGroupBar group={group} {...props} />;
+  return null;
+}
+
 // ---------------------------------------------------------------------------------- app menu
 
 function AppMenu({ onClose, onHelp, onGoTo, onOpenFile }: { onClose: () => void; onHelp: () => void; onGoTo: () => void; onOpenFile: () => void }) {
@@ -548,22 +707,17 @@ function usePanel({ onFindSite, onMore, phone = false }: { onFindSite: () => voi
   const tool = useEditor(e => e.tool);
   const selectedId = useEditor(e => e.selectedId);
   const meta = STEPS.find(s => s.id === step)!;
-  // (a hole picked: its strip of settings in the tools' place, the hole kept in view above it)
-  const { hole: pickedHole, item: pickedItem, group: pickedGroup } = useSelection();
-  // (a phone only: a tablet's side panel has the room for all of it, beside the map)
-  const strip = phone && mode === "selection" && !!pickedHole && !readOnly;
-  // (anything else picked, on its own: its strip too)
-  const itemStrip = phone && mode === "selection" && !pickedHole && !!pickedItem && !pickedGroup.length && !readOnly;
+  // (a phone: the tool in use and what's picked are on its glass bar instead, PhoneBar; a tablet's
+  // side panel has the room for all of it, beside the map)
+  void phone;
   // (the checks, opened from Design's panel: the panel's page of their own, as a computer's panel over the map)
   const checks = useEditor(e => e.problemsOpen && e.step === "design") && mode === "step";
   // (the Site step has the tools too, as on a computer)
-  const tools = (step === "design" || step === "site" || mode === "tool") && !strip && !itemStrip && !checks;
+  const tools = (step === "design" || step === "site" || mode === "tool") && !checks;
   const header = (
     <>
       {tools && <ToolStrip />}
       {mode === "tool" ? <ToolHeader /> : mode === "selection" ? <SelectionHeader onMore={onMore} /> : checks ? <ChecksHeader /> : <StepHeader onFindSite={onFindSite} />}
-      {strip && <HoleStrip hole={pickedHole} />}
-      {itemStrip && <ItemStrip key={pickedItem.id} item={pickedItem} />}
     </>
   );
   const body = mode === "selection" ? (
@@ -648,8 +802,13 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
   const pageTools = ed.step === "map" && !immersive && !readOnly;
   // (standing in 3D with a thing picked: its usual sheet, over the tee view's bar)
   const pickedInTee = immersive && !onSite && !readOnly && !ed.flyover && !ed.flyCam && !!ed.selectedId && getDoc().items.some(i => i.id === ed.selectedId);
-  const sheet = (!immersive || pickedInTee) && !welcome && !pageTools;
-  const sheetH = sheet ? restH : 0;
+  // (a tool in use, or a thing picked: the glass bar over a whole-screen map, not the sheet; view
+  // only, a thing's numbers are in the sheet as before)
+  const bar = !readOnly && !welcome && !pageTools && (panel.mode === "tool" || panel.mode === "selection") && (!immersive || pickedInTee);
+  const sheet = (!immersive || pickedInTee) && !welcome && !pageTools && !bar;
+  const [barH, setBarH] = useState(132);
+  const sheetH = bar ? barH + 18 : sheet ? restH : 0;
+  const faded = useFingerDown(bar);
 
   useEffect(() => {
     const el = main.current;
@@ -775,7 +934,8 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
         )}
         {!immersive && <PhoneTopBar onMenu={openApp} pages={design && pageTools} />}
         {!immersive && <GettingStarted phone />}
-        {!immersive && <DrawBar bottom={sheetH + 12} />}
+        {!immersive && <DrawBar bottom={bar && ed.drawPoints > 0 ? 18 : sheetH + 12} />}
+        {bar && <PhoneBar faded={faded} onHeight={setBarH} mainH={mainH} />}
         {onSite ? <OnSite /> : ed.teeView && (ed.flyCam && !useCourse.getState().readOnly ? <CameraHud compact /> : <TeeViewHud compact />)}
         <ExportProgressPill top={immersive ? undefined : top + 4} bottom={immersive ? 96 : undefined} />
         {/* (above the drawing buttons when they're up) */}
@@ -797,7 +957,7 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
           </>
         )}
       </main>
-      {!immersive && !readOnly && <BottomNav onStep={onStep} />}
+      {!immersive && !readOnly && !bar && <BottomNav onStep={onStep} />}
       {panel.announce}
       {menus}
     </div>

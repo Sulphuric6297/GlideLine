@@ -48,7 +48,7 @@ const bendHole = (line: P[], side: 1 | -1): P[] => {
 };
 
 /** A hole's number in its badge, typed in (kept on Enter or when the field is left; Esc puts it back). */
-function HoleNumberInput({ holeId, value }: { holeId: string; value: string }) {
+export function HoleNumberInput({ holeId, value }: { holeId: string; value: string }) {
   const [text, setText] = useState(value);
   // (Esc: the field is left without keeping what was typed)
   const cancelled = useRef(false);
@@ -179,7 +179,7 @@ const GrowButton = ({ mark, title, onClick, testid }: { mark: ReactNode; title: 
 /** How many times, in words: "once", "twice", "3 times". */
 const times = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} times`);
 
-function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
+export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
   const doc = useCourse(s => s.doc);
   const s = useMemo(() => holeStats(doc, hole), [doc, hole]);
   const label = holeLabel(doc, hole.id);
@@ -271,7 +271,7 @@ function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
           <Segmented label="Foliage" value={hole.foliage ?? "auto"} onChange={v => set({ foliage: v === "auto" ? undefined : (v as "light" | "heavy") })} options={[{ value: "auto", label: auto(`Auto · ${s.foliage}`) }, { value: "light", label: "Light" }, { value: "heavy", label: "Heavy" }]} />
         </Field>
       </Section>
-      <Section title="Fairway and line of play" help="fairway">
+      <Section title="Fairway and line of play" help="fairway" testid="sec-fairway">
         <Toggle label="Draw the fairway" checked={hole.fairway} onChange={v => set({ fairway: v })} />
         {hole.fairway && (
           <>
@@ -305,7 +305,7 @@ function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
         )}
       </Section>
       {s.complete && (
-        <Section title="In play" help="in-play">
+        <Section title="In play" help="in-play" testid="sec-inplay">
           <ul className="text-xs text-zinc-300 space-y-1" data-testid="hole-in-play">
             <li>{s.treesOnLine ? `${s.treesOnLine} tree${s.treesOnLine === 1 ? "" : "s"} on the throw line` : "Clear throw line"} · {s.treesInFairway} tree{s.treesInFairway === 1 ? "" : "s"} in the fairway</li>
             <li>{s.obInPlay ? `OB in play${s.obCrossed ? `: the throw line crosses it ${times(s.obCrossed)}` : ""}` : "No OB in play"}{s.obNearBasket ? ` · OB within ${fmtDist(CIRCLE_ONE_FT, u)} of the basket` : ""}</li>
@@ -324,7 +324,7 @@ function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
         <Field label="Notes and hole rules"><TextInput area label="Hole notes" value={hole.notes ?? ""} placeholder="e.g. OB left of the path. Mando right of the big oak; drop zone by the bench." onChange={v => set({ notes: v || undefined }, false)} onDone={commit} /></Field>
       </Section>
       {s.complete && (
-        <Section title="Flyover" help="flyover">
+        <Section title="Flyover" help="flyover" testid="sec-flyover">
           <HoleFlight hole={hole} />
         </Section>
       )}
@@ -379,7 +379,7 @@ export function GrowsPick({ item, row = false }: { item: AreaItem; row?: boolean
 }
 
 /** A stand's species, when it grows only leafy trees or only pines: any of the course's kinds, or one. */
-function StandSpecies({ item }: { item: AreaItem }) {
+export function StandSpecies({ item }: { item: AreaItem }) {
   const shape = standShape(item);
   if (!shape) return null;
   const list = SPECIES[shape];
@@ -431,9 +431,8 @@ export const homeText = (a: AreaItem) => (a.plate ? "Placed by hand" : `Corner $
 /** A line's height, named for what it is (its panel and a phone's strip). */
 export const heightLabel = (k: LineKind) => (k === "power" ? "Wire height" : "Height");
 
-/** A field, court or play area's own settings: in or out of play, its markings turned, a ball
- * field's home plate. */
-function FieldSettings({ item, kind }: { item: AreaItem; kind: FieldKind }) {
+/** A field's or court's size, how many courts and their colors (its panel and a phone's bar). */
+export function FieldLooks({ item, kind }: { item: AreaItem; kind: FieldKind }) {
   const set = (patch: Partial<AreaItem>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
   const league = useMemo(() => (isBallField(kind) ? fieldPlan(item)?.league : undefined), [item, kind]);
   const n = courtCount(kind, item.points);
@@ -454,6 +453,20 @@ function FieldSettings({ item, kind }: { item: AreaItem; kind: FieldKind }) {
           <ChipPick label="Colors" testid="field-colors" value={item.courtColors ?? "blue"} onChange={v => set({ courtColors: v === "blue" ? undefined : v })} options={[{ value: "blue", label: "Blue in green" }, { value: "green", label: "All green" }, { value: "red", label: "Red and green" }]} />
         </Field>
       )}
+    </>
+  );
+}
+/** Whether a field has any of those. */
+export const hasFieldLooks = (kind: FieldKind) => isBallField(kind) || kind === "tennis" || kind === "pickleball" || kind === "basketball";
+
+/** A field, court or play area's own settings: in or out of play, its markings turned, a ball
+ * field's home plate. */
+function FieldSettings({ item, kind }: { item: AreaItem; kind: FieldKind }) {
+  const set = (patch: Partial<AreaItem>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
+  const league = useMemo(() => (isBallField(kind) ? fieldPlan(item)?.league : undefined), [item, kind]);
+  return (
+    <>
+      <FieldLooks item={item} kind={kind} />
       <FieldParts item={item} kind={kind} league={league} />
       <Field label="Play" help="park">
         <Segmented label="Play" value={item.outOfPlay ? "out" : "in"} onChange={v => setFieldPlay(item.id, v === "out")} options={[...PLAY_OPTIONS]} />
@@ -595,7 +608,7 @@ export const obOptions = (item: AreaItem | LineItem): { value: ObChoice; label: 
 
 /** Whether water, a creek, a road, a fence or a path is out of bounds (and shown so on the map);
  * a line OB beyond it too, and along all of it or stretches of it. */
-function ObPick({ item }: { item: AreaItem | LineItem }) {
+export function ObPick({ item }: { item: AreaItem | LineItem }) {
   const doc = useCourse(s => s.doc);
   const units = doc.units;
   const line = item.type === "line" ? item : null;

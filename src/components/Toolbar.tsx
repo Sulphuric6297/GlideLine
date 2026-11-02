@@ -12,7 +12,7 @@ import { getView } from "../state/view";
 import type { AmenityKind, AreaKind, CourseDoc, DrawShape, FieldKind, LineKind, StructureKind, TeeLevel, ToolMode, TreeKind } from "../types";
 import { useTouch } from "./useLayout";
 import { fmtDist } from "../lib/units";
-import { HelpLink } from "./ui";
+import { HelpLink, PickRow } from "./ui";
 import { PANEL_INSET, useSelection } from "./Inspector";
 import { DrawBar } from "./DrawBar";
 import { TREE_KINDS } from "./TreeSettings";
@@ -571,4 +571,111 @@ export function Toolbar() {
       </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------------- the phone's bar
+
+/** A setting as the glass bar takes it (mobile/GlassBar's BarSetting). */
+type BarSettingLike = { id: string; name: string; value?: ReactNode; control?: ReactNode; wide?: boolean; run?: () => void; on?: boolean; testid?: string };
+
+/** The active tool's settings for a phone's glass bar (mobile/GlassBar): what it puts down, how it
+ * draws or plants it, what the brush does, the species; each a setting with its word and what it's
+ * set to, opening the same choices as a computer's chips, as menu rows. The brush's size and the
+ * ground brush's strength slide on the screen's edge instead (`edge`). */
+export function phoneToolSettings(ed: Editor): { settings: BarSettingLike[]; edge: { size: boolean; strength: boolean } } {
+  const set = ed.set;
+  const kit = toolOf(ed);
+  const out: BarSettingLike[] = [];
+  type Row = { key: string; on: boolean; label: string; hint?: string; color?: string; icon?: ReactNode; pick: () => void; testid?: string };
+  const menu = (rows: Row[], radio: string) => (
+    <div className="flex flex-col gap-0.5" role="radiogroup" aria-label={radio}>
+      {rows.map(r => <PickRow key={r.key} on={r.on} onClick={r.pick} label={r.label} hint={r.hint} color={r.color} icon={r.icon} testid={r.testid} />)}
+    </div>
+  );
+  // What it puts down
+  if (kit?.choices) {
+    const now = choiceOf(ed);
+    out.push({ id: "kind", name: "Kind", value: now?.label ?? "", testid: "tool-options", control: menu(kit.choices.map(c => ({ key: c.id, on: matches(ed, c), label: c.label, color: c.color, icon: c.icon, pick: () => drawChoice(c), testid: c.id })), "Kind") });
+  } else if (ed.tool === "add-hole" || ed.tool === "add-tee") {
+    const doc = getDoc();
+    const hole = ed.tool === "add-tee" && !ed.holeToBasket ? doc.holes.find(h => h.id === ed.activeHoleId) : undefined;
+    const has = new Set(hole ? holeTees(doc, hole.id).map(t => t.level) : []);
+    out.push({
+      id: "kind", name: ed.tool === "add-hole" ? "First tee" : "Color", value: TEE_LEVELS[ed.teeLevel].label, testid: "tool-options",
+      control: menu(TEE_ORDER.map(l => ({ key: l, on: ed.teeLevel === l, label: TEE_LEVELS[l].label, hint: hole && has.has(l) ? `Hole ${holeLabel(doc, hole.id)} has one already` : `${TEE_LEVELS[l].skill} (${TEE_LEVELS[l].rating})`, color: TEE_LEVELS[l].color, pick: () => set({ teeLevel: l }), testid: `tee-level-${l}` })), "Tee color")
+    });
+  } else if (ed.tool === "add-amenity") {
+    const kinds = [...AMENITY_ORDER, ...(AMENITY_ORDER.includes(ed.amenityKind) ? [] : [ed.amenityKind])];
+    const name = (k: AmenityKind) => (k === "here" ? "You are here" : AMENITY_KINDS[k].pick ?? AMENITY_KINDS[k].label);
+    out.push({
+      id: "kind", name: "Kind", value: name(ed.amenityKind), testid: "tool-options",
+      control: menu(kinds.map(k => ({ key: k, on: ed.amenityKind === k, label: name(k), icon: <span className="inline-block" dangerouslySetInnerHTML={{ __html: symbolSvg(amenitySymbol(k, { x: 0, y: 0 }, 1), 18, k === "here" ? 24 : 18) }} />, pick: () => set({ amenityKind: k }), testid: `amenity-kind-${k}` })), "Kind")
+    });
+  } else if (ed.tool === "measure") {
+    const mode = ed.measureMode ?? "spot";
+    out.push({
+      id: "how", name: "Measure", value: mode === "spot" ? "From one spot" : "Along a path", testid: "tool-options",
+      control: menu((["spot", "path"] as const).map(m => ({ key: m, on: mode === m, label: m === "spot" ? "From one spot" : "Along a path", hint: m === "spot" ? "How far and how much it climbs from where you start" : "Its length along every bend", pick: () => set({ measureMode: m }), testid: `measure-${m}` })), "How to measure")
+    });
+    out.push({ id: "clear", name: "Measure", value: "Clear", run: () => getView()?.clearMeasure(), testid: "measure-clear" });
+  } else if (ed.tool === "sculpt") {
+    out.push({
+      id: "brush", name: "Brush", value: GROUND_BRUSHES.find(g => g.value === ed.groundBrush)?.label ?? "", testid: "tool-modes",
+      control: menu(GROUND_BRUSHES.map(g => ({ key: g.value, on: ed.groundBrush === g.value, label: g.label, hint: g.title, pick: () => set({ groundBrush: g.value }), testid: `ground-${g.value}` })), "What the brush does")
+    });
+  }
+  // How it draws or plants
+  const shapeMenu = (ways: { id: string; label: string; hint: string; icon: ReactNode; on: boolean; pick: () => void }[], name: string) =>
+    out.push({ id: "draw", name, value: ways.find(w => w.on)?.label ?? "", testid: "tool-shapes", control: menu(ways.map(w => ({ key: w.id, on: w.on, label: w.label, hint: w.hint, icon: w.icon, pick: w.pick, testid: `draw-shape-${w.id}` })), name) });
+  const stand = ed.tool === "draw-area" && ed.areaKind === "woods" && !!ed.standOf;
+  if (ed.tool === "add-tree" || stand) {
+    const now = ed.tool === "add-tree" ? null : ed.drawShape;
+    const ways: (DrawShape | null)[] = [null, "points", "box", "circle", "freehand", "paint"];
+    shapeMenu(ways.map(w => ({
+      id: w ?? "one", label: w ? (w === "points" ? "Corners" : SHAPES[w].label) : "One tree", hint: w ? `A stand of them: ${(TOUCH_SHAPE_HINTS[w] || "tap each corner").toLowerCase()}` : "Tap where each tree goes",
+      icon: w ? SHAPES[w].icon : <MousePointerClick size={13} />, on: now === w, pick: () => { treeWay = w; set(plant(ed.treeKind, w)); }
+    })), "Plant");
+  } else if (ed.tool === "add-field" || (ed.tool === "draw-area" && ed.areaKind === "field")) {
+    const ways: { id: string; tool: ToolMode; shape?: DrawShape; label: string; title: string; icon: ReactNode }[] = [
+      { id: "usual", tool: "add-field", label: "Usual size", title: "Tap where it goes", icon: <MousePointerClick size={13} /> },
+      { id: "points", tool: "draw-area", shape: "points", ...SHAPES.points, label: "Corners", title: "Tap each corner" },
+      { id: "box", tool: "draw-area", shape: "box", ...SHAPES.box, title: TOUCH_SHAPE_HINTS.box }
+    ];
+    shapeMenu(ways.map(w => ({ id: w.id, label: w.label, hint: w.title, icon: w.icon, on: ed.tool === w.tool && (!w.shape || ed.drawShape === w.shape), pick: () => { fieldWay = { tool: w.tool, shape: w.shape }; set({ tool: w.tool, ...(w.shape ? { drawShape: w.shape } : {}) }); } })), "Draw");
+  } else {
+    const list: DrawShape[] | null = ed.tool === "draw-area" ? ["points", "box", "circle", "freehand", "paint"]
+      : ed.tool === "draw-line" ? ["points", "freehand"]
+      : ed.tool === "draw-structure" ? (STRUCTURE_KINDS[ed.structureKind].shape === "outline" ? ["points", "box", "circle", "freehand"] : ["points", "freehand"])
+      : null;
+    if (list) shapeMenu(list.map(sh => ({
+      id: sh, label: sh === "points" ? "Corners" : SHAPES[sh].label, hint: TOUCH_SHAPE_HINTS[sh] || "Tap each corner or bend", icon: SHAPES[sh].icon,
+      on: ed.drawShape === sh || (sh === "freehand" && !list.includes(ed.drawShape)), pick: () => set({ drawShape: sh })
+    })), "Draw");
+  }
+  // What the brush does to areas
+  const painting = ed.tool === "draw-area" && ed.drawShape === "paint";
+  if (painting) {
+    const doc = getDoc();
+    const own = ed.reshapeId ? doc.items.find(i => i.id === ed.reshapeId) : undefined;
+    const kind = own && own.type === "area" ? own.kind : ed.areaKind;
+    const brush = own && own.type === "area" ? (own.bushes ?? 0) >= 1 : ed.standOf === "bush";
+    const modes = AREA_BRUSHES.filter(m => (m.value !== "thinner" && m.value !== "thicker") || kind === "woods").filter(m => m.value !== "restore" || (brush && !!doc.site.brushFound));
+    const now = modes.some(m => m.value === ed.areaBrush) ? ed.areaBrush : "add";
+    out.push({
+      id: "brush", name: "Brush", value: modes.find(m => m.value === now)?.label ?? "", testid: "tool-modes",
+      control: menu(modes.map(m => ({ key: m.value, on: now === m.value, label: m.label, hint: m.title, pick: () => set({ areaBrush: m.value }), testid: `area-brush-${m.value}` })), "What the brush does")
+    });
+  }
+  // Which species
+  if ((ed.tool === "add-tree" || stand) && ed.treeKind !== "bush") {
+    const kind = ed.treeKind;
+    const list = SPECIES[kind === "conifer" ? "conifer" : "broadleaf"];
+    const now = ed.treeSpecies[kind] ?? null;
+    const pick = (id: string | null) => set({ treeSpecies: { ...ed.treeSpecies, [kind]: id ?? undefined } });
+    out.push({
+      id: "species", name: "Species", value: now ? list.find(s => s.id === now)?.label ?? "" : "Any kind", testid: "tool-species",
+      control: menu([{ key: "any", on: now === null, label: "Any kind", hint: "One of the course's kinds, as the woods grow", pick: () => pick(null), testid: "tree-species-any" }, ...list.map(sp => ({ key: sp.id, on: now === sp.id, label: sp.label, pick: () => pick(sp.id), testid: `tree-species-${sp.id}` }))], "Species")
+    });
+  }
+  return { settings: out, edge: { size: painting || ed.tool === "sculpt", strength: ed.tool === "sculpt" } };
 }
