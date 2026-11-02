@@ -466,7 +466,11 @@ test("painting areas: Remove cuts a wood drawn by points (a stroke across splits
     // (Add from inside: the same wood, bigger)
     const c = { x: woods.points.reduce((s: number, p: any) => s + p.x, 0) / woods.points.length, y: woods.points.reduce((s: number, p: any) => s + p.y, 0) / woods.points.length };
     const out = woods.points.reduce((b: any, p: any) => (Math.hypot(p.x - c.x, p.y - c.y) > Math.hypot(b.x - c.x, b.y - c.y) ? p : b), woods.points[0]);
-    const start = { x: c.x + (out.x - c.x) * 0.9, y: c.y + (out.y - c.y) * 0.9 }, end = { x: c.x + (out.x - c.x) * 1.3, y: c.y + (out.y - c.y) * 1.3 };
+    // (from just inside its edge, toward its farthest corner, out past it)
+    const along = (t: number) => ({ x: c.x + (out.x - c.x) * t, y: c.y + (out.y - c.y) * t });
+    let lastIn = 0;
+    for (let t = 0; t <= 1.2; t += 0.01) if (inside(along(t), woods.points)) lastIn = t;
+    const start = along(Math.max(0, lastIn - 0.03)), end = along(lastIn + 0.3);
     const grow = B.brushStroke(doc.items, { kind: "woods", brush: false }, "add", B.strokeOutline([start, end], 15), start, null, []);
     const grown = grow?.update.find((a: any) => a.id === woods.id);
     // (underbrush: a level a pass, at a spot inside the heaviest patch)
