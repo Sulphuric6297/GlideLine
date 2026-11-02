@@ -10,6 +10,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react";
 import { MenuRows } from "../ui";
+import { Disc } from "./SheetFold";
 
 export type BarSetting = {
   id: string;
@@ -23,6 +24,8 @@ export type BarSetting = {
   /** Acts at once instead: an action, or a switch (`on` its state). */
   run?: () => void;
   on?: boolean;
+  /** An action's icon, in its lit disc (an action reads as one: it does something at once). */
+  icon?: ReactNode;
   testid?: string;
 };
 
@@ -239,18 +242,24 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
         {settings.map(s => {
           const on = open?.id === s.id;
           const sw = s.on !== undefined;
+          // (an action: lit, its icon in a disc; a menu or dial: ⌄ after what it's set to)
+          const act = !!s.run && !sw;
           return (
             <button key={s.id} data-setting={s.id} data-testid={s.testid ?? `strip-${s.id}`}
               aria-expanded={s.control ? on : undefined} aria-pressed={sw ? s.on : undefined}
               onClick={e => (s.run ? (close(), s.run()) : s.control ? toggle(s.id, e.currentTarget, !!s.wide) : undefined)}
-              className={`shrink-0 h-[50px] ${side ? "w-full items-center text-center" : "items-start text-left"} px-3 rounded-[18px] flex flex-col justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "bg-zinc-100 text-zinc-900" : "text-zinc-50 active:bg-white/[0.1]"}`}>
-              <span className={`text-[11px] font-semibold leading-none whitespace-nowrap ${on ? "text-zinc-600" : "text-zinc-400"}`}>{s.name}</span>
-              {(s.value !== undefined || sw) && (
-                <span className="mt-1 text-[15px] font-semibold leading-none whitespace-nowrap flex items-center gap-1.5">
-                  {s.value}
-                  {sw && <span className={`inline-block w-[30px] h-[18px] rounded-full relative transition-colors ${s.on ? "bg-orange-300" : "bg-white/20"}`}><span className={`absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-all ${s.on ? "right-[2px]" : "left-[2px]"}`} /></span>}
-                </span>
-              )}
+              className={`group shrink-0 h-[50px] ${side ? "w-full justify-center text-center" : "text-left"} ${act && s.icon && !side ? "pl-1.5 pr-3" : "px-3"} rounded-[18px] flex items-center gap-2 transition-[background-color,transform] duration-100 active:scale-[0.97] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "bg-zinc-100 text-zinc-900" : act ? "text-orange-300 active:bg-orange-300/10" : "text-zinc-50 active:bg-white/[0.1]"}`}>
+              {act && s.icon && !side && <Disc tint>{s.icon}</Disc>}
+              <span className={`flex flex-col justify-center ${side ? "items-center" : "items-start"}`}>
+                <span className={`text-[11px] font-semibold leading-none whitespace-nowrap ${on ? "text-zinc-600" : act ? "text-orange-300/80" : "text-zinc-400"}`}>{s.name}</span>
+                {(s.value !== undefined || sw) && (
+                  <span className="mt-1 text-[15px] font-semibold leading-none whitespace-nowrap flex items-center gap-1.5">
+                    {s.value}
+                    {sw && <span className={`inline-block w-[30px] h-[18px] rounded-full relative transition-colors ${s.on ? "bg-orange-300" : "bg-white/20"}`}><span className={`absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-all ${s.on ? "right-[2px]" : "left-[2px]"}`} /></span>}
+                    {s.control && <ChevronDown size={14} strokeWidth={2.6} className={`shrink-0 -ml-0.5 transition-transform ${on ? "rotate-180 text-zinc-600" : "text-orange-300"}`} />}
+                  </span>
+                )}
+              </span>
             </button>
           );
         })}

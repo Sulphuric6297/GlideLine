@@ -13,7 +13,7 @@ import { useServerCourse } from "../auth/courses";
 import { ColorSwatches } from "./ColorSwatches";
 import { FontPicker } from "./FontPicker";
 import { HolePicker } from "./PrintPanel";
-import { SHEET, SheetFold, tileCls, useUnfold } from "./mobile/SheetFold";
+import { Disc, SHEET, SheetFold, tileCls, useUnfold } from "./mobile/SheetFold";
 import { duplicatePicked, moreOf, orderOf, patchPicked, pickedOf, removePicked, reorderPicked, resetPicked, takeOpening, type TargetKey } from "./printouts";
 
 const commit = () => useCourse.getState().commit();
@@ -255,7 +255,7 @@ export function PieceToolbar({ t, id, onGrow, onGrowLive, onPreviewFont, onEditT
     const tool = (key: string, label: string, icon: ReactNode, onClick?: () => void) => (
       <button key={key} onClick={onClick ?? (() => { setPop(pop === key ? null : (key as typeof pop)); if (key === "link") setTimeout(() => linkRef.current?.focus(), 0); })} aria-pressed={onClick ? undefined : pop === key} data-testid={`piece-tool-${key}`}
         className={tileCls(pop === key).replace("min-w-[58px]", "min-w-[46px]")}>
-        {icon}<span className="text-[11px] leading-none font-semibold whitespace-nowrap">{label}</span>
+        <Disc on={!onClick && pop === key}>{icon}</Disc><span className="text-[11px] leading-none font-semibold whitespace-nowrap">{label}</span>
       </button>
     );
     return (

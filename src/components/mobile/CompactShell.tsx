@@ -37,6 +37,7 @@ import { ActionSheet, type SheetAction } from "./ActionSheet";
 import { BottomSheet, type Detent } from "./BottomSheet";
 import { PageTools } from "./PageTools";
 import { useHoleSettings, useItemSettings } from "./HoleStrip";
+import { Disc } from "./SheetFold";
 import { ActRow, EdgeSlider, GlassBar, useBarNav, type BarSetting } from "./GlassBar";
 import { MoveCornerHere } from "../PlaceByGps";
 import { GettingStarted, openGettingStarted } from "../GettingStarted";
@@ -358,8 +359,8 @@ function StepTools({ onPick, back }: { onPick: (from: DOMRect) => void; back: { 
         {list.map(t => (
           <button key={t.id} data-tool={t.id} data-testid={`tool-${t.id}`} aria-label={touchWords(t.label)}
             onClick={e => { onPick(e.currentTarget.getBoundingClientRect()); stopDrawing(); pickTool(t); }}
-            className="shrink-0 min-w-[62px] h-[50px] px-2 rounded-[18px] flex flex-col items-center justify-center gap-[3px] text-zinc-300 active:bg-white/[0.12] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">
-            <span className="text-zinc-50 flex">{t.icon}</span>
+            className="group shrink-0 min-w-[62px] h-[56px] px-1.5 rounded-[18px] flex flex-col items-center justify-center gap-[3px] text-zinc-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">
+            <Disc>{t.icon}</Disc>
             <span className="text-[11.5px] leading-none font-semibold whitespace-nowrap">{t.short}</span>
           </button>
         ))}
@@ -675,7 +676,7 @@ function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: Course
 function PhoneGroupBar({ group, faded, side, onHeight }: BarProps & { group: CourseItem[] }) {
   const doc = useCourse(s => s.doc);
   const parts = groupSummary(doc, group);
-  const settings: BarSetting[] = groupActions().map((a, i) => ({ id: `g${i}`, name: `All ${group.length}`, value: a.label.replace(/ \d+$/, ""), run: a.run, testid: a.testid }));
+  const settings: BarSetting[] = groupActions().map((a, i) => ({ id: `g${i}`, name: `All ${group.length}`, value: a.label.replace(/ \d+$/, ""), icon: a.icon ? <a.icon size={16} /> : undefined, run: a.run, testid: a.testid }));
   return <GlassBar remember="group" pill={{ name: `${group.length} selected`, small: parts.slice(0, 2).join(" · "), testid: "selection-header" }} settings={settings} onDone={() => select(null)} doneLabel="Done: put them down" faded={faded} side={side} onHeight={onHeight} testid="group-strip" />;
 }
 

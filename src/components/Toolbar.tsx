@@ -576,7 +576,7 @@ export function Toolbar() {
 // ---------------------------------------------------------------------------------- the phone's bar
 
 /** A setting as the glass bar takes it (mobile/GlassBar's BarSetting). */
-type BarSettingLike = { id: string; name: string; value?: ReactNode; control?: ReactNode; wide?: boolean; run?: () => void; on?: boolean; testid?: string };
+type BarSettingLike = { id: string; name: string; value?: ReactNode; control?: ReactNode; wide?: boolean; run?: () => void; on?: boolean; icon?: ReactNode; testid?: string };
 
 /** The active tool's settings for a phone's glass bar (mobile/GlassBar): what it puts down, how it
  * draws or plants it, what the brush does, the species; each a setting with its word and what it's
@@ -617,7 +617,7 @@ export function phoneToolSettings(ed: Editor): { settings: BarSettingLike[]; edg
       id: "how", name: "Measure", value: mode === "spot" ? "From one spot" : "Along a path", testid: "tool-options",
       control: menu((["spot", "path"] as const).map(m => ({ key: m, on: mode === m, label: m === "spot" ? "From one spot" : "Along a path", hint: m === "spot" ? "How far and how much it climbs from where you start" : "Its length along every bend", pick: () => set({ measureMode: m }), testid: `measure-${m}` })), "How to measure")
     });
-    out.push({ id: "clear", name: "Measure", value: "Clear", run: () => getView()?.clearMeasure(), testid: "measure-clear" });
+    out.push({ id: "clear", name: "Measure", value: "Clear", icon: <X size={16} />, run: () => getView()?.clearMeasure(), testid: "measure-clear" });
   } else if (ed.tool === "sculpt") {
     out.push({
       id: "brush", name: "Brush", value: GROUND_BRUSHES.find(g => g.value === ed.groundBrush)?.label ?? "", testid: "tool-modes",

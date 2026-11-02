@@ -5,7 +5,7 @@
 // everyday ones come first and the rarer ones further along, so nothing is left to a long panel
 // over the map.
 import { useRef, type ReactNode } from "react";
-import { Plus } from "lucide-react";
+import { Brush, Navigation, Plus, RotateCw, Scissors } from "lucide-react";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint } from "../../constants";
 import { holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
 import { holeStats } from "../../lib/holeStats";
@@ -202,7 +202,7 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     dial("length", "Length", fmtSize(t.padLength, u), { label: "Pad length", value: t.padLength, min: 4, max: 30, step: 0.5, format: v => `${fmtSize(v, u)} long`, onChange: v => live({ padLength: v }), onDone: done });
     dial("width", "Width", fmtSize(t.padWidth, u), { label: "Pad width", value: t.padWidth, min: 2, max: 20, step: 0.5, format: v => `${fmtSize(v, u)} wide`, onChange: v => live({ padWidth: v }), onDone: done });
     out.push({ id: "surface", name: "Surface", value: TEE_SURFACES[t.surface].label, control: <ChipPick label="Tee surface" value={t.surface} onChange={(v: TeeSurface) => set({ surface: v })} options={(Object.keys(TEE_SURFACES) as TeeSurface[]).map(k => ({ value: k, label: TEE_SURFACES[k].label, color: TEE_SURFACES[k].color }))} /> });
-    if (t.aimFixed) out.push({ id: "aim", name: "Facing", value: "Down the hole", run: () => set({ aimFixed: false }) });
+    if (t.aimFixed) out.push({ id: "aim", name: "Facing", value: "Down the hole", icon: <Navigation size={16} />, run: () => set({ aimFixed: false }) });
   } else if (item.type === "basket") {
     const b = item as BasketItem;
     out.push({ id: "pin", name: "Pin", value: b.position, control: <Segmented label="Pin position" value={b.position} onChange={v => setPinPosition(b.id, v)} options={PIN_POSITIONS.map(p => ({ value: p, label: `Pin ${p}` }))} /> });
@@ -241,7 +241,7 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
       if (hasFieldLooks(fk)) out.push({ id: "looks", name: "Size and colors", value: "Settings", wide: true, control: <div className="p-1.5"><FieldLooks item={item} kind={fk} /></div> });
       out.push({ id: "play", name: "Play", value: item.outOfPlay ? "Out of play" : "In play", control: <Segmented label="Play" value={item.outOfPlay ? "out" : "in"} onChange={v => setFieldPlay(item.id, v === "out")} options={[...PLAY_OPTIONS]} /> });
       if (MARKED_FIELDS.includes(fk)) dial("markings", "Markings", fmtTurn(item.fieldTurn ?? 0), { label: "Markings turn", value: item.fieldTurn ?? 0, min: -90, max: 90, step: 1, format: fmtTurn, onChange: v => live({ fieldTurn: v || undefined }), onDone: done });
-      if (isBallField(fk)) out.push({ id: "home", name: "Home plate", value: homeText(item), run: item.locked ? undefined : () => nextHomeCorner(item.id), testid: "strip-home-next" });
+      if (isBallField(fk)) out.push({ id: "home", name: "Home plate", value: homeText(item), icon: <RotateCw size={16} />, run: item.locked ? undefined : () => nextHomeCorner(item.id), testid: "strip-home-next" });
     } else out.push({ id: "kind", name: "Kind", value: kindLabel, wide: true, control: (
       <KindTiles label={item.type === "area" ? "Area kind" : "Line kind"} value={item.kind as string} onChange={k => (item.type === "line" ? setLineKind(item.id, k as LineKind) : set({ kind: k }))} options={kinds.map(o => ({ value: o.value, label: o.label, picture: item.type === "area" ? areaPicture(o.value as AreaKind) : linePicture(o.value as LineKind) }))} />
     ) });
@@ -253,7 +253,7 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     // (woods, and tall grass when you want some; a wood of bushes only is brush already)
     if (item.type === "area" && (item.kind === "rough" || (item.kind === "woods" && (item.bushes ?? 0) < 1)))
       out.push({ id: "brush", name: "Underbrush", value: item.underbrush ? cap(item.underbrush) : "None", control: <Segmented label="Underbrush" value={item.underbrush ?? "none"} onChange={v => set({ underbrush: v === "none" ? undefined : v })} options={[...BRUSH_LEVELS]} /> });
-    if (item.type === "area" && !item.locked && item.kind !== "field" && item.kind !== "building") out.push({ id: "reshape", name: "Reshape", value: "Brush", run: () => {
+    if (item.type === "area" && !item.locked && item.kind !== "field" && item.kind !== "building") out.push({ id: "reshape", name: "With the brush", value: "Reshape", icon: <Brush size={16} />, run: () => {
       const brush = item.kind === "woods" && (item.bushes ?? 0) >= 1;
       useEditor.getState().set({ tool: "draw-area", areaKind: item.kind, standOf: brush ? "bush" : null, ...(brush ? { treeKind: "bush" as const } : {}), drawShape: "paint", reshapeId: item.id, areaBrush: "add" });
     }, testid: "reshape-brush" });
@@ -314,7 +314,7 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     out.push({ id: "curved", name: "Curved", on: !a.straight, run: () => set({ straight: a.straight ? undefined : true }) });
   }
   if ((item.type === "area" || item.type === "line" || item.type === "structure") && !item.locked) out.push({ id: "turnshape", name: "Turn", value: "15° · 90°", wide: true, control: <div className="p-1.5"><TurnButtons item={item} /></div> });
-  if (item.type === "line" && !item.locked) out.push({ id: "cut", name: "Remove", value: "A stretch", run: () => useEditor.getState().set({ obPick: item.id, pickCut: true, tool: "select" }) });
+  if (item.type === "line" && !item.locked) out.push({ id: "cut", name: "Remove", value: "A stretch", icon: <Scissors size={16} />, run: () => useEditor.getState().set({ obPick: item.id, pickCut: true, tool: "select" }) });
   // (the holes it's for: belongs to, OB for, or counts for)
   const role = item.type === "mando" || item.type === "dropzone" || item.type === "structure" ? { label: "Belongs to", all: "Whole course" }
     : (item.type === "area" || item.type === "line") && item.kind === "ob" ? { label: "OB for", all: "All holes" }
@@ -335,6 +335,9 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     const named = (item as { label?: string }).label;
     out.push({ id: "name", name: "Name", value: named || "None", wide: true, control: <div className="p-1.5"><TextInput label={`${item.type === "area" ? "Area" : item.type === "line" ? "Line" : item.type === "structure" ? "Structure" : "Amenity"} name`} value={named ?? ""} placeholder="Name on the map (optional)" onChange={v => live({ label: v || undefined })} onDone={done} /></div> });
   }
+  // (Reshape with the brush right after the kind, where it's seen: the way to paint it bigger or smaller)
+  const r = out.findIndex(x => x.id === "reshape"), k = out.findIndex(x => x.id === "kind");
+  if (k >= 0 && r > k + 1) out.splice(k + 1, 0, ...out.splice(r, 1));
   return out;
 }
 

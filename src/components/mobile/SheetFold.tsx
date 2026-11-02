@@ -29,9 +29,14 @@ export function useUnfold<T>(open: T | null, ms = 260): [T | null, boolean] {
  * and a tool's settings float over the map (mobile/GlassBar). */
 export const SHEET = "glass rounded-[26px] mx-2.5 mb-2 border border-white/10 shadow-2xl overflow-hidden";
 
-/** A tool as a step's row has them: its icon over its name, lit when it's the one open. */
+/** A tool as a step's row has them: its icon in a round lit disc (`Disc`), its word under it,
+ * the disc lit when it's the one open; a press dims and shrinks the disc under the finger. */
 export const tileCls = (on: boolean) =>
-  `shrink-0 flex-1 min-w-[58px] h-[50px] px-1.5 rounded-[18px] flex flex-col items-center justify-center gap-[3px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 active:bg-white/[0.12]"}`;
+  `group shrink-0 flex-1 min-w-[58px] h-[56px] px-1 rounded-[18px] flex flex-col items-center justify-center gap-[3px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "text-zinc-50" : "text-zinc-300"}`;
+/** A tool's icon in its disc: plainly something to press, as the iPhone's Control Center has them. */
+export const Disc = ({ on = false, tint = false, children }: { on?: boolean; tint?: boolean; children: ReactNode }) => (
+  <span className={`w-[34px] h-[34px] shrink-0 rounded-full grid place-items-center transition-[transform,background-color] duration-100 group-active:scale-90 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)] ${on ? "bg-zinc-100 text-zinc-900" : tint ? "bg-orange-300/20 text-orange-300 group-active:bg-orange-300/35" : "bg-white/[0.12] text-zinc-50 group-active:bg-white/[0.25]"}`}>{children}</span>
+);
 
 /** The settings a tool opens, unfolding under the tools: its name, an X, and the settings. */
 export function SheetFold({ unfolded, title, onClose, testid, closeTestid, children }: { unfolded: boolean; title: string; onClose: () => void; testid: string; closeTestid: string; children: ReactNode }) {
