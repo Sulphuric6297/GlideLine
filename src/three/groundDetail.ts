@@ -273,10 +273,16 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
             // tan and brown, red over green over blue, are dirt; the rest is grass, a pale or yellow
             // green fairway too)
             vec3 c = diffuseColor.rgb;
-            float mx = max( c.r, max( c.g, c.b ) ), mn = min( c.r, min( c.g, c.b ) ), sat = ( mx - mn ) / max( mx, 1e-3 );
+            // (how grey, judged on the colors as seen, not the light's linear values, where a grey
+            // with a breath of blue in it, as roads and parking are painted, reads as half colored;
+            // and not a dull green in shade, nor a near-black; a warm grey is a dirt or gravel path's)
+            vec3 s = pow( max( c, vec3( 0.0 ) ), vec3( 1.0 / 2.2 ) );
+            float mx = max( s.r, max( s.g, s.b ) ), mn = min( s.r, min( s.g, s.b ) ), sat = ( mx - mn ) / max( mx, 1e-3 );
             float lum = dot( c, vec3( 0.3, 0.59, 0.11 ) );
-            float grey = 1.0 - smoothstep( 0.05, 0.12, sat );
-            float brown = ( 1.0 - grey ) * step( c.g * 1.04, c.r ) * step( c.b * 1.1, c.g );
+            float greenLead = ( s.g - max( s.r, s.b ) ) / max( s.g, 1e-3 );
+            float warm = step( c.g * 1.04, c.r ) * step( c.b * 1.1, c.g );
+            float grey = ( 1.0 - warm ) * ( 1.0 - smoothstep( 0.07, 0.14, sat ) ) * ( 1.0 - smoothstep( 0.02, 0.05, greenLead ) ) * smoothstep( 0.24, 0.32, dot( s, vec3( 0.3, 0.59, 0.11 ) ) );
+            float brown = ( 1.0 - grey ) * warm;
             float grass = max( 0.0, 1.0 - grey - brown );
             cover = vec4( grass, grey * smoothstep( 0.06, 0.16, lum ), grey * ( 1.0 - smoothstep( 0.06, 0.16, lum ) ), brown );
           } else if ( groundDetail > 0.0 && coverOn > 0.0 ) {
