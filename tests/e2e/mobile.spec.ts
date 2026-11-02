@@ -1018,7 +1018,7 @@ test.describe("phone", () => {
     // Tap mode Select: a thing selected brings its own bar in the flyover bar's place, the switch
     // still over it; ✓ puts it down and the flyover bar is back
     await page.getByTestId("tap-edit").tap();
-    await expect.poll(async () => (await editorState(page)).standTap).toBe("edit");
+    await expect(page.getByTestId("tap-edit")).toHaveAttribute("aria-checked", "true");
     await page.evaluate(() => { const c = (window as any).__dgCourse(); (window as any).__dgActions.select(c.items.find((i: any) => i.type === "tee").id); });
     await expect(page.getByTestId("item-strip")).toBeVisible();
     await expect(bar).toHaveCount(0);
@@ -1027,13 +1027,14 @@ test.describe("phone", () => {
     await expect(bar).toBeVisible();
     await page.getByTestId("tap-walk").tap();
     // Playing: the card hides, Play flyover becomes the timeline with Stop at its start
+    const flying = () => page.evaluate(() => !!(window as any).__dgEditor().flyover);
     await bar.getByTestId("hud-flyover").tap();
-    await expect.poll(async () => (await editorState(page)).flyover).toBe(true);
+    await expect.poll(flying).toBe(true);
     await expect(page.getByTestId("tee-view-hud")).toBeHidden();
     // (the flight's ready: its loading screen, over everything while it gets ready, out of the way)
     // (the loading screen comes a moment after Play is tapped: waited for as done, not as not yet there)
     await expect.poll(() => page.evaluate(() => { const ed = (window as any).__dgEditor(), el = document.querySelector('[data-testid="flyover-loading"]'); return !ed.flyover || (ed.flyLoading === null && (!el || getComputedStyle(el).pointerEvents === "none")); }), { timeout: 120_000 }).toBe(true);
-    if (!(await editorState(page)).flyover) return;
+    if (!(await flying())) return;
     await expect(page.getByTestId("fly-line")).toBeVisible();
     await expect(page.getByTestId("tap-switch")).toHaveCount(0);
     // Left alone, the bar folds to its timeline; a tap on the view brings it back, and only that
