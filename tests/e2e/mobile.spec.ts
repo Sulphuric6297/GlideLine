@@ -364,6 +364,7 @@ test.describe("phone", () => {
     h = (await handle.boundingBox())!;
     await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y + 300 }, 16);
     await away();
+    await settle(page);
     // The keyboard: the handle is a button that takes the arrow keys
     await design.tap();
     await expect.poll(() => detent(page)).toBe("half");
