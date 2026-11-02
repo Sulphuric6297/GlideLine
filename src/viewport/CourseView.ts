@@ -6853,9 +6853,26 @@ export class CourseView {
   /** What the import found, as areas by level (for Restore), worked out once a course. */
   private found: { key: unknown; areas: AreaItem[] } | null = null;
 
-  /** A stroke that changes the areas of a kind: the brush's track, the areas as it leaves them
-   * sent on a few times a second (worked out from the areas as they were when it began), and once
-   * more when let go, as one undo step. */
+  /** While a stroke is under way: the outlines it leaves, drawn over the map (the course itself
+   * changed only when it's let go: a wood's trees grown again at every step would stall it). */
+  private brushPreview: THREE.Object3D | null = null;
+  private showPreview(areas: AreaItem[] | null) {
+    if (this.brushPreview) { this.fx.remove(this.brushPreview); disposeObjectDeep(this.brushPreview); this.brushPreview = null; }
+    if (areas?.length) {
+      const g = new THREE.Group();
+      for (const a of areas) {
+        g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.3, true), "#000000", 4.5, { opacity: 0.35, order: 28, depthTest: false }));
+        g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.35, true), SELECT, 2.5, { order: 29, depthTest: false }));
+      }
+      this.brushPreview = g;
+      this.fx.add(g);
+    }
+    this.invalidate();
+  }
+
+  /** A stroke that changes the areas of a kind: the brush's track, and the outlines it leaves shown
+   * as it goes (worked out from the areas as they were when it began); when let go, the course
+   * changed, as one undo step. */
   private areaBrushDrag(start: PointerEvent): { move: (ev: PointerEvent) => void; end: (ev: PointerEvent) => void } | null {
     const doc = this.doc, k = this.paintKind();
     if (!doc || !k || this.readOnly) return null;
@@ -6867,16 +6884,17 @@ export class CourseView {
     if (mode === "restore" && bf && this.found?.key !== bf) this.found = { key: bf, areas: foundAreas(bf) };
     const found = mode === "restore" ? this.found?.areas ?? [] : [];
     const step = Math.max(1.5, 6 / Math.max(0.01, this.viewInfo().pxPerUnit), r / 5);
-    let sent = 0, changed = false;
+    let sent = 0;
     const run = (done: boolean) => {
       const out = strokeOutline(path, r);
-      let next: CourseItem[] | null = null;
+      let edit: ReturnType<typeof brushStroke> = null;
       if (out) {
-        try { const e = brushStroke(base, k, mode, simplify(out, Math.max(0.4, r / 14)), a, t.reshape ?? null, found); if (e) next = applyEdit(base, e); }
+        try { edit = brushStroke(base, k, mode, simplify(out, Math.max(0.4, r / 14)), a, t.reshape ?? null, found); }
         catch { /* (a shape the cutting couldn't make sense of: this step left out) */ }
       }
-      if (next) { changed = true; this.cb.onAreas?.(next, done); }
-      else if (done && changed) this.cb.onAreas?.(base, true);
+      if (!done) { this.showPreview(edit ? [...edit.update, ...edit.add] : null); return; }
+      this.showPreview(null);
+      if (edit) this.cb.onAreas?.(applyEdit(base, edit), true);
     };
     this.showBrush(a, r);
     return {
@@ -6887,7 +6905,7 @@ export class CourseView {
         if (dist(path[path.length - 1], b) >= step) path.push(b);
         this.showBrush(b, r);
         const now = performance.now();
-        if (now - sent > 180) { sent = now; run(false); }
+        if (now - sent > 60) { sent = now; run(false); }
       },
       end: () => { run(true); }
     };
