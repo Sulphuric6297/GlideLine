@@ -16,7 +16,7 @@ import { fmtDist } from "../../lib/units";
 import { addHoleOb, nextHomeCorner, obChoiceOf, pinsFull, select, setFieldKind, setFieldPlay, setLineKind, setPinPosition, setTeeLevel, shareBasket, startAnotherPin, startAnotherTee, startHoleToBasket, teesFull } from "../../state/actions";
 import { updateHole, updateItem, useCourse, useEditor } from "../../state/course";
 import type { AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseItem, FieldKind, Hole, LabelItem, LineItem, LineKind, MandoItem, PathSurface, StructureItem, StructureKind, TeeItem, TeeSurface, TreeItem } from "../../types";
-import { BRUSH_LEVELS, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions } from "../Inspector";
+import { BRUSH_LEVELS, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions } from "../Inspector";
 import { HoleChips } from "../ApplyToHoles";
 import { HoleFlight } from "../FlyoverSettings";
 import { OnSiteButton } from "../OnSite";
@@ -25,7 +25,7 @@ import { canShowLocation } from "../../state/gps";
 import { KindTiles, areaPicture, bigIcon, linePicture } from "./KindTiles";
 import { TREE_KINDS, speciesNow } from "../TreeSettings";
 import { SPECIES } from "../../three/ezShapes";
-import { ChipPick, ColorInput, OnlyGroup, PickRow, Segmented, Select, TextInput } from "../ui";
+import { ChipPick, ColorInput, OnlyGroup, PickRow, Segmented, Select, TextInput, Toggle } from "../ui";
 import { ActRow, type BarSetting } from "./GlassBar";
 
 /** A dial: drag it sideways (or the arrow keys) to change a number; the needle stays put and the
@@ -104,8 +104,21 @@ export function useHoleSettings(hole: Hole): BarSetting[] {
   if (onSite) out.push({ id: "onsite", name: "On site", value: "Walk it", control: <div className="grid gap-1.5 p-1"><OnSiteButton holeId={hole.id} className="w-full" /><OnSiteButton className="w-full !bg-white/10" /></div>, wide: true });
   out.push(
     { id: "par", name: "Par", value: hole.par ?? `${s.parAuto} · auto`, control: <Segmented label="Par" value={hole.par ?? 0} onChange={v => set({ par: v === 0 ? undefined : v })} options={[{ value: 0, label: `Auto · ${s.parAuto}`, title: "From its length and how it plays" }, ...[2, 3, 4, 5, 6].map(p => ({ value: p, label: `Par ${p}` }))]} /> },
-    // (drawn or not, how wide, its line of play and OB along it: its part of the hole's panel)
-    { id: "fairway", name: "Fairway", value: hole.fairway ? fmtDist(hole.fairwayWidth, u) : "Off", wide: true, control: <HolePart hole={hole} part="sec-fairway" /> },
+    // (drawn or not, how wide on a dial (the map following as it's dragged), back to an even width,
+    // and the line of play)
+    { id: "fairway", name: "Fairway", value: hole.fairway ? fmtDist(hole.fairwayWidth, u) : "Off", wide: true, control: (
+      <div className="flex flex-col gap-0.5">
+        {hole.fairway && <Dial label="Fairway width" value={hole.fairwayWidth} min={10} max={150} step={1} format={v => `${fmtDist(v, u)} wide`} onChange={v => set({ fairwayWidth: v }, false)} onDone={commit} />}
+        <div className="px-3 py-1"><Toggle label="Draw the fairway" checked={hole.fairway} onChange={v => set({ fairway: v })} /></div>
+        {hole.fairway && (hole.fairwayShape || hole.fairwayShift?.some(v => Math.abs(v) > 1e-3)) && <ActRow label="Even width" hint="One width all along, on the line" onClick={() => set({ fairwayShape: undefined, fairwayShift: undefined, fairwayStations: undefined })} />}
+        {s.complete && <>
+          <ActRow label="Plot the line" hint="Tap where it goes, turn by turn" onClick={() => useEditor.getState().set({ plotLine: hole.id, tool: "select" })} testid="plot-line" />
+          <ActRow label="Bend left" onClick={() => set({ doglegs: bendHole(s.line, -1) })} testid="bend-left" />
+          <ActRow label="Bend right" onClick={() => set({ doglegs: bendHole(s.line, 1) })} testid="bend-right" />
+          {hole.doglegs.length > 0 && <ActRow label="Straighten" onClick={() => set({ doglegs: [] })} />}
+        </>}
+      </div>
+    ) },
     { id: "tees", name: "Tees", value: String(tees.length), control: (
       <div className="flex flex-col gap-0.5">
         {tees.map(t => <GoRow key={t.id} dot={TEE_LEVELS[t.level].color} label={`${TEE_LEVELS[t.level].label} tee`} hint={[len(t, pin), t.id === s.teeId ? "played" : ""].filter(Boolean).join(" · ") || undefined} onClick={() => select(t.id)} />)}

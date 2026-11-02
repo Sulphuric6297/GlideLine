@@ -40,7 +40,7 @@ const commit = () => useCourse.getState().commit();
 
 /** A gentle curve for a hole: one turn halfway along, off to the left (-1) or right (1) by a
  * sixth of its length (its handle drags it on from there). */
-const bendHole = (line: P[], side: 1 | -1): P[] => {
+export const bendHole = (line: P[], side: 1 | -1): P[] => {
   const a = line[0], b = line[line.length - 1];
   const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
   const off = (len / 6) * side;

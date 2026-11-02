@@ -195,13 +195,13 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   // (a menu over its button; the pill's from the left edge, over the pill)
   const left = !open ? 10 : side ? undefined : wide || open.pill ? 10 : Math.max(10, Math.min(W - 10 - width, open.from.left + open.from.width / 2 - width / 2));
   const origin = open ? (side ? "right center" : `${Math.round(open.from.left + open.from.width / 2 - (left ?? 0))}px bottom`) : undefined;
-  const rowH = 64, gap = 8, pillH = 42;
+  const rowH = 64, gap = 8, pillH = 44;
   const panelBottom = side ? undefined : bottom + kb + 18 + rowH + gap + (open?.pill ? pillH + gap : 0);
 
   const pillEl = (
-    <div className={`flex items-center h-[42px] rounded-full border shadow-xl transition-opacity duration-200 ${open && !open.pill ? "opacity-0 pointer-events-none" : ""} ${open?.pill ? "bg-zinc-100 border-transparent text-zinc-900" : "glass border-white/10 text-zinc-50"}`} data-testid={pill.testid ?? "bar-pill"}>
-      {pill.prev && <button className="w-10 h-[42px] flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole before" onClick={pill.prev} data-testid="hole-prev"><ChevronLeft size={19} /></button>}
-      <button className={`h-[42px] ${pill.prev ? "px-1" : "pl-3.5"} pr-3 flex items-center gap-2 rounded-full min-w-0 ${side ? "flex-1 justify-center !px-2 gap-1" : "max-w-[calc(100vw-120px)]"} focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`}
+    <div className={`flex items-center h-11 rounded-full border shadow-xl transition-opacity duration-200 ${open && !open.pill ? "opacity-0 pointer-events-none" : ""} ${open?.pill ? "bg-zinc-100 border-transparent text-zinc-900" : "glass border-white/10 text-zinc-50"}`} data-testid={pill.testid ?? "bar-pill"}>
+      {pill.prev && <button className="w-10 h-11 flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole before" onClick={pill.prev} data-testid="hole-prev"><ChevronLeft size={19} /></button>}
+      <button className={`h-11 ${pill.prev ? "px-1" : "pl-3.5"} pr-3 flex items-center gap-2 rounded-full min-w-0 ${side ? "flex-1 justify-center !px-2 gap-1" : "max-w-[calc(100vw-120px)]"} focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`}
         aria-haspopup={pillMenu ? "menu" : undefined} aria-expanded={!!open?.pill} disabled={!pillMenu}
         onClick={e => pillMenu && toggle("pill", e.currentTarget, pillWide, true)} data-testid="pill-open">
         {pill.icon && !side && <span className={`shrink-0 flex ${open?.pill ? "" : "text-orange-300"}`}>{pill.icon}</span>}
@@ -209,7 +209,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
         {pill.small && !side && <span className={`text-[12.5px] truncate ${open?.pill ? "text-zinc-600" : "text-zinc-400"}`}>· {pill.small}</span>}
         {pillMenu && (open?.pill ? <ChevronUp size={15} className="shrink-0 text-zinc-500" /> : <ChevronDown size={15} className="shrink-0 text-zinc-400" />)}
       </button>
-      {pill.next && <button className="w-10 h-[42px] flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole after" onClick={pill.next} data-testid="hole-next"><ChevronRight size={19} /></button>}
+      {pill.next && <button className="w-10 h-11 flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole after" onClick={pill.next} data-testid="hole-next"><ChevronRight size={19} /></button>}
     </div>
   );
 
