@@ -356,8 +356,13 @@ test.describe("phone", () => {
     await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y - 300 }, 16);
     await settle(page);
     expect(await detent(page)).toBe("full");
+    // (a flick down goes one height: full to half, then half back into the tab)
     h = (await handle.boundingBox())!;
-    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y + 700 }, 16);
+    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y + 300 }, 16);
+    await settle(page);
+    expect(await detent(page)).toBe("half");
+    h = (await handle.boundingBox())!;
+    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y + 300 }, 16);
     await away();
     // The keyboard: the handle is a button that takes the arrow keys
     await design.tap();
@@ -436,9 +441,9 @@ test.describe("phone", () => {
   });
 
   test("the app never scrolls as a whole when something low in the sheet is brought into view", async ({ page }) => {
-    // (on the Design step, its panel up at half height)
+    // (on the Site step, its long panel up at half height)
     await oneHole(page);
-    await nav(page).getByRole("button", { name: /Design/ }).tap();
+    await nav(page).getByRole("button", { name: /Site/ }).tap();
     await expect.poll(() => detent(page)).toBe("half");
     await settle(page);
     const before = (await page.getByTestId("plan").boundingBox())!;
