@@ -1023,7 +1023,9 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
   const openPanel = useCallback(() => {
     setDetent("peek");
     setPanelOpen(true);
+    // (drawn low first, so it grows; a screen that isn't drawing frames gets there anyway)
     requestAnimationFrame(() => requestAnimationFrame(() => setDetent("half")));
+    window.setTimeout(() => setDetent(d => (d === "peek" ? "half" : d)), 80);
   }, []);
   const toggle = useCallback(() => { if (panelOpen) setPanelOpen(false); else openPanel(); }, [panelOpen, openPanel]);
   const onStep = (s: Step) => goStep(s, setDetent, toggle);
