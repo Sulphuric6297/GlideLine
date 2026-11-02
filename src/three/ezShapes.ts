@@ -654,7 +654,11 @@ export const ezTree = (shape: TreeShape, spec: TreeSpec, detail: Detail): TreePr
     const ownBark = CUSTOM[spec.preset] ? t.options.bark.tint : undefined;
     const barkMat = materialFor("bark", () => madeOrTemplate().branchesMesh.material as THREE.MeshPhongMaterial, `${t.options.bark.type}${ownBark ?? ""}`, ownBark);
     const leafMat = materialFor("leaves", () => madeOrTemplate().leavesMesh.material as THREE.MeshPhongMaterial, t.options.leaves.type);
-    const h = Math.max(0.01, box.max.y - box.min.y), w = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
+    // (stood on its trunk's foot, the grower's origin, not its lowest point: branches starting low
+    // on the trunk hang below it, and lifting the tree till their tips touched left the trunk in
+    // the air; they meet the ground instead. Its height is its top's above that foot.)
+    const foot = Math.max(0, box.min.y);
+    const h = Math.max(0.01, box.max.y - foot), w = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
     const bush = shape === "bush", pine = shape === "conifer";
     const thin = CUSTOM[spec.preset]?.thin;
     const versions: [Detail, THREE.BufferGeometry, THREE.BufferGeometry][] = [
@@ -668,7 +672,7 @@ export const ezTree = (shape: TreeShape, spec: TreeSpec, detail: Detail): TreePr
     g = {} as Grown;
     for (const [d, bark, leaves] of versions) {
       for (const geo of [bark, leaves]) {
-        geo.translate(0, -box.min.y, 0);
+        geo.translate(0, -foot, 0);
         geo.scale(1 / h, 1 / h, 1 / h);
         geo.computeBoundingSphere();
         geo.computeBoundingBox();
