@@ -69,6 +69,16 @@ design tools and the PDGA guidance the app follows.
   `cd server && npm ci && npm run dev` with a `server/.env` (git-ignored), and
   `VITE_SERVER=1 npm run dev` for the app (it proxies `/api` to the server).
 
+## Design (read before any change someone can see)
+
+**Each platform matches the GUI of everything else on that platform.** A computer's version is
+built from the computer's parts (the side panel's sections and fields, the toolbar, the map's
+floating buttons); a phone's from the phone's (the glass bar, the steps, the panel out of its
+tab). Share names, order and behaviour, not the layout. Before showing a mockup and before
+building, answer the questions in `docs/DESIGN.md` for the phone **and** the computer, in writing,
+and wait for the owner's OK. After building, use it in the browser on both, with real taps and
+clicks, and look at screenshots of both.
+
 ## How to work
 
 - **Look at the real app, not just the tests.** For any UI change or UI bug:

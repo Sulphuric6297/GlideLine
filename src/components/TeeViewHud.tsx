@@ -130,10 +130,18 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
     if (!running) { setIdle(false); return; }
     let t = window.setTimeout(() => setIdle(true), 3000);
     const wake = (e: Event) => {
+      // (only that tap's own click, under the same finger: a tap the view keeps to itself makes no
+      // click, and the next tap somewhere else, Pause say, must still work)
       if (idleNow.current && e.type === "pointerdown" && !(e.target as HTMLElement | null)?.closest?.('[data-testid="fly-line"]')) {
-        const swallow = (c: Event) => { c.preventDefault(); c.stopPropagation(); };
-        window.addEventListener("click", swallow, { capture: true, once: true });
-        window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 600);
+        const at = e as PointerEvent;
+        const swallow = (c: Event) => {
+          const m = c as MouseEvent;
+          if (Math.hypot(m.clientX - at.clientX, m.clientY - at.clientY) > 12) return;
+          c.preventDefault(); c.stopPropagation();
+          window.removeEventListener("click", swallow, { capture: true });
+        };
+        window.addEventListener("click", swallow, { capture: true });
+        window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 500);
       }
       setIdle(false); window.clearTimeout(t); t = window.setTimeout(() => setIdle(true), 3000);
     };
