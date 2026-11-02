@@ -126,6 +126,8 @@ type Props = {
 
 export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want, from, line, tucked = false, center, inset = 0 }: Props) {
   const [open, setOpen] = useState<Open>(null);
+  const openNow = useRef<Open>(null);
+  openNow.current = open;
   const [stack, setStack] = useState<{ title: string; node: ReactNode }[]>([]);
   const [closing, setClosing] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
@@ -142,10 +144,15 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
     rowRef.current?.animate?.([{ transform: "translateX(48px)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 260, easing: ease });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // (closed after its shrink: only the one it was asked of, never one opened in the meantime)
   const close = useCallback(() => {
     if (!open) return;
+    const id = open.id;
     setClosing(true);
-    window.setTimeout(() => { setOpen(null); setStack([]); setClosing(false); }, 130);
+    window.setTimeout(() => {
+      if (openNow.current?.id !== id) return;
+      setOpen(null); setStack([]); setClosing(false);
+    }, 130);
   }, [open]);
   // (another thing picked, another tool: nothing left open)
   useEffect(() => { setOpen(null); setStack([]); }, [remember]);
@@ -296,9 +303,9 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   return (
     <BarNav.Provider value={nav}>
       {/* (what's open closes on a tap on the map, which goes no further) */}
-      {open && <div className="absolute inset-0 z-[34]" onPointerDown={e => { e.preventDefault(); e.stopPropagation(); close(); }} data-testid="bar-away" />}
+      {open && <div className="absolute inset-0 z-[34] pointer-events-auto" onPointerDown={e => { e.preventDefault(); e.stopPropagation(); close(); }} data-testid="bar-away" />}
       {open && root && (
-        <div className={`absolute z-[36] bg-[rgba(20,27,20,0.96)] border border-white/10 shadow-2xl shadow-black/50 rounded-[26px] p-1.5 ${closing ? "dg-shrink" : "dg-grow"}`}
+        <div className={`absolute z-[36] pointer-events-auto bg-[rgba(20,27,20,0.96)] border border-white/10 shadow-2xl shadow-black/50 rounded-[26px] p-1.5 ${closing ? "dg-shrink" : "dg-grow"}`}
           style={side ? { right: 122, top: 12, maxHeight: "calc(100% - 24px)", width, transformOrigin: origin, display: "flex", flexDirection: "column" } : { left, width, bottom: panelBottom, maxHeight: "min(36dvh, 340px)", transformOrigin: origin, display: "flex", flexDirection: "column" }}
           role="dialog" aria-label={open.pill ? "More" : openSetting?.name} data-testid={open.pill ? "pill-menu" : "bar-menu"} onClick={picked}>
           {(deep || (!open.pill && !open.wide)) && (
