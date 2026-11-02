@@ -1044,17 +1044,18 @@ test.describe("phone", () => {
     await expect(page.getByTestId("fly-line")).toBeVisible();
     await expect(page.getByTestId("tap-switch")).toHaveCount(0);
     // Left alone, the bar folds to its timeline; a tap on the view brings it back, and only that
-    await expect(bar.getByTestId("bar-row")).toHaveCount(0, { timeout: 15_000 });
+    await expect(bar.getByTestId("bar-row")).toBeHidden({ timeout: 15_000 });
     await expect(page.getByTestId("fly-line")).toBeVisible();
     await page.touchscreen.tap(200, 300);
     await expect(bar.getByTestId("bar-row")).toBeVisible();
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
-    // Pause holds it on its moment, the bar staying up (it ends paused too, on its last picture)
+    // Folded again, Pause on its timeline pauses it at once (the bar coming back as it does) and
+    // holds it on its moment, the bar staying up (it ends paused too, on its last picture)
+    await expect(bar.getByTestId("bar-row")).toBeHidden({ timeout: 15_000 });
     const paused = () => page.evaluate(() => !!(window as any).__dgEditor().flyPaused);
-    const state = () => page.evaluate(() => { const e = (window as any).__dgEditor(), b = document.querySelector('[data-testid="fly-line"] [data-testid="hud-flyover"]'); return JSON.stringify({ flyover: e.flyover, paused: e.flyPaused, loading: e.flyLoading, stand: e.teeStand, clock: (window as any).__dgView.flyClock(), label: b?.getAttribute("aria-label"), cover: !!document.querySelector('[data-testid="flyover-loading"]') }); });
-    const was = await state();
     if (!(await paused())) await bar.getByTestId("hud-flyover").tap();
-    await expect.poll(paused, { message: `before ${was}; after ${await state()}` }).toBe(true);
+    await expect.poll(paused).toBe(true);
+    await expect(bar.getByTestId("bar-row")).toBeVisible();
     expect(await flying()).toBe(true);
     await expect(bar.getByTestId("hud-flyover")).toHaveAttribute("aria-label", "Play");
     await page.waitForTimeout(3500);
