@@ -8,7 +8,7 @@
 // buttons over the map (there is no Enter, Backspace or Esc on a phone), and holding a finger on
 // a thing opens its menu (the right-click), or on open ground what can start there.
 import { Woods } from "../Woods";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type UIEvent } from "react";
 import { Axe, Circle, Compass, Flag, Gauge, LayoutGrid, Menu, ChevronDown, ListChecks, ChevronLeft, Copy, Ellipsis, Eye, FilePlus, FolderOpen, HelpCircle, LocateFixed, PanelLeftClose, PanelLeftOpen, Redo2, Save, Search, Trash2, TreeDeciduous, Undo2, X } from "lucide-react";
 import { holeLabel } from "../../lib/course";
 import { AREA_KINDS } from "../../constants";
@@ -537,12 +537,13 @@ function PhoneToolBar({ faded, side, onHeight, mainH }: BarProps) {
     : { name: t ? t.short : "", icon: t?.icon, small: drawing ? `${ed.drawPoints} ${ed.drawPoints === 1 ? "point" : "points"}` : undefined };
   const done = () => { stopDrawing(); ed.set({ tool: "select", reshapeId: null }); };
   // (the sliders between the top bar and the bar, on the left)
-  const top = 128, room = Math.max(160, mainH - top - 160);
+  // (upright, the bar along the foot; sideways, up the right edge, the sliders the whole height)
+  const top = side ? 76 : 128, room = Math.max(160, mainH - top - (side ? 16 : 160));
   const sizeH = Math.min(250, edge.strength ? room * 0.55 : room * 0.8);
   const ring = (v: number | null) => getView()?.previewBrush(v);
   return (
     <>
-      {hint && !drawing && !faded && !menuOpen && <div className="absolute left-1/2 -translate-x-1/2 z-[33] max-w-[calc(100%-24px)] px-4 py-2 rounded-full glass border border-white/10 shadow-xl text-[13.5px] font-semibold text-zinc-50 text-center pointer-events-none dg-fade-in" style={{ bottom: 146 }} data-testid="tool-hint">{hint}</div>}
+      {hint && !drawing && !faded && !menuOpen && <div className="absolute left-1/2 -translate-x-1/2 z-[33] max-w-[calc(100%-24px)] px-4 py-2 rounded-full glass border border-white/10 shadow-xl text-[13.5px] font-semibold text-zinc-50 text-center pointer-events-none dg-fade-in" style={side ? { bottom: 16, left: "calc(50% - 60px)" } : { bottom: 146 }} data-testid="tool-hint">{hint}</div>}
       {edge.size && (
         <EdgeSlider testid="brush-size" label="Brush size" value={ed.brushSize} min={4} max={150} step={1} format={v => fmtDist(v * 2, units)} icon={<Circle size={18} />}
           top={top} height={sizeH} faded={faded} onChange={v => { ed.set({ brushSize: v }); ring(v); }} onSlide={on => ring(on ? useEditor.getState().brushSize : null)} />
@@ -552,7 +553,7 @@ function PhoneToolBar({ faded, side, onHeight, mainH }: BarProps) {
           top={top + sizeH + 16} height={Math.min(200, room - sizeH - 16)} faded={faded} onChange={v => ed.set({ brushStrength: v })} />
       )}
       <GlassBar remember={`tool:${t?.id ?? ed.tool}`} pill={pill} pillMenu={own ? undefined : <ToolGrid />} pillWide settings={drawing ? [] : settings} onDone={done} doneLabel={own ? "Done reshaping" : "Done: back to Select"}
-        replace={drawing ? <div className="h-[64px]" aria-hidden /> : undefined} faded={faded} side={side} onHeight={onHeight} onOpen={setMenuOpen} testid="tool-bar" />
+        replace={drawing ? <div className="h-[64px]" aria-hidden /> : undefined} faded={faded} side={side} onHeight={onHeight} onOpen={id => setMenuOpen(!!id)} testid="tool-bar" />
     </>
   );
 }
@@ -575,6 +576,18 @@ function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: Course
   const kind = item.type === "area" || item.type === "line" || item.type === "structure" ? `${item.type}:${item.kind}` : item.type;
   const pill = { name: itemTitle(item), small: holeId ? `Hole ${holeLabel(doc, holeId)}` : item.locked ? "Locked in place" : undefined, testid: "selection-header" };
   const placeable = item.type !== "area" && item.type !== "line" && item.type !== "structure";
+  // (a height opened in 3D: the camera looks at it from the side, close up, and back after; not as
+  // the thing is picked, only when the setting is tapped)
+  const [opened, setOpened] = useState<string | null>(null);
+  const threeD = useEditor(e => e.view === "3d");
+  const sideOn = threeD && (opened === "height" || opened === "raised");
+  useEffect(() => {
+    if (!sideOn) return;
+    getView()?.lookAtHeight(item.id);
+    return () => getView()?.lookAtHeight(null);
+  }, [sideOn, item.id]);
+  // (a part of a field tapped on the map: its Parts open)
+  const part = useEditor(e => e.fieldPart);
   const menu = (
     <div className="flex flex-col gap-0.5">
       {holeId && <ActRow icon={<Flag size={18} />} label={`Hole ${holeLabel(doc, holeId)}`} hint="Its par, fairway, tees and pins" onClick={() => select(holeId)} testid="pill-hole" />}
@@ -582,7 +595,7 @@ function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: Course
       <PillActions id={item.id} />
     </div>
   );
-  return <GlassBar remember={kind} pill={pill} pillMenu={menu} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="item-strip" />;
+  return <GlassBar remember={kind} pill={pill} pillMenu={menu} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} onOpen={setOpened} want={part ? "parts" : null} testid="item-strip" />;
 }
 
 /** Things picked together: what they are, and what can be done with them all. */
@@ -808,7 +821,8 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
   const sheet = (!immersive || pickedInTee) && !welcome && !pageTools && !bar;
   const [barH, setBarH] = useState(132);
   const sheetH = bar ? barH + 18 : sheet ? restH : 0;
-  const faded = useFingerDown(bar);
+  // (a tool's bar only: a picked thing's stays, its numbers following its handles as they're dragged)
+  const faded = useFingerDown(bar && panel.mode === "tool");
 
   useEffect(() => {
     const el = main.current;
@@ -979,15 +993,36 @@ function RailCourse({ onMenu }: { onMenu: () => void }) {
   );
 }
 
+/** A phone on its side (not a tablet held upright): its tools and what's picked go up the right
+ * edge in the glass bar, the map keeping its height. */
+const SIDEWAYS = "(max-height: 500px) and (min-aspect-ratio: 3/2)";
+const sidewaysNow = () => typeof window !== "undefined" && !!window.matchMedia?.(SIDEWAYS).matches;
+const onSideways = (fn: () => void) => { const m = window.matchMedia?.(SIDEWAYS); m?.addEventListener("change", fn); return () => m?.removeEventListener("change", fn); };
+
 function RailShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts }: ShellProps) {
   const ed = useEditor();
+  const readOnly = useCourse(s => s.readOnly);
   const [open, setOpen] = useState(true);
+  const sideways = useSyncExternalStore(onSideways, sidewaysNow, () => false);
   const drawBar = useDrawBarShown();
   const { menus, openApp, openMore } = useMenus(onHelp, onGoTo);
   const panel = usePanel({ onFindSite, onMore: openMore });
   // (on site: the walk's own screen, over the 3D view or the map)
   const onSite = useOnSite(s => !!s.on);
   const immersive = !!ed.teeView || onSite;
+  // (sideways: a tool in use or a thing picked on the bar up the right edge, not in the panel)
+  const bar = sideways && !readOnly && !welcome && (panel.mode === "tool" || panel.mode === "selection") && !immersive;
+  const faded = useFingerDown(bar && panel.mode === "tool");
+  const [mainH, setMainH] = useState(400);
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setMainH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => { const v = getView(); if (v) v.rightInset = bar ? 120 : 0; }, [bar]);
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => { body.current?.scrollTo({ top: 0 }); }, [panel.key]);
   useEffect(() => {
@@ -1003,15 +1038,16 @@ function RailShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts 
     <div className="dg-compact fixed inset-0 flex bg-zinc-950 text-zinc-100 overflow-hidden isolate" data-layout="rail" onScroll={keepPut}>
       <Woods />
       {!immersive && <NavRail onStep={onStep} onMenu={openApp} panelOpen={open} onPanel={() => setOpen(o => !o)} />}
-      {!immersive && open && (
+      {!immersive && open && !bar && (
         <aside className="glass dg-side w-[300px] [@media(min-height:600px)]:w-[340px] shrink-0 flex flex-col m-2 ml-2 rounded-[24px] overflow-hidden relative z-30" aria-label={panel.mode === "selection" ? "Selection" : "Step panel"} data-testid="side-sheet">
           <RailCourse onMenu={openApp} />
           <div className="shrink-0 pt-2">{panel.header}</div>
           <div ref={body} className="dg-scroll flex-1 min-h-0 overflow-y-auto pb-[env(safe-area-inset-bottom)]">{panel.body}</div>
         </aside>
       )}
-      <main className="relative flex-1 min-w-0">
-        <MapViewport onContextMenu={onContextMenu} compact="rail" controlsTop={8} controlsRoom={immersive || design ? 0 : 999} />
+      <main ref={mainRef} className="relative flex-1 min-w-0">
+        <MapViewport onContextMenu={onContextMenu} compact="rail" controlsTop={8} controlsRoom={immersive || design ? 0 : 999} controlsRight={bar ? 120 : 8} />
+        {bar && <PhoneBar side faded={faded} onHeight={() => {}} mainH={mainH} />}
         {design && <div className="absolute inset-0 z-20"><MapDesigner compact topInset={0} preview={ed.step === "export"} /></div>}
         {!immersive && <GettingStarted rail />}
         {!immersive && <DrawBar bottom={12} />}

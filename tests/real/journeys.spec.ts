@@ -366,9 +366,11 @@ test("on a phone, the Trees tool has the same kinds, woods included, and the way
   const back = phone.getByTestId("back-to-course");
   if (await back.isVisible().catch(() => false)) await back.click();
   await phone.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "add-tree" }));
-  for (const t of ["tree-kind-deciduous", "tree-kind-conifer", "tree-kind-bush", "area-kind-woods", "line-kind-hedge"]) await expect(phone.getByTestId(t)).toBeAttached();
-  await expect(phone.getByTestId("area-kind-woods")).toBeVisible();
-  await expect(phone.getByTestId("draw-shape-points")).toBeAttached();
+  // (the tool's bar: Kind opens the kinds just above it, Plant the ways to plant a stand)
+  await phone.getByTestId("tool-options").click();
+  for (const t of ["tree-kind-deciduous", "tree-kind-conifer", "tree-kind-bush", "area-kind-woods", "line-kind-hedge"]) await expect(phone.getByTestId(t)).toBeVisible();
+  await phone.getByTestId("tool-shapes").click();
+  for (const w of ["one", "points", "box", "circle", "freehand", "paint"]) await expect(phone.getByTestId(`draw-shape-${w}`)).toBeVisible();
   await phone.close();
 });
 

@@ -46,7 +46,7 @@ const scaleBar = (pxPerFoot: number, targetPx: number, units: "ft" | "m") => {
  * buttons under the top bar, `controlsTop` from the top, the turn buttons left out when less
  * than `controlsRoom` pixels are free above the panel) or a phone on its side (2D/3D with them).
  */
-export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsRoom = 999 }: { onContextMenu: (info: MenuInfo) => void; compact?: "phone" | "rail"; controlsTop?: number; controlsRoom?: number }) {
+export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsRoom = 999, controlsRight = 8 }: { onContextMenu: (info: MenuInfo) => void; compact?: "phone" | "rail"; controlsTop?: number; controlsRoom?: number; controlsRight?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<CourseView | null>(null);
   const [info, setInfo] = useState<ViewInfo | null>(null);
@@ -299,7 +299,7 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
         <MyLocationDot view={view} stats={stats} />
         {plotBar}
         {obBar}
-        {!ed.teeView && controlsRoom > 0 && <TouchControls view={view} info={info} scale={info && flat ? scaleBar(info.pxPerUnit, 72, doc.units) : null} phone={compact === "phone"} top={controlsTop} room={controlsRoom} threeD={ed.view === "3d"} editing={boxable} />}
+        {!ed.teeView && controlsRoom > 0 && <TouchControls view={view} info={info} scale={info && flat ? scaleBar(info.pxPerUnit, 72, doc.units) : null} phone={compact === "phone"} top={controlsTop} room={controlsRoom} right={controlsRight} threeD={ed.view === "3d"} editing={boxable} />}
       </div>
     );
   }
@@ -395,7 +395,7 @@ function ObPickBar({ view, id, edge, cut, top, right }: { view: CourseView | nul
 /** The map's controls for a finger: 44 px buttons (zoom and turn also work by pinching and
  * twisting; these are the one-finger way, and the way for anyone who can't pinch). `editing`: the
  * course can be changed here (Design or Site, not view only): box select is offered. */
-function TouchControls({ view, info, scale, phone, top, room, threeD, editing }: { view: CourseView | null; info: ViewInfo | null; scale: { px: number; label: string } | null; phone: boolean; top: number; room: number; threeD: boolean; editing: boolean }) {
+function TouchControls({ view, info, scale, phone, top, room, right = 8, threeD, editing }: { view: CourseView | null; info: ViewInfo | null; scale: { px: number; label: string } | null; phone: boolean; top: number; room: number; right?: number; threeD: boolean; editing: boolean }) {
   const set = useEditor(e => e.set);
   const boxing = useEditor(e => e.dragSelect && e.tool === "select");
   const b = "w-11 h-11 flex items-center justify-center text-zinc-100 active:bg-white/[0.13] focus:outline-none focus-visible:bg-white/[0.13]";
@@ -431,7 +431,7 @@ function TouchControls({ view, info, scale, phone, top, room, threeD, editing }:
           <div className="h-1.5 border-x-2 border-b-2 border-white" style={{ width: scale.px }} />
         </div>
       )}
-      <div className="absolute right-2 z-10 flex flex-col gap-2 items-end pointer-events-none" style={{ top }} data-testid="map-controls">
+      <div className="absolute z-10 flex flex-col gap-2 items-end pointer-events-none" style={{ top, right }} data-testid="map-controls">
         {!phone && <ViewToggle look="rail" />}
         <div className={phone ? "flex flex-col gap-2 items-end" : "grid grid-cols-2 gap-2"}>
           <div className="flex flex-col gap-2">

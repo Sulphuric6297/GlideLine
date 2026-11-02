@@ -4692,6 +4692,17 @@ export class CourseView {
         deg = ((deg % 360) + 360) % 360;
         return it.type === "tee" ? { rotation: deg, aimFixed: true } : { rotation: deg };
       }), { title: sel.type === "mando" ? "Drag to turn the arrow · Shift snaps to 15°" : "Drag to turn it · Shift snaps to 15°" });
+      // (a tee's pad: its length from its back edge, its width from its side, drawn as it is)
+      if (sel.type === "tee") {
+        const axes = (t: TeeItem) => { const a = teeAim(this.doc!.course, t) * DEG; return { f: { x: Math.cos(a), y: Math.sin(a) }, s: { x: -Math.sin(a), y: Math.cos(a) } }; };
+        const at = (t: TeeItem, v: P, d: number) => { const x = t.x + v.x * d, y = t.y + v.y * d; return new THREE.Vector3(x, this.h(x, y) + 0.3, y); };
+        add("radius", () => { const t = this.item(id) as TeeItem | null; return t ? at(t, axes(t).f, -t.padLength / 2) : null; },
+          e => this.planeDrag(e, id, (p, it) => { const t = it as TeeItem, f = axes(t).f; return { padLength: Math.max(4, Math.min(30, Math.round(Math.abs((p.x - t.x) * f.x + (p.y - t.y) * f.y) * 4) / 2)) }; }),
+          { title: "Drag to make the pad longer or shorter" });
+        add("radius", () => { const t = this.item(id) as TeeItem | null; return t ? at(t, axes(t).s, t.padWidth / 2) : null; },
+          e => this.planeDrag(e, id, (p, it) => { const t = it as TeeItem, sv = axes(t).s; return { padWidth: Math.max(2, Math.min(20, Math.round(Math.abs((p.x - t.x) * sv.x + (p.y - t.y) * sv.y) * 4) / 2)) }; }),
+          { title: "Drag to make the pad wider or narrower" });
+      }
     }
   }
 

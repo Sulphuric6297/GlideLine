@@ -97,11 +97,13 @@ type Props = {
   testid?: string;
   /** Its height as it rests, for what keeps clear of it. */
   onHeight?: (px: number) => void;
-  /** Whether a menu or dial is open (what floats over the map steps aside meanwhile). */
-  onOpen?: (open: boolean) => void;
+  /** Which setting's menu or dial is open ("pill": the pill's; null: none), as it changes. */
+  onOpen?: (id: string | null) => void;
+  /** A setting to open, asked for from outside (a field's part tapped on the map: its Parts). */
+  want?: string | null;
 };
 
-export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen }: Props) {
+export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want }: Props) {
   const [open, setOpen] = useState<Open>(null);
   const [stack, setStack] = useState<{ title: string; node: ReactNode }[]>([]);
   const [closing, setClosing] = useState(false);
@@ -116,7 +118,16 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   }, [open]);
   // (another thing picked, another tool: nothing left open)
   useEffect(() => { setOpen(null); setStack([]); }, [remember]);
-  useEffect(() => { onOpen?.(!!open); }, [!!open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { onOpen?.(open?.id ?? null); }, [open?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!want) return;
+    const el = rowRef.current?.querySelector<HTMLElement>(`[data-setting="${want}"]`);
+    const s = settings.find(x => x.id === want);
+    if (!el || !s?.control) return;
+    el.scrollIntoView?.({ inline: "nearest", block: "nearest" });
+    setStack([]);
+    setOpen({ id: want, from: el.getBoundingClientRect(), wide: !!s.wide, pill: false });
+  }, [want]); // eslint-disable-line react-hooks/exhaustive-deps
   // A choice picked from a menu of one set of choices closes it, after a moment to see it lit (a
   // menu with several sets, a wood's penalty and its OB side say, stays for the next)
   const picked = (e: React.MouseEvent) => {
@@ -190,12 +201,12 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   const pillEl = (
     <div className={`flex items-center h-[42px] rounded-full border shadow-xl transition-opacity duration-200 ${open && !open.pill ? "opacity-0 pointer-events-none" : ""} ${open?.pill ? "bg-zinc-100 border-transparent text-zinc-900" : "glass border-white/10 text-zinc-50"}`} data-testid={pill.testid ?? "bar-pill"}>
       {pill.prev && <button className="w-10 h-[42px] flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole before" onClick={pill.prev} data-testid="hole-prev"><ChevronLeft size={19} /></button>}
-      <button className={`h-[42px] ${pill.prev ? "px-1" : "pl-3.5"} pr-3 flex items-center gap-2 rounded-full min-w-0 max-w-[calc(100vw-120px)] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`}
+      <button className={`h-[42px] ${pill.prev ? "px-1" : "pl-3.5"} pr-3 flex items-center gap-2 rounded-full min-w-0 ${side ? "flex-1 justify-center !px-2 gap-1" : "max-w-[calc(100vw-120px)]"} focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`}
         aria-haspopup={pillMenu ? "menu" : undefined} aria-expanded={!!open?.pill} disabled={!pillMenu}
         onClick={e => pillMenu && toggle("pill", e.currentTarget, pillWide, true)} data-testid="pill-open">
-        {pill.icon && <span className={`shrink-0 flex ${open?.pill ? "" : "text-orange-300"}`}>{pill.icon}</span>}
+        {pill.icon && !side && <span className={`shrink-0 flex ${open?.pill ? "" : "text-orange-300"}`}>{pill.icon}</span>}
         <span className="text-[15px] font-bold truncate" data-testid="sheet-title">{pill.name}</span>
-        {pill.small && <span className={`text-[12.5px] truncate ${open?.pill ? "text-zinc-600" : "text-zinc-400"}`}>· {pill.small}</span>}
+        {pill.small && !side && <span className={`text-[12.5px] truncate ${open?.pill ? "text-zinc-600" : "text-zinc-400"}`}>· {pill.small}</span>}
         {pillMenu && (open?.pill ? <ChevronUp size={15} className="shrink-0 text-zinc-500" /> : <ChevronDown size={15} className="shrink-0 text-zinc-400" />)}
       </button>
       {pill.next && <button className="w-10 h-[42px] flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole after" onClick={pill.next} data-testid="hole-next"><ChevronRight size={19} /></button>}
@@ -242,7 +253,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
       {open && <div className="absolute inset-0 z-[34]" onPointerDown={e => { e.preventDefault(); e.stopPropagation(); close(); }} data-testid="bar-away" />}
       {open && root && (
         <div className={`absolute z-[36] bg-[rgba(20,27,20,0.96)] border border-white/10 shadow-2xl shadow-black/50 rounded-[26px] p-1.5 ${closing ? "dg-shrink" : "dg-grow"}`}
-          style={side ? { right: 122, top: 12, bottom: 12, width, transformOrigin: origin } : { left, width, bottom: panelBottom, maxHeight: "min(36dvh, 340px)", transformOrigin: origin, display: "flex", flexDirection: "column" }}
+          style={side ? { right: 122, top: 12, maxHeight: "calc(100% - 24px)", width, transformOrigin: origin, display: "flex", flexDirection: "column" } : { left, width, bottom: panelBottom, maxHeight: "min(36dvh, 340px)", transformOrigin: origin, display: "flex", flexDirection: "column" }}
           role="dialog" aria-label={open.pill ? "More" : openSetting?.name} data-testid={open.pill ? "pill-menu" : "bar-menu"} onClick={picked}>
           {(deep || (!open.pill && !open.wide)) && (
             <div className="shrink-0 flex items-center gap-1.5 px-2.5 pt-1.5 pb-1 text-[13px] font-semibold text-zinc-400">
