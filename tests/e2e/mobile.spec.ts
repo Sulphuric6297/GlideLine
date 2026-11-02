@@ -1044,22 +1044,22 @@ test.describe("phone", () => {
     await expect(page.getByTestId("fly-line")).toBeVisible();
     await expect(page.getByTestId("tap-switch")).toHaveCount(0);
     // Left alone, the bar folds to its timeline; a tap on the view brings it back, and only that
-    await expect(bar.getByTestId("bar-row")).toBeHidden({ timeout: 15_000 });
+    await expect(bar.locator("[data-tucked]")).toHaveCount(1, { timeout: 15_000 });
     await expect(page.getByTestId("fly-line")).toBeVisible();
     await page.touchscreen.tap(200, 300);
-    await expect(bar.getByTestId("bar-row")).toBeVisible();
+    await expect(bar.locator("[data-tucked]")).toHaveCount(0);
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
     // Folded again, Pause on its timeline pauses it at once (the bar coming back as it does) and
     // holds it on its moment, the bar staying up (it ends paused too, on its last picture)
-    await expect(bar.getByTestId("bar-row")).toBeHidden({ timeout: 15_000 });
+    await expect(bar.locator("[data-tucked]")).toHaveCount(1, { timeout: 15_000 });
     const paused = () => page.evaluate(() => !!(window as any).__dgEditor().flyPaused);
     if (!(await paused())) await bar.getByTestId("hud-flyover").tap();
     await expect.poll(paused).toBe(true);
-    await expect(bar.getByTestId("bar-row")).toBeVisible();
+    await expect(bar.locator("[data-tucked]")).toHaveCount(0);
     expect(await flying()).toBe(true);
     await expect(bar.getByTestId("hud-flyover")).toHaveAttribute("aria-label", "Play");
     await page.waitForTimeout(3500);
-    await expect(bar.getByTestId("bar-row")).toBeVisible();
+    await expect(bar.locator("[data-tucked]")).toHaveCount(0);
     // ✓ goes back to the map
     await bar.getByTestId("bar-done").tap();
     await expect.poll(async () => (await editorState(page)).teeView).toBeNull();

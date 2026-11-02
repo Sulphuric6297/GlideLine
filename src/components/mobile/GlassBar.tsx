@@ -322,16 +322,16 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
       {/* (only the pill and the row take a touch: the room kept for the drawing's buttons doesn't) */}
       <div ref={boxRef} className={`absolute z-[35] pointer-events-none [&>*]:pointer-events-auto transition-opacity duration-200 ${faded ? "opacity-[0.14]" : ""} ${side ? "right-3 top-3 bottom-3 flex flex-col gap-2 items-stretch w-[98px]" : `${center ? "" : "left-2.5 right-2.5"} flex flex-col gap-2 items-start`}`}
         style={side ? undefined : center ? { bottom: bottom + kb + 18, left: `calc(50% + ${inset / 2}px)`, width: `min(${center}px, calc(100% - ${20 + inset}px))`, transform: "translateX(-50%)" } : { bottom: bottom + kb + 18 }} data-testid={testid}>
-        {/* (tucked: only the line, the pill and the row hidden, not taken out: the line stays the
-            same element, so a tap on it as the bar comes back still lands on what it touched) */}
+        {/* (tucked: only the line; the pill and the row fade out where they are, so nothing moves
+            and a tap on the line as the bar comes back lands on what it touched) */}
         {line && !side ? (
-          <div className={`w-full flex items-center gap-2 ${tucked ? "justify-center" : ""}`}>
-            <div className={`shrink-0 ${tucked ? "hidden" : ""}`}>{pillEl}</div>
-            <div className={tucked ? "w-[min(360px,100%)]" : "flex-1 min-w-0"}>{line}</div>
-            {noRow && !tucked && doneEl}
+          <div className="w-full flex items-center gap-2">
+            <div className={`shrink-0 transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""}`}>{pillEl}</div>
+            <div className="flex-1 min-w-0">{line}</div>
+            {noRow && <div className={`transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""}`}>{doneEl}</div>}
           </div>
         ) : pillEl}
-        {!noRow && <div className={`${side ? "flex-1 min-h-0" : "w-full"} ${replace !== undefined ? "!pointer-events-none" : ""} ${tucked && line ? "hidden" : ""}`}>{row}</div>}
+        {!noRow && <div className={`${side ? "flex-1 min-h-0" : "w-full"} transition-opacity duration-300 ${replace !== undefined || (tucked && line) ? "!pointer-events-none" : ""} ${tucked && line ? "opacity-0" : ""}`} data-tucked={tucked && line ? "" : undefined}>{row}</div>}
       </div>
     </BarNav.Provider>
   );
