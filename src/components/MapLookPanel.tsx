@@ -8,6 +8,7 @@ import { defaultStyle } from "../lib/course";
 import { COLOR_PICKS, tallGrassOf, treeMixOf } from "../lib/landscapes";
 import { LIGHT_MODES, LOOK_THEMES, PART_CHOICES, compassName, latitudeOf, lightOf, lookParts, partChanged, sunArc, sunFromOf, themeOf, type LookPart, type LookParts } from "../lib/mapLook";
 import { useCourse } from "../state/course";
+import { brushOnly } from "../lib/brushSpots";
 import type { MapStyle, PathTier } from "../types";
 import { ELEVATION_LOOKS, FineTuning, setStyle } from "./DesignPanel";
 import { ColorInput, Slider, Toggle, useKeepInPlace } from "./ui";
@@ -133,6 +134,7 @@ export const openLookPart = (p: Part) => { wanted = p; };
 
 export function MapLookPanel() {
   const s = useCourse(c => c.doc.style);
+  const hasBrush = useCourse(c => c.doc.items.some(i => i.type === "area" && brushOnly(i)));
   // (the trees open to start with: the part most changed)
   const [open, setOpen] = useState<Part | null>(() => { const w = wanted; wanted = null; return w ?? "trees"; });
   // (asked for by search or the 3D view's light link while it's up)
@@ -229,6 +231,8 @@ export function MapLookPanel() {
                         {/* (the trees themselves, their kinds, where they stand and how close, are the 3D
                         map's: Site, Trees. Here only how big the map draws them, in every look) */}
                         <LookSlider value={parts.trees.size} label="Size" min={0.6} max={1.5} step={0.05} format={pct} onDone={v => setPart("trees", { size: v })} />
+                        {/* (and the brush's bushes, where the course has brush) */}
+                        {hasBrush && <LookSlider value={parts.trees.brush ?? 1} label="Brush size" min={0.5} max={2} step={0.05} format={pct} onDone={v => setPart("trees", { brush: v })} />}
                       </>
                     )}
                     {p === "grass" && (

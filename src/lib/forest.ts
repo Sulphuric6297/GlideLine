@@ -528,6 +528,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       // (a field, court or play area: mown, no treetops over it; the map draws it on top)
       else if (a.kind === "field") { poly(FAIR, a.points); poly(CLEAR, offsetPolygon(a.points, (crownR * 0.8) / k)); }
       // (a wood of bushes only: its bushes drawn one by one, below, no woods floor or treetops)
+      // (a wood of bushes only: a few of its bushes drawn, below, on the ground as it is)
       else if (a.kind === "woods" && !brushOnly(a)) poly(WOODS, a.points);
     } else if (i.type === "line") {
       const l = i as LineItem;
@@ -859,7 +860,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
   const look = lookParts(s), pl = paintLight(s);
   // (Size, the one thing about the trees that's the map's: every tree in every look, the woods',
   // the measured and the placed, as big as its look draws it times this; 1 until it's moved)
-  const treeScale = look.trees.size / (themeOf(s).parts.trees.size || 1);
+  const treeScale = look.trees.size / (themeOf(s).parts.trees.size || 1), brushSize = look.trees.brush ?? 1;
   // (the newer looks: trees drawn as shapes after the ground, not stamped into the height field)
   const vector = look.trees.style !== "classic" && !opts.under;
   const vstyle = look.trees.style as Exclude<typeof look.trees.style, "classic">;
@@ -989,9 +990,10 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       }
     }
   }
-  // Underbrush on its own (the brush that came in with the import): its bushes and young trees,
-  // the very ones 3D grows (lib/brushSpots), low, under the trees; where brush areas overlap the
-  // smaller one's grows, as in 3D. Never closer together than reads at this scale.
+  // Underbrush on its own (the brush that came in with the import): a few of the bushes 3D grows
+  // (lib/brushSpots), low, under the trees, on the ground as it is; where brush areas overlap, the
+  // smaller one's grows, as in 3D. The map is an overview: the trees lead, the brush only says it's
+  // there, its bushes as big as Brush size says.
   const brushWoods = opts.under ? [] : (doc.items.filter(i => i.type === "area" && i.kind === "woods" && brushOnly(i as AreaItem) && (i as AreaItem).trees !== "none") as AreaItem[]);
   brushWoods.forEach((w, n) => {
     const box = boundsOf(w.points), sb = { a: toScreen({ x: box.minX, y: box.minY }), b: toScreen({ x: box.maxX, y: box.maxY }) };
@@ -1005,11 +1007,12 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     };
     const density = w.density ?? 1, level = density < 0.75 ? "light" : density > 1.4 ? "heavy" : "medium";
     // (closer than reads: fewer bushes, each bigger, the same ground covered)
-    const least = crownR / k, closer = Math.min(1, BRUSH[level].spacing / least), grow = Math.min(2, 1 / closer);
-    const spots = underbrushSpots(w.points, keepOut, level, 0, w.points, w.brushKind ?? "mixed", closer);
+    // (a bush every three and a half treetops or so, none of the young trees, smaller than in 3D)
+    const least = (crownR * 3.5) / k, closer = Math.min(1, BRUSH[level].spacing / least), size = 0.7 * brushSize;
+    const spots = underbrushSpots(w.points, keepOut, level, 0, w.points, w.brushKind ?? "mixed", closer).filter(b => b.growth);
     for (const b of spots) {
       const sp = toScreen(b);
-      const r = Math.max(1.6 * pt, (b.width / 2) * k * treeScale * grow);
+      const r = Math.max(1.6 * pt, (b.width / 2) * k * treeScale * size);
       if (sp.x < -r || sp.y < -r || sp.x > W + r || sp.y > H + r) continue;
       const top = Math.max(r * 1.1, b.height * k * treeScale), seed = spotDraw(b, 31), tone = 1 + Math.floor(seed * 6);
       if (vector) { vtrees.push({ x: sp.x, y: sp.y, r: b.growth ? r * 0.9 : r, h: b.growth ? Math.min(top, r * 1.1) : top, pine: false, col: treeColor(spotDraw(b, 32)), seed, look: null }); continue; }
