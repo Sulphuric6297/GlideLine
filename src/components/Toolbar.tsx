@@ -234,7 +234,7 @@ const TOUCH_SHAPE_HINTS: Record<DrawShape, string> = {
   box: "Tap one corner, then the opposite corner",
   circle: "Tap the middle, then the edge",
   freehand: "Draw with one finger; lift it to finish",
-  paint: "Paint the area on with one finger; lift it to finish"
+  paint: "Paint the area on with one finger, a stroke at a time"
 };
 
 /** A color's mark on a chip: a filled square for an area, a stroke for a line, a dot otherwise. */

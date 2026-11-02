@@ -277,7 +277,7 @@ const addField = (item: AreaItem) => {
 const standOf = (k: TreeKind): Partial<AreaItem> => ({ pines: k === "conifer" ? 1 : 0, bushes: k === "bush" ? 1 : undefined });
 
 /** An area, line or built thing (bridge, building...) drawn with the drawing tools. */
-export const addDrawn = (kind: "area" | "line" | "structure", points: P[], opts: { straight?: boolean } = {}) => {
+export const addDrawn = (kind: "area" | "line" | "structure", points: P[], opts: { straight?: boolean; pick?: boolean } = {}) => {
   const ed = editor();
   // (a field by its corners: the Park tool's kind; fields are straight between their corners anyway)
   if (kind === "area" && ed.areaKind === "field") return addField(createField(ed.fieldKind, points));
@@ -288,7 +288,8 @@ export const addDrawn = (kind: "area" | "line" | "structure", points: P[], opts:
   // (a building, road, parking or water drawn over trees: those standing in it go, the same step)
   const under = keepsTreesOut(item) ? new Set(getDoc().items.filter(i => i.type === "tree" && !i.locked && treeFree([item])(i)).map(i => i.id)) : new Set<string>();
   changeDoc(d => ({ items: [...d.items.filter(i => !under.has(i.id)), item] }));
-  select(item.id);
+  // (painted: not picked, the brush still in hand)
+  if (opts.pick !== false) select(item.id);
   if (under.size) toast(`Took out ${under.size} tree${under.size === 1 ? "" : "s"} standing in it.`, "info", true);
 };
 

@@ -69,10 +69,13 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
       onHole: (tee, basket) => addHole(tee, basket),
       onDrawn: (kind, pts, opts) => {
         // (drawn as a patch of a wood: no area of its own)
-        const { patchFor, patchBrush } = useEditor.getState();
+        const { patchFor, patchBrush, drawShape } = useEditor.getState();
+        // (painted on open ground: the brush stays in hand for the next stroke, as on an area,
+        // nothing picked, so a wood can be painted in as many strokes as it takes)
+        const painting = !patchFor && kind === "area" && drawShape === "paint";
         if (patchFor && kind === "area") (patchBrush ? addBrushSection : addPatch)(patchFor, pts);
-        else addDrawn(kind, pts, opts);
-        useEditor.getState().set({ tool: "select", patchFor: null, patchBrush: false });
+        else addDrawn(kind, pts, { ...opts, pick: !painting });
+        if (!painting) useEditor.getState().set({ tool: "select", patchFor: null, patchBrush: false });
       },
       onChange: (id, patch) => {
         const next = { ...patch } as Record<string, unknown>;
