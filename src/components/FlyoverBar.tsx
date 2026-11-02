@@ -3,7 +3,7 @@
 // the hole's name (Play flyover; playing, the playhead and Stop; a custom camera path's keyframes on
 // it), every flyover setting for the bar's row, and Tap mode (Walk or Select) over the bar.
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { Clapperboard, Footprints, Map as MapIcon, MousePointer2, Play, Plus, Square, Trash2, Video } from "lucide-react";
+import { Clapperboard, Footprints, Map as MapIcon, MousePointer2, Pause, Play, Plus, Trash2, Video } from "lucide-react";
 import { LENS, flyoverOf, insertKey, keyTimes } from "../lib/flight";
 import { fmtDist } from "../lib/units";
 import { changeDoc, updateHole, useCourse, useEditor } from "../state/course";
@@ -25,10 +25,11 @@ export const clock = (t: number, tenths = false) => {
 };
 
 /** The flyover's timeline, beside the hole's name: ▶ Play flyover and how long it is; playing, or
- * with keyframes, ▶ or ■ at its start, the line with its keyframes (tap one to select it; drag one
- * to change when it happens), the playhead (drag along the line to jump) and the time. */
-export function FlightLine({ playing, canPlay = true, onPlay, onStop, length, at = null, keys, picked = null, onPick, onRetime, onScrub, moved = false, short = false, playId = "hud-flyover" }: {
-  playing: boolean; canPlay?: boolean; onPlay: () => void; onStop: () => void;
+ * with keyframes, ▶ or ❚❚ Pause at its start, the line with its keyframes (tap one to select it;
+ * drag one to change when it happens), the playhead (drag along the line to go to that moment) and
+ * the time. `playing`: a flyover under way, `paused` or not. */
+export function FlightLine({ playing, paused = false, canPlay = true, onPlay, onPause, length, at = null, keys, picked = null, onPick, onRetime, onScrub, moved = false, short = false, playId = "hud-flyover" }: {
+  playing: boolean; paused?: boolean; canPlay?: boolean; onPlay: () => void; onPause: () => void;
   /** How long it plays (s), if known. */
   length: number | null;
   /** The playhead (s), or none. */
@@ -47,11 +48,12 @@ export function FlightLine({ playing, canPlay = true, onPlay, onStop, length, at
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const dur = Math.max(0.1, length ?? (keys?.length ? keys[keys.length - 1] : 0));
+  const running = playing && !paused;
   const go = (
     <button type="button" className="shrink-0 w-8 h-8 rounded-full bg-orange-300 text-zinc-950 flex items-center justify-center active:bg-orange-400 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-      aria-label={playing ? "Stop" : "Play flyover"} title={playing ? "Stop (Space)" : canPlay ? "Play flyover (Space)" : "Add a second keyframe to play it"} disabled={!playing && !canPlay}
-      onClick={playing ? onStop : onPlay} data-testid={playId}>
-      {playing ? <Square size={13} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
+      aria-label={running ? "Pause" : playing ? "Play" : "Play flyover"} title={running ? "Pause (Space)" : canPlay ? "Play (Space)" : "Add a second keyframe to play it"} disabled={!playing && !canPlay}
+      onClick={running ? onPause : onPlay} data-testid={playId}>
+      {running ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
     </button>
   );
   const box = "h-11 rounded-full glass border border-white/10 shadow-xl flex items-center gap-2.5 pl-1.5 pr-3.5";

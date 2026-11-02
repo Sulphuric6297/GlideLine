@@ -268,9 +268,14 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
     if (!view) return;
     // (standing on its own is only where the person is: without the spot, back to the map)
     if (ed.teeView === STAND_HERE && !ed.teeStand) { useEditor.getState().set({ teeView: null, flyover: false }); return; }
-    if (ed.flyover && ed.teeView && ed.teeView !== STAND_HERE) view.flyover(ed.teeView, () => useEditor.getState().set({ flyover: false }));
+    // (it holds at its end, paused, as a video player does; the camera's own preview ends)
+    if (ed.flyover && ed.teeView && ed.teeView !== STAND_HERE) {
+      if (ed.flyCam) view.flyover(ed.teeView, () => useEditor.getState().set({ flyover: false }));
+      else view.flyover(ed.teeView, () => useEditor.getState().set({ flyPaused: true }), true);
+    }
     else { view.setTeeView(ed.teeView, ed.teeViewTee ?? null, ed.teeStand ?? null); useEditor.getState().set({ flyLoading: null, ...(ed.teeView ? {} : { teeViewTee: null, teeStand: null }) }); }
   }, [view, ed.teeView, ed.teeViewTee, ed.flyover, ed.teeStand]);
+  useEffect(() => { view?.flyPause(ed.flyPaused); }, [view, ed.flyPaused, ed.flyover]);
 
   const scale = info ? scaleBar(info.pxPerUnit, 110, doc.units) : null;
   const elevation = hover ? heightAt(doc.terrainHeights, doc.gridSize, hover.x, hover.y) + doc.site.baseElevationFt : null;

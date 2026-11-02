@@ -383,8 +383,8 @@ export default function App() {
         // other holes, and Esc back to the map)
         const picked = (!!s.selectedId && !getDoc().holes.some(h => h.id === s.selectedId)) || s.group.length > 0;
         const mapKey = e.key === "Escape" ? picked || s.tool !== "select" : !e.key.startsWith("Arrow") || picked;
-        // (Space plays the flyover, and stops it, as a video player's does)
-        if (e.key === " " && s.teeView !== STAND_HERE && !s.flyCam && !picked && !e.repeat) { e.preventDefault(); s.set({ flyover: !s.flyover }); return; }
+        // (Space plays the flyover and pauses it, as a video player's does)
+        if (e.key === " " && s.teeView !== STAND_HERE && !s.flyCam && !picked && !e.repeat) { e.preventDefault(); s.set(s.flyover ? { flyPaused: !s.flyPaused } : { flyover: true }); return; }
         if (!(editing && mapKey)) {
         // (Esc stops a flight first, back at the tee; then leaves the tee view)
         if (e.key === "Escape") s.set(s.flyover ? { flyover: false } : { teeView: null, flyover: false });

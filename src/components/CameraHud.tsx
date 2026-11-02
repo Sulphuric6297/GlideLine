@@ -284,13 +284,20 @@ export function CameraHud({ compact = false }: { compact?: boolean }) {
     scrubbed = t;
   };
   const canRemove = removable(keys.length);
+  // (paused: the flyover stops where it is, and the camera stays at that moment, to move from there
+  // and add or update a keyframe, as Add keyframe after a drag along the timeline does)
+  const pauseHere = () => {
+    const t = getView()?.flyClock()?.t ?? 0;
+    ed.set({ flyover: false });
+    requestAnimationFrame(() => requestAnimationFrame(() => scrubTo(t)));
+  };
   // (a keyframe dragged along the timeline: it and the one after share the time between them)
   const retime = (i: number, t: number, end: boolean) => {
     updateHole(hole.id, { flyKeys: retimeKeys(keys, times, i, t) }, false);
     if (end) useCourse.getState().commit();
   };
   const line = (
-    <FlightLine playing={flying} canPlay={keys.length >= 2} onPlay={play} onStop={() => ed.set({ flyover: false })} length={flight?.dur ?? null}
+    <FlightLine playing={flying} canPlay={keys.length >= 2} onPlay={play} onPause={pauseHere} length={flight?.dur ?? null}
       at={flying ? playAt : flight ? scrub ?? 0 : null} keys={times.length ? times : undefined} picked={at} onPick={go} onRetime={retime} moved={moved}
       onScrub={flying ? t => { setPlayAt(t); getView()?.flySeek(t); } : flight ? scrubTo : undefined} short={compact} playId="cam-play" />
   );

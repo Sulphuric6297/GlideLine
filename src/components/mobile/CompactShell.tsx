@@ -655,7 +655,7 @@ function HoleFlyoverBar({ hole, back, faded, side, onHeight }: { hole: Hole; bac
   const flight = useFlight(hole);
   const s = holeStats(doc, hole);
   const play = () => useEditor.getState().set({ teeView: hole.id, teeViewTee: null, flyover: true });
-  const line = s.complete ? <FlightLine playing={false} onPlay={play} onStop={() => {}} length={flight.length} keys={flight.keys ? flight.times : undefined} picked={flight.keys ? Math.min(useEditor.getState().flyKey ?? 0, flight.keys.length - 1) : null} onPick={k => useEditor.getState().set({ flyKey: k })} /> : undefined;
+  const line = s.complete ? <FlightLine playing={false} onPlay={play} onPause={() => {}} length={flight.length} keys={flight.keys ? flight.times : undefined} picked={flight.keys ? Math.min(useEditor.getState().flyKey ?? 0, flight.keys.length - 1) : null} onPick={k => useEditor.getState().set({ flyKey: k })} /> : undefined;
   return <GlassBar remember="hole-flyover" pill={{ name: `Hole ${holeLabel(doc, hole.id)}`, small: "Flyover", back, testid: "selection-header" }} settings={settings} line={side ? undefined : line} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
 }
 

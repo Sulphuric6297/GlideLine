@@ -342,7 +342,7 @@ export class CourseView {
   private needWarm = true;
   private warmed = new WeakSet<THREE.Object3D>();
   private detailReady: Promise<unknown> = Promise.resolve();
-  private fly: { pts: THREE.Vector3[]; look: THREE.Vector3[]; fov: number[]; t: number; dur: number; play: number; at: (t: number) => number; done?: () => void; title?: HoleTitle } | null = null;
+  private fly: { pts: THREE.Vector3[]; look: THREE.Vector3[]; fov: number[]; t: number; dur: number; play: number; at: (t: number) => number; done?: () => void; title?: HoleTitle; paused?: boolean; hold?: boolean } | null = null;
   /** A hole whose line is being plotted by hand, and its turns so far (from the tee). */
   private plotHole: string | null = null;
   /** Marking a stretch of OB along a line: the line, and where along it the stretch starts (0..1). */
@@ -1535,10 +1535,11 @@ export class CourseView {
     return true;
   }
 
-  /** Fly over a hole from behind the tee to the basket; `done` runs when it lands. */
   /** Flies over a hole just as a recording shows it: its title held a moment on the first
-   * picture, the flight (the title fading), a moment at the basket. */
-  flyover(holeId: string, done?: () => void) {
+   * picture, the flight (the title fading), a moment at the basket; `done` runs when it lands.
+   * `hold`: at the end it stays on its last picture, paused (`done` runs then), as a video player
+   * does, instead of ending. */
+  flyover(holeId: string, done?: () => void, hold = false) {
     const path = this.flightPath(holeId);
     if (!path || !this.doc) {
       this.fly = null;
@@ -1549,7 +1550,7 @@ export class CourseView {
     }
     this.setTeeView(holeId);
     if (!this.fly) this.povFov = this.povCam.fov;
-    this.fly = { ...path, t: -VIDEO_HOLD.intro, done, title: holeTitle(this.doc.course, holeId) };
+    this.fly = { ...path, t: -VIDEO_HOLD.intro, done, title: holeTitle(this.doc.course, holeId), hold };
     const wait: { since: number; loaded: boolean; frames: number } = { since: performance.now(), loaded: false, frames: 0 };
     this.flyWait = wait;
     this.cb.onFlyWait("map");
@@ -2028,6 +2029,24 @@ export class CourseView {
     return this.fly ? { t: clamp(this.fly.t, 0, this.fly.play), play: this.fly.play } : null;
   }
 
+  /** The flyover paused (held on its moment) or playing on; played on from its end, from the start. */
+  flyPause(on: boolean) {
+    if (!this.fly || !!this.fly.paused === on) return;
+    if (!on && this.fly.t >= this.fly.play) this.fly.t = 0;
+    this.fly.paused = on;
+    this.invalidate();
+  }
+
+  /** The flyover's path made again from the hole as it is now (a keyframe or a setting changed
+   * while it plays or is paused), at the same moment. */
+  flyRefresh() {
+    if (!this.fly || !this.povHole) return;
+    const p = this.flightPath(this.povHole);
+    if (!p) return;
+    Object.assign(this.fly, p, { t: Math.min(this.fly.t, p.play) });
+    this.invalidate();
+  }
+
   /** The flyover playing jumped to `t` seconds in (its timeline's playhead dragged). */
   flySeek(t: number) {
     if (!this.fly) return;
@@ -2223,11 +2242,17 @@ export class CourseView {
       else {
         if (w) this.cb.onFlyWait(null);
         this.flyWait = null;
-        this.fly.t += Math.min(dt, 0.25);
+        if (!this.fly.paused) this.fly.t += Math.min(dt, 0.25);
       }
       this.dirty = true;
+      // (held at its end, from the tee view: on its last picture, paused)
+      if (this.fly.hold && !this.fly.paused && this.fly.t >= this.fly.play + (this.fly.title ? VIDEO_HOLD.outro : 0)) {
+        this.fly.t = this.fly.play;
+        this.fly.paused = true;
+        this.fly.done?.();
+      }
       // (a moment at the basket before it ends, as in a recording)
-      if (this.fly.t >= this.fly.play + (this.fly.title ? VIDEO_HOLD.outro : 0)) {
+      else if (!this.fly.hold && this.fly.t >= this.fly.play + (this.fly.title ? VIDEO_HOLD.outro : 0)) {
         const done = this.fly.done;
         this.fly = null;
         this.povCam.fov = this.povFov;

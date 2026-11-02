@@ -4,7 +4,7 @@
 // a phone and a computer (centred along the bottom there, its keys in the tips). While a flyover
 // plays the card goes, and left alone for a few seconds the bar folds to just its timeline.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Video, X, ChevronDown } from "lucide-react";
+import { ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Square, Video, X, ChevronDown } from "lucide-react";
 import { useAllowed } from "../auth/perms";
 import { STAND_HERE, TEE_LEVELS } from "../constants";
 import { activeLayout } from "../lib/course";
@@ -69,9 +69,12 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   // (view only: nothing to change; a video only for those who may have downloads)
   const readOnly = useCourse(c => c.readOnly);
   const mayRecord = useAllowed("downloads");
+  // (a flyover under way, paused or not; running: not paused)
   const playing = ed.flyover;
+  const running = playing && !ed.flyPaused;
   // The loading screen while the view says the flight is waiting, and from the very moment a
-  // flyover is asked for until the view has said anything (two seconds at most)
+  // flyover is asked for until the view has said anything (two seconds at most); only once the wait
+  // is long enough to notice: with everything already in, the flyover just starts
   const [bridge, setBridge] = useState(false);
   const wasFlying = useRef<string | null>(null);
   const flightKey = ed.flyover ? ed.teeView : null;
@@ -84,8 +87,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const waiting = ed.flyover && (ed.flyLoading !== null || bridge);
   const [showLoading, setShowLoading] = useState(false);
   useEffect(() => {
-    if (waiting) { setShowLoading(true); return; }
-    const t = window.setTimeout(() => setShowLoading(false), 320);
+    const t = window.setTimeout(() => setShowLoading(waiting), waiting ? 450 : 320);
     return () => window.clearTimeout(t);
   }, [waiting]);
   // (a computer: the side panel beside the view when something is picked, the drawing tools under
@@ -104,6 +106,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const [at, setAt] = useState<number | null>(null);
   useEffect(() => {
     if (!playing) { setAt(null); return; }
+    if (!running) { setAt(getView()?.flyClock()?.t ?? 0); return; }
     let raf = 0, last = 0;
     const tick = (now: number) => {
       if (now - last > 90) { last = now; setAt(getView()?.flyClock()?.t ?? 0); }
@@ -111,7 +114,11 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing]);
+  }, [playing, running]);
+  // (a keyframe or a setting changed while it plays or is paused: its path made again, there)
+  const sig = JSON.stringify([hole.flyKeys, hole.flyover, doc.flyover]);
+  const firstSig = useRef(sig);
+  useEffect(() => { if (sig !== firstSig.current) { firstSig.current = sig; if (useEditor.getState().flyover) getView()?.flyRefresh(); } }, [sig]);
   // Left alone while it plays, the bar folds to its timeline; a touch, a move of the mouse or a key
   // brings it back (not while a menu or dial is open). The touch that brings it back does only that:
   // it doesn't also press what comes up under the finger (the timeline, still there, works at once)
@@ -120,7 +127,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   idleNow.current = idle;
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
-    if (!playing) { setIdle(false); return; }
+    if (!running) { setIdle(false); return; }
     let t = window.setTimeout(() => setIdle(true), 3000);
     const wake = (e: Event) => {
       if (idleNow.current && e.type === "pointerdown" && !(e.target as HTMLElement | null)?.closest?.('[data-testid="fly-line"]')) {
@@ -134,8 +141,8 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
     window.addEventListener("pointermove", wake, true);
     window.addEventListener("keydown", wake, true);
     return () => { window.clearTimeout(t); window.removeEventListener("pointerdown", wake, true); window.removeEventListener("pointermove", wake, true); window.removeEventListener("keydown", wake, true); };
-  }, [playing]);
-  const tucked = playing && idle && !menuOpen;
+  }, [running]);
+  const tucked = running && idle && !menuOpen;
   // (a few seconds' hint on what a tap does, as tool hints have, as tee view or Tap mode starts)
   const [hint, setHint] = useState(true);
   useEffect(() => { setHint(true); const t = window.setTimeout(() => setHint(false), 4500); return () => window.clearTimeout(t); }, [select]);
@@ -155,10 +162,11 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   // how far the basket is from there)
   const basket = ed.teeStand && s.basketId ? doc.items.find(i => i.id === s.basketId) : undefined;
   const sub = basket && ed.teeStand ? `${fmtDist(Math.hypot(basket.x - ed.teeStand.x, basket.y - ed.teeStand.y), doc.units)} to the basket` : hole.name || `${lvl.label} tee`;
-  const loading = (showLoading || waiting) && ed.flyover ? <FlyoverLoading on={waiting} stage={ed.flyLoading} onCancel={() => ed.set({ flyover: false })} title={`Hole ${s.label}${hole.name ? ` · ${hole.name}` : ""}`} facts={`${fmtDist(s.length, doc.units)} · Par ${s.par}${s.elevationChange ? ` · ${fmtElev(s.elevationChange, doc.units)}` : ""}`} /> : null;
+  const loading = showLoading && ed.flyover ? <FlyoverLoading on={waiting} stage={ed.flyLoading} onCancel={() => ed.set({ flyover: false })} title={`Hole ${s.label}${hole.name ? ` · ${hole.name}` : ""}`} facts={`${fmtDist(s.length, doc.units)} · Par ${s.par}${s.elevationChange ? ` · ${fmtElev(s.elevationChange, doc.units)}` : ""}`} /> : null;
 
   const pillMenu = (
     <div className="flex flex-col gap-0.5">
+      {playing && <ActRow icon={<Square size={17} />} label="Stop flyover" hint="Back to the tee" onClick={() => ed.set({ flyover: false })} testid="hud-stop" />}
       {ed.teeStand && !playing && <ActRow icon={<Home size={18} />} label="Return to tee" hint="Back where the hole starts" onClick={() => ed.set({ teeStand: null })} testid="hud-to-tee" />}
       {mayRecord && !job && <ActRow icon={<Clapperboard size={18} />} label="Export video" hint={`${VIDEO_SIZES[video.resolution].label} · ${video.fps} fps`} onClick={record} testid="hud-record" />}
       {!readOnly && <ActRow icon={<Video size={18} />} label="Edit camera path" hint="Move the camera yourself and set keyframes" onClick={() => cameraFrom(hole.id, null)} testid="hud-freecam" />}
@@ -171,8 +179,10 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
     if (end) useCourse.getState().commit();
   };
   const line = (
-    <FlightLine playing={playing} onPlay={() => ed.set({ flyover: true })} onStop={() => ed.set({ flyover: false })} length={flight.length} at={playing ? at : null}
-      keys={flight.keys ? flight.times : undefined} picked={picked} onPick={k => ed.set({ flyKey: k })} onRetime={readOnly ? undefined : retime} onScrub={playing ? t => { setAt(t); getView()?.flySeek(t); } : undefined} />
+    <FlightLine playing={playing} paused={ed.flyPaused} onPlay={() => ed.set(playing ? { flyPaused: false } : { flyover: true })} onPause={() => ed.set({ flyPaused: true })} length={flight.length} at={playing ? at : null}
+      keys={flight.keys ? flight.times : undefined} picked={picked} onRetime={readOnly ? undefined : retime}
+      onPick={k => { ed.set({ flyKey: k }); if (playing && flight.keys) { setAt(flight.times[k]); getView()?.flySeek(flight.times[k]); } }}
+      onScrub={playing ? t => { setAt(t); getView()?.flySeek(t); } : undefined} />
   );
   const many = done.length > 1;
   // (a computer: along the foot of the view, over the drawing tools when they're up)

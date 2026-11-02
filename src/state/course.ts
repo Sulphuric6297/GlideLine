@@ -207,6 +207,8 @@ type EditorStore = {
   /** The tee view's flyover settings open over it. */
   teeSettings?: boolean;
   flyover: boolean;
+  /** The flyover playing, paused: held on its moment, to look at it or change it (Play goes on). */
+  flyPaused: boolean;
   /** The selected hole's keyframe picked (its place in the list; null: none). */
   flyKey: number | null;
   /** Flying the camera yourself, first person, over the tee view's hole (making keyframes). */
@@ -291,6 +293,7 @@ export const useEditor = create<EditorStore>()(set => ({
   standOf: null,
   teeView: null,
   flyover: false,
+  flyPaused: false,
   flyKey: null,
   flyCam: false,
   flyLoading: null,
@@ -328,3 +331,5 @@ if (typeof window !== "undefined") {
 useEditor.subscribe((s, p) => { if (s.teeView !== p.teeView && s.teeStand && s.teeStand === p.teeStand) s.set({ teeStand: null }); });
 // (another thing picked: no part of the last one)
 useEditor.subscribe((s, p) => { if (s.selectedId !== p.selectedId && s.fieldPart) s.set({ fieldPart: null }); });
+// (a flyover that ends, or another hole's, starts unpaused)
+useEditor.subscribe((s, p) => { if (s.flyPaused && (!s.flyover || s.teeView !== p.teeView)) s.set({ flyPaused: false }); });

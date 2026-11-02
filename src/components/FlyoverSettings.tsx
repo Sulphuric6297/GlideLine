@@ -154,7 +154,7 @@ function KeyFlight({ hole, keys }: { hole: Hole; keys: FlyKey[] }) {
   const step = "w-8 h-8 touch:w-11 touch:h-11 rounded-lg flex items-center justify-center text-zinc-300 hover:bg-white/[0.09] hover:text-zinc-50 disabled:opacity-30 disabled:hover:bg-transparent";
   return (
     <div className="mt-2" data-testid="fly-keys">
-      <div className="pt-1 pb-0.5"><FlightLine playing={false} onPlay={play} onStop={() => {}} length={times[times.length - 1]} keys={times} picked={p} onPick={i => setEd({ flyKey: i })} onRetime={retime} playId="fly-preview" /></div>
+      <div className="pt-1 pb-0.5"><FlightLine playing={false} onPlay={play} onPause={() => {}} length={times[times.length - 1]} keys={times} picked={p} onPick={i => setEd({ flyKey: i })} onRetime={retime} playId="fly-preview" /></div>
       {k && p !== null && (
         <div className="mt-1.5 rounded-[14px] bg-white/[0.06] px-2.5 pt-1.5 pb-0.5" data-testid="fly-key-card">
           <div className="flex items-center gap-0.5 mb-1.5">

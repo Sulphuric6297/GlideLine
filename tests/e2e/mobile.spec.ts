@@ -1043,7 +1043,15 @@ test.describe("phone", () => {
     await page.touchscreen.tap(200, 300);
     await expect(bar.getByTestId("bar-row")).toBeVisible();
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
-    // ✓ stops it and goes back to the map
+    // Pause holds it on its moment, the bar staying up (it ends paused too, on its last picture)
+    const paused = () => page.evaluate(() => !!(window as any).__dgEditor().flyPaused);
+    if (!(await paused())) await bar.getByTestId("hud-flyover").tap();
+    await expect.poll(paused).toBe(true);
+    expect(await flying()).toBe(true);
+    await expect(bar.getByTestId("hud-flyover")).toHaveAttribute("aria-label", "Play");
+    await page.waitForTimeout(3500);
+    await expect(bar.getByTestId("bar-row")).toBeVisible();
+    // ✓ goes back to the map
     await bar.getByTestId("bar-done").tap();
     await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
   });
