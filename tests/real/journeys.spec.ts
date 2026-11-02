@@ -496,12 +496,20 @@ test("painting areas: Remove cuts a wood drawn by points (a stroke across splits
     for (const m of ["thinner", "thinner", "thicker"]) { const e = B.brushStroke(items, { kind: "woods", brush: true }, m, dab, spot, null, []); if (e) items = B.applyEdit(items, e); steps.push(lvAt(items, spot)); }
     // (a locked wood: nothing)
     const locked = B.brushStroke(doc.items.map((i: any) => (i.id === woods.id ? { ...i, locked: true } : i)), { kind: "woods", brush: false }, "remove", across, { x: minX - 40, y: midY }, null, []);
+    // (where the real stroke goes: well inside the wood, which needn't hold its box's middle, with
+    // 40 ft of wood either side)
+    const edgeGap = (p: any) => { let d = Infinity; for (let i = 0; i < woods.points.length; i++) { const a = woods.points[i], b = woods.points[(i + 1) % woods.points.length], dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1))); d = Math.min(d, Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy)); } return d; };
+    let deep: any = null;
+    for (let y = Math.min(...ys); y <= Math.max(...ys); y += 10) for (let x = minX; x <= maxX; x += 10) {
+      const p = { x, y };
+      if (inside(p, woods.points) && inside({ x: x - 40, y }, woods.points) && inside({ x: x + 40, y }, woods.points)) { const g = edgeGap(p); if (!deep || g > deep.g) deep = { ...p, g }; }
+    }
     return {
       pieces: pieces.length, before: Math.round(area(woods.points)), afterArea: Math.round(pieces.reduce((s: number, i: any) => s + area(i.points), 0)),
       farKept: far.filter((p: any) => kept.has(`${p.x},${p.y}`)).length, far: far.length,
       grown: !!grown && area(grown.points) > area(woods.points), sameId: !!grown,
       steps, lockedTouched: !!locked && (locked.update.some((a: any) => a.id === woods.id) || locked.remove.includes(woods.id)),
-      woodsId: woods.id, mid: { x: (minX + maxX) / 2, y: midY }, box: { minX, minY: Math.min(...ys), maxX, maxY: Math.max(...ys) }
+      woodsId: woods.id, mid: deep ? { x: deep.x, y: deep.y } : { x: (minX + maxX) / 2, y: midY }, box: { minX, minY: Math.min(...ys), maxX, maxY: Math.max(...ys) }
     };
   });
   console.log("painting areas:", JSON.stringify({ ...r, mid: undefined, box: undefined }));
@@ -524,6 +532,7 @@ test("painting areas: Remove cuts a wood drawn by points (a stroke across splits
   await page.getByTestId("area-brush-remove").click();
   const before = JSON.stringify((await course(page)).items.find((i: any) => i.id === r.woodsId).points);
   const a = await at(page, r.mid.x - 30, r.mid.y, 0), b = await at(page, r.mid.x + 30, r.mid.y, 0);
+  expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName, [a.x, a.y]), "the stroke's start, on the map").toBe("CANVAS");
   await page.mouse.move(a.x, a.y);
   await page.mouse.down();
   await page.mouse.move(b.x, b.y, { steps: 8 });
