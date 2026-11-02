@@ -1045,8 +1045,10 @@ test.describe("phone", () => {
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
     // Pause holds it on its moment, the bar staying up (it ends paused too, on its last picture)
     const paused = () => page.evaluate(() => !!(window as any).__dgEditor().flyPaused);
+    const state = () => page.evaluate(() => { const e = (window as any).__dgEditor(), b = document.querySelector('[data-testid="fly-line"] [data-testid="hud-flyover"]'); return JSON.stringify({ flyover: e.flyover, paused: e.flyPaused, loading: e.flyLoading, stand: e.teeStand, clock: (window as any).__dgView.flyClock(), label: b?.getAttribute("aria-label"), cover: !!document.querySelector('[data-testid="flyover-loading"]') }); });
+    const was = await state();
     if (!(await paused())) await bar.getByTestId("hud-flyover").tap();
-    await expect.poll(paused).toBe(true);
+    await expect.poll(paused, { message: `before ${was}; after ${await state()}` }).toBe(true);
     expect(await flying()).toBe(true);
     await expect(bar.getByTestId("hud-flyover")).toHaveAttribute("aria-label", "Play");
     await page.waitForTimeout(3500);
