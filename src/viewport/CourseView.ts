@@ -731,6 +731,9 @@ export class CourseView {
     this.teeLevel = teeLevel;
     this.amenityKind = amenityKind;
     if (leaving && this.tool.mode === "measure") this.clearMeasure();
+    // (no longer a brush: its ring goes, on a touch screen too, where no hover would move it off)
+    const paints = tool.mode === "sculpt" || (tool.mode === "draw-area" && tool.shape === "paint");
+    if (!paints && this.brushRing?.obj.visible) this.showBrush(null, 0);
     if (leaving || tool.shape !== this.tool.shape) {
       if (this.plotHole) this.endPlot();
       // (marking a stretch of OB goes on in Select, which it starts in)
@@ -6927,7 +6930,7 @@ export class CourseView {
         const now = performance.now();
         if (now - sent > 60) { sent = now; run(false); }
       },
-      end: () => { run(true); }
+      end: () => { run(true); if (COARSE) this.showBrush(null, 0); }
     };
   }
 
@@ -7007,6 +7010,8 @@ export class CourseView {
         if (frame) cancelAnimationFrame(frame);
         this.setDragging(false);
         send(true);
+        // (a finger lifted: the ring goes with it, there's no hover to show where it would paint)
+        if (COARSE) this.showBrush(null, 0);
       }
     };
   }
@@ -7032,6 +7037,8 @@ export class CourseView {
 
   /** Ends drawing an area or line (Enter, double-click, or clicking the first point). */
   finishDrawing() {
+    // (a painted shape done with a finger: its ring goes too)
+    if (COARSE && this.brushRing?.obj.visible) this.showBrush(null, 0);
     if (this.plotHole) return this.finishPlot();
     const kind = this.drawn();
     const pts = this.drawPts;
