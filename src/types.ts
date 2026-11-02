@@ -729,6 +729,8 @@ export type Units = "ft" | "m";
 export interface SiteInfo {
   /** How much brush and how thick, as the import last had it (lib/undergrowth). */
   brushTune?: { much: number; thick: number };
+  /** The underbrush as the import found it (its level in each 10 ft block, base64), for Restore. */
+  brushFound?: { bx: number; by: number; levels: string };
   /** The searched place (the middle of the imported area). */
   location: { lat: number; lon: number; label: string } | null;
   /** Real-world edges of the plan. */

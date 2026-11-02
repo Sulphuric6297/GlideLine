@@ -34,6 +34,8 @@ import { VIDEO_HOLD, titleStrength } from "../lib/video";
 import { drawOverlay, holeTitle, overlayShow, type HoleTitle } from "./flyTitle";
 import { forestDetail, type Forest, type TreeSpot, woodsCrownWidth } from "../three/treeKit";
 import { brushOnly } from "../lib/brushSpots";
+import { applyEdit, brushStroke, kindOf, levelOf, type BrushKind as PaintKind } from "../lib/areaBrush";
+import { foundAreas } from "../lib/undergrowth";
 import { GRASS, Grass, type GrassQuality } from "../three/grass";
 import { Tufts } from "../three/tufts";
 import { setWaterSky, waterMaterial, waterUniforms } from "../three/water";
@@ -737,10 +739,25 @@ export class CourseView {
     }
     this.tool = tool;
     if (tool.mode === "select") this.updateGhost(null);
+    // (painting underbrush: each patch tinted by how thick it is, as Look first shows it)
+    const k = this.paintKind(), tint = !!k?.brush;
+    if (tint !== this.brushTint) { this.brushTint = tint; if (this.doc) this.syncShapes(); }
     this.updateCursor();
     this.handleKey = "";
     this.syncHandles();
     this.invalidate();
+  }
+
+  /** Underbrush tinted by its level (while it's being painted). */
+  private brushTint = false;
+  /** What the brush paints: the area being reshaped's kind, or the tool's (a stand of bushes is
+   * underbrush); null when it isn't painting areas. */
+  private paintKind(): PaintKind | null {
+    const t = this.tool;
+    if (t.mode !== "draw-area" || t.shape !== "paint") return null;
+    const own = t.reshape ? this.item(t.reshape) : null;
+    if (own && own.type === "area") return kindOf(own);
+    return { kind: t.areaKind, brush: t.areaKind === "woods" && t.standOf === "bush" };
   }
 
   onView(fn: (info: ViewInfo) => void) {
@@ -3418,8 +3435,18 @@ export class CourseView {
       const c = color(a.kind) ?? meta.color;
       // (woods: no fill, the ground under the trees as it is; the trees show it, its edge line only)
       const bare = a.kind === "woods";
-      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare]), () => {
+      const tinted = this.brushTint && a.kind === "woods" && (a.bushes ?? 0) >= 1 ? levelOf(a) : 0;
+      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted]), () => {
         const g = new THREE.Group();
+        // (underbrush being painted: tinted light, medium or heavy, the heavier over the lighter)
+        if (tinted) {
+          const tc = ["", "#fde68a", "#f59e0b", "#b45309"][tinted];
+          const geo = drapedPolygon(a.points, (x, y) => this.h(x, y), doc.gridSize, 0.2 + tinted * 0.02);
+          const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: tc, transparent: true, opacity: 0.13, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 }));
+          mesh.renderOrder = 3 + tinted * 0.01;
+          g.add(mesh);
+          g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.1, true), tc, 2, { order: 5 }));
+        }
         const fill = photo ? meta.fill : Math.min(0.9, meta.fill + 0.35);
         const rule = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo";
         // (on the painted ground, or looked at only: no translucent fills, only the rules' edges)
@@ -6453,6 +6480,13 @@ export class CourseView {
       // finger too, so the map stays put (two fingers still move it)
       const shape = this.drawn(tool) === "line" && (tool.shape === "box" || tool.shape === "circle") ? "freehand" : tool.shape;
       const shaped = shape !== "points" && !this.drawPts.length && !this.shapeAnchor;
+      // (painting onto an area that's there, or taking from it, stepping it or putting it back: the
+      // areas themselves changed; painting on open ground makes a new one, as it always has)
+      if (shape === "paint" && this.paintsOver(e)) {
+        e.stopPropagation();
+        this.gesture(e, { drag: s => this.areaBrushDrag(s), click: ev => { const d = this.areaBrushDrag(ev); d?.end(ev); } });
+        return;
+      }
       if (shaped) e.stopPropagation();
       else stop();
       this.gesture(e, {
@@ -6789,6 +6823,61 @@ export class CourseView {
   }
 
   // ------------------------------------------------------------------ the brush (ground, painting)
+
+  /** Whether a press with the brush changes areas that are there (not a new one): anything but
+   * Add, Reshape, or an Add from inside an area of the kind. */
+  private paintsOver(e: { clientX: number; clientY: number }) {
+    const k = this.paintKind(), t = this.tool, doc = this.doc;
+    if (!k || !doc || this.readOnly) return false;
+    if ((t.areaBrush ?? "add") !== "add" || t.reshape) return true;
+    const g = this.groundAt(e.clientX, e.clientY);
+    if (!g) return false;
+    const p = { x: g.x, y: g.z };
+    return doc.course.items.some(i => i.type === "area" && !i.locked && kindOf(i).kind === k.kind && kindOf(i).brush === k.brush && pointInPolygon(p, i.points));
+  }
+
+  /** What the import found, as areas by level (for Restore), worked out once a course. */
+  private found: { key: unknown; areas: AreaItem[] } | null = null;
+
+  /** A stroke that changes the areas of a kind: the brush's track, the areas as it leaves them
+   * sent on a few times a second (worked out from the areas as they were when it began), and once
+   * more when let go, as one undo step. */
+  private areaBrushDrag(start: PointerEvent): { move: (ev: PointerEvent) => void; end: (ev: PointerEvent) => void } | null {
+    const doc = this.doc, k = this.paintKind();
+    if (!doc || !k || this.readOnly) return null;
+    const g0 = this.groundAt(start.clientX, start.clientY);
+    if (!g0) return null;
+    const t = this.tool, mode = t.areaBrush ?? "add", r = t.brush?.size ?? 20;
+    const base = doc.course.items, a = { x: g0.x, y: g0.z }, path: P[] = [a];
+    const bf = doc.course.site.brushFound;
+    if (mode === "restore" && bf && this.found?.key !== bf) this.found = { key: bf, areas: foundAreas(bf) };
+    const found = mode === "restore" ? this.found?.areas ?? [] : [];
+    const step = Math.max(1.5, 6 / Math.max(0.01, this.viewInfo().pxPerUnit), r / 5);
+    let sent = 0, changed = false;
+    const run = (done: boolean) => {
+      const out = strokeOutline(path, r);
+      let next: CourseItem[] | null = null;
+      if (out) {
+        try { const e = brushStroke(base, k, mode, simplify(out, Math.max(0.4, r / 14)), a, t.reshape ?? null, found); if (e) next = applyEdit(base, e); }
+        catch { /* (a shape the cutting couldn't make sense of: this step left out) */ }
+      }
+      if (next) { changed = true; this.cb.onAreas?.(next, done); }
+      else if (done && changed) this.cb.onAreas?.(base, true);
+    };
+    this.showBrush(a, r);
+    return {
+      move: ev => {
+        const g = this.groundAt(ev.clientX, ev.clientY);
+        if (!g) return;
+        const b = { x: g.x, y: g.z };
+        if (dist(path[path.length - 1], b) >= step) path.push(b);
+        this.showBrush(b, r);
+        const now = performance.now();
+        if (now - sent > 180) { sent = now; run(false); }
+      },
+      end: () => { run(true); }
+    };
+  }
 
   private brushRing: { obj: THREE.Object3D; r: number } | null = null;
   /** The brush's circle on the ground under the pointer (null: hidden). Made once for a size and

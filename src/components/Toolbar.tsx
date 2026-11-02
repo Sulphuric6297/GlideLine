@@ -181,6 +181,40 @@ const BrushSliders = ({ ed, strength = true }: { ed: Editor; strength?: boolean 
   );
 };
 
+/** What the brush does to areas, as the Ground tool's row has for the ground. */
+const AREA_BRUSHES = [
+  { value: "add", label: "Add", title: "Paints it on: from inside an area it grows that one, from open ground it's a new one" },
+  { value: "remove", label: "Remove", title: "Takes it away where you paint, however it was drawn" },
+  { value: "thinner", label: "Thinner", title: "A step thinner where you paint (heavy to medium, medium to light, light to none)" },
+  { value: "thicker", label: "Thicker", title: "A step thicker where you paint" },
+  { value: "restore", label: "Restore", title: "Puts back the underbrush the import found, wherever you paint" }
+] as const;
+/** The brush's row for areas: what it does (levels only for underbrush and woods; Restore only for
+ * underbrush that came in with the site), and, reshaping one area, which and a way out. */
+function AreaBrushes({ ed }: { ed: Editor }) {
+  const found = useCourse(s => !!s.doc.site.brushFound);
+  const own = useCourse(s => (ed.reshapeId ? s.doc.items.find(i => i.id === ed.reshapeId) : undefined));
+  const kind = own && own.type === "area" ? own.kind : ed.areaKind;
+  const brush = own && own.type === "area" ? (own.bushes ?? 0) >= 1 : ed.standOf === "bush";
+  const modes = AREA_BRUSHES.filter(m => (m.value !== "thinner" && m.value !== "thicker") || kind === "woods").filter(m => m.value !== "restore" || (brush && found));
+  const now = modes.some(m => m.value === ed.areaBrush) ? ed.areaBrush : "add";
+  return (
+    <>
+      <div className={`${GROUP} mr-1`} role="radiogroup" aria-label="What the brush does" data-testid="area-brushes">
+        {modes.map(m => (
+          <button key={m.value} role="radio" aria-checked={now === m.value} title={m.title} data-testid={`area-brush-${m.value}`} onClick={() => ed.set({ areaBrush: m.value })} className={`${radio(now === m.value)} px-2.5 touch:px-3`}>{m.label}</button>
+        ))}
+      </div>
+      {own && (
+        <div className={GROUP} data-testid="reshaping">
+          <span className={`${RADIO} text-zinc-300`}>Just this {brush ? "underbrush" : AREA_KINDS[kind].label.toLowerCase()}</span>
+          <button className={`${RADIO} text-orange-300 hover:bg-white/[0.09]`} onClick={() => ed.set({ tool: "select", reshapeId: null })} data-testid="reshape-done">Done</button>
+        </div>
+      )}
+    </>
+  );
+}
+
 const GROUND_BRUSHES = [
   { value: "raise", label: "Raise", title: "Builds the ground up under the brush" },
   { value: "lower", label: "Lower", title: "Digs the ground down under the brush" },
@@ -309,7 +343,7 @@ export function toolShapes(ed: Editor): ReactNode[] | null {
           </button>
         ))}
       </div>,
-      ...(now === "paint" ? [<BrushSliders key="brush" ed={ed} strength={false} />] : []),
+      ...(now === "paint" ? [<AreaBrushes key="modes" ed={ed} />, <BrushSliders key="brush" ed={ed} strength={false} />] : []),
       ...(ed.treeKind === "bush" ? [] : [<TreeSpeciesPick key="species" ed={ed} />])
     ];
   }
@@ -350,7 +384,7 @@ export function toolShapes(ed: Editor): ReactNode[] | null {
         );
       })}
     </div>,
-    ...(ed.tool === "draw-area" && ed.drawShape === "paint" ? [<BrushSliders key="brush" ed={ed} strength={false} />] : [])
+    ...(ed.tool === "draw-area" && ed.drawShape === "paint" ? [<AreaBrushes key="modes" ed={ed} />, <BrushSliders key="brush" ed={ed} strength={false} />] : [])
   ];
 }
 
@@ -382,6 +416,11 @@ export function toolHint(ed: Editor, touch = false): string | undefined {
   const drawing = ed.tool === "draw-area" || ed.tool === "draw-line" || ed.tool === "draw-structure";
   const lineDrawn = ed.tool === "draw-line" || (ed.tool === "draw-structure" && STRUCTURE_KINDS[ed.structureKind].shape === "line");
   const shape = lineDrawn && (ed.drawShape === "box" || ed.drawShape === "circle") ? "freehand" : ed.drawShape;
+  // (the brush on areas: what a stroke does, as the Ground tool says)
+  if (ed.tool === "draw-area" && shape === "paint") {
+    const what = { add: "paint it on (from inside an area it grows that one)", remove: "take it away", thinner: "make it a step thinner", thicker: "make it a step thicker", restore: "put back what the import found" }[ed.areaBrush] ?? "paint it on";
+    return touch ? `One finger to ${what} · two fingers move the map` : `Drag to ${what} · Space+drag moves the map`;
+  }
   if (drawing && shape !== "points") return (touch ? TOUCH_SHAPE_HINTS : SHAPE_HINTS)[shape];
   if (ed.tool === "select") {
     // (none with Select itself on a computer: the map stays clear; its gestures are in the shortcuts dialog)

@@ -148,6 +148,10 @@ type EditorStore = {
   /** The brush (the ground tool and painting areas): radius (ft), strength (1 to 10), and what it does to the ground. */
   brushSize: number;
   brushStrength: number;
+  /** Painting areas: what the brush does to the areas there. */
+  areaBrush: "add" | "remove" | "thinner" | "thicker" | "restore";
+  /** Reshaping just this area with the brush (from its panel). */
+  reshapeId: string | null;
   groundBrush: "raise" | "lower" | "flatten" | "smooth" | "restore";
   /** Drawing a section of underbrush (not of trees) for `patchFor`. */
   patchBrush: boolean;
@@ -263,6 +267,8 @@ export const useEditor = create<EditorStore>()(set => ({
   holeToBasket: null,
   brushSize: 25,
   brushStrength: 5,
+  areaBrush: "add",
+  reshapeId: null,
   groundBrush: "raise",
   patchBrush: false,
   designSel: null,

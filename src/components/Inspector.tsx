@@ -3,7 +3,7 @@
 import { PlaceByGps } from "./PlaceByGps";
 import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, Plane, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
+import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, Plane, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES } from "../constants";
 import { areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
@@ -862,6 +862,13 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
             </Field>
           )}
           {fk && <FieldSettings item={item} kind={fk} />}
+          {/* (its shape painted: added to or taken from with the brush, this one only) */}
+          {!fk && item.kind !== "building" && !item.locked && (
+            <Button small full testid="reshape-brush" title="Paint this area bigger or smaller, or a section thinner or thicker, with the brush" onClick={() => {
+              const brush = item.kind === "woods" && (item.bushes ?? 0) >= 1;
+              useEditor.getState().set({ tool: "draw-area", areaKind: item.kind, standOf: brush ? "bush" : null, ...(brush ? { treeKind: "bush" as const } : {}), drawShape: "paint", reshapeId: item.id, areaBrush: "add" });
+            }}><Brush size={14} /> Reshape with the brush</Button>
+          )}
           {(item.kind === "woods" || item.kind === "rough") && <WoodsSettings item={item} />}
           {hasObChoice(item) && <ObPick item={item} />}
           {item.kind === "ob" && holePicker("OB for", "All holes")}

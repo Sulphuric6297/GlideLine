@@ -5,7 +5,7 @@ import type { CourseItem, P } from "../types";
 import type { ImportedSite } from "./importSite";
 import { centroid, pointInPolygon } from "./geom";
 import { signed } from "./importSite";
-import { BEST_GUESS, brushAreas, brushLevels, type BrushTune } from "./undergrowth";
+import { BEST_GUESS, brushAreas, brushLevels, keepFound, type BrushTune } from "./undergrowth";
 
 export type SourceKey =
   | "lidarTrees" | "summerTrees" | "photoTrees" | "bushes" | "underbrush" | "osmTrees"
@@ -118,8 +118,9 @@ export const reviewedSite = (site: ImportedSite, on: Partial<Record<SourceKey, b
   }
   // The brush, as tuned (and the tuning kept with the course, for the next time it comes in)
   const u = site.underbrush;
-  if (u && on.underbrush !== false) mapped = [...mapped, ...brushAreas(brushLevels(u, tune), u.bx, u.by).map(signed)];
-  return { ...site, site: u ? { ...site.site, brushTune: { much: tune.much, thick: tune.thick } } : site.site, mapped, trees, lidar };
+  const lv = u && on.underbrush !== false ? brushLevels(u, tune) : null;
+  if (u && lv) mapped = [...mapped, ...brushAreas(lv, u.bx, u.by).map(signed)];
+  return { ...site, site: u ? { ...site.site, brushTune: { much: tune.much, thick: tune.thick }, ...(lv ? { brushFound: keepFound(lv, u.bx, u.by) } : {}) } : site.site, mapped, trees, lidar };
 };
 
 /** How many FEMA buildings OpenStreetMap has too (the choice of which to keep matters only then). */

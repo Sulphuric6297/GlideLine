@@ -318,8 +318,11 @@ function ToolHeader() {
   const all = [...(toolOptions(ed) ?? []), ...(toolShapes(ed) ?? [])];
   const isBrush = (o: ReactNode) => (o as { key?: string } | null)?.key === "brush";
   const isSpecies = (o: ReactNode) => (o as { key?: string } | null)?.key === "species";
+  // (what the brush does to areas: a row of its own, over the brush's size)
+  const isModes = (o: ReactNode) => (o as { key?: string } | null)?.key === "modes";
   const kinds = (toolOptions(ed) ?? []).filter(o => !isBrush(o));
-  const shapes = (toolShapes(ed) ?? []).filter(o => !isBrush(o) && !isSpecies(o));
+  const shapes = (toolShapes(ed) ?? []).filter(o => !isBrush(o) && !isSpecies(o) && !isModes(o));
+  const modes = (toolShapes(ed) ?? []).filter(isModes);
   const species = (toolShapes(ed) ?? []).filter(isSpecies);
   const brush = all.find(isBrush);
   return (
@@ -334,6 +337,7 @@ function ToolHeader() {
       {kinds.length > 0 && <ChipRow testid="tool-options">{kinds}</ChipRow>}
       {shapes.length > 0 && <ChipRow testid="tool-shapes">{shapes}</ChipRow>}
       {species.length > 0 && <ChipRow testid="tool-species">{species}</ChipRow>}
+      {modes.length > 0 && <ChipRow testid="tool-modes">{modes}</ChipRow>}
       {brush && <div className="mt-2 px-4 flex">{brush}</div>}
     </div>
   );

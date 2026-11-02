@@ -81,6 +81,11 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
       },
       onHoleChange: (id, patch) => updateHole(id, patch, false),
       onCommit: () => courseStore.getState().commit(),
+      // (a brush stroke on areas: live as it goes, one undo step when let go)
+      onAreas: (items, done) => {
+        changeDoc(() => ({ items }), false);
+        if (done) courseStore.getState().commit();
+      },
       onTerrain: (heights, done, original) => {
         changeDoc(() => ({ terrainHeights: heights, terrainOriginal: original && Object.keys(original).length ? original : undefined }), false);
         if (done) courseStore.getState().commit();
@@ -211,8 +216,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   // picked color already)
   const ghostTee = ed.tool === "add-tee" && !ed.holeToBasket ? teeLevelFor(doc, ed.activeHoleId, ed.teeLevel) : ed.teeLevel;
   useEffect(() => {
-    view?.setTool({ mode: ed.tool, areaKind: ed.areaKind, lineKind: ed.lineKind, structureKind: ed.structureKind, shape: ed.drawShape, dragSelect: ed.dragSelect, treeKind: ed.treeKind, fieldKind: ed.fieldKind, brush: { size: ed.brushSize, strength: ed.brushStrength, ground: ed.groundBrush } }, ghostTee, ed.amenityKind);
-  }, [view, ed.tool, ed.areaKind, ed.lineKind, ed.structureKind, ed.drawShape, ghostTee, ed.amenityKind, ed.dragSelect, ed.treeKind, ed.fieldKind, ed.brushSize, ed.brushStrength, ed.groundBrush]);
+    view?.setTool({ mode: ed.tool, areaKind: ed.areaKind, lineKind: ed.lineKind, structureKind: ed.structureKind, shape: ed.drawShape, dragSelect: ed.dragSelect, treeKind: ed.treeKind, fieldKind: ed.fieldKind, brush: { size: ed.brushSize, strength: ed.brushStrength, ground: ed.groundBrush }, standOf: ed.standOf, areaBrush: ed.areaBrush, reshape: ed.reshapeId }, ghostTee, ed.amenityKind);
+  }, [view, ed.tool, ed.areaKind, ed.lineKind, ed.structureKind, ed.drawShape, ghostTee, ed.amenityKind, ed.dragSelect, ed.treeKind, ed.fieldKind, ed.brushSize, ed.brushStrength, ed.groundBrush, ed.standOf, ed.areaBrush, ed.reshapeId]);
   // (Measure: from one spot, or along a path)
   useEffect(() => { view?.setMeasureMode(ed.measureMode ?? "spot"); }, [view, ed.measureMode]);
   // A check's mark on the map clicked: the checks open, with its row lit up
@@ -230,6 +235,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   useEffect(() => { view?.setPose(ed.view === "2d" ? "top" : "tilt"); }, [view, ed.view]);
   // (a patch is drawn as an area; leaving the tool drops the patch)
   useEffect(() => { if (ed.tool !== "draw-area" && ed.patchFor) useEditor.getState().set({ patchFor: null }); }, [ed.tool, ed.patchFor]);
+  // (reshaping one area with the brush ends with the brush: another tool or way to draw)
+  useEffect(() => { if (ed.reshapeId && (ed.tool !== "draw-area" || ed.drawShape !== "paint")) useEditor.getState().set({ reshapeId: null }); }, [ed.tool, ed.drawShape, ed.reshapeId]);
   // (going to another step, Map say, leaves the tee view and any flyover: they're the map's)
   const stepWas = useRef(ed.step);
   useEffect(() => {

@@ -283,6 +283,19 @@ export const patchOf = (lv: Uint8Array, bx: number, by: number, q: number) => {
   return [...seen];
 };
 
+/** The underbrush as found, kept with the course (for the brush's Restore). */
+export const keepFound = (lv: Uint8Array, bx: number, by: number) => {
+  let s = "";
+  for (let i = 0; i < lv.length; i += 0x8000) s += String.fromCharCode(...lv.subarray(i, i + 0x8000));
+  return { bx, by, levels: btoa(s) };
+};
+/** The underbrush as found, as areas by level (light under medium under heavy). */
+export const foundAreas = (f: { bx: number; by: number; levels: string }) => {
+  const s = atob(f.levels), lv = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) lv[i] = s.charCodeAt(i);
+  return brushAreas(lv, f.bx, f.by);
+};
+
 /** How many acres have brush at each level. */
 export const brushAcres = (lv: Uint8Array) => {
   const a = [0, 0, 0, 0];

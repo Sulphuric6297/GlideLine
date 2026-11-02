@@ -447,6 +447,75 @@ test("underbrush from the import: more with How much, heavier with How thick, ne
   expect(p.differ, "pixels unlike the page's own painting").toBe(0);
 });
 
+test("painting areas: Remove cuts a wood drawn by points (a stroke across splits it, every corner it misses stays put), Add from inside grows it, underbrush steps a level a pass, a locked area never changes; Reshape with the brush is one undo", async () => {
+  await page.waitForFunction(() => typeof (window as any).__dgAreaBrush === "function" || typeof (window as any).__dgAreaBrush === "object", null, { timeout: 60_000 });
+  const r = await page.evaluate(() => {
+    const w = window as any, B = w.__dgAreaBrush, doc = w.__dgCourse();
+    const area = (pts: any[]) => { let s = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; s += p.x * q.y - q.x * p.y; } return Math.abs(s / 2); };
+    const inside = (p: any, pts: any[]) => { let c = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const a = pts[i], b = pts[j]; if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c; } return c; };
+    // (a wood drawn corner by corner: the biggest one that isn't underbrush)
+    const woods = doc.items.filter((i: any) => i.type === "area" && i.kind === "woods" && !(i.bushes >= 1) && !i.locked).sort((a: any, b: any) => area(b.points) - area(a.points))[0];
+    const xs = woods.points.map((p: any) => p.x), ys = woods.points.map((p: any) => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), midY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const across = B.strokeOutline([{ x: minX - 40, y: midY }, { x: maxX + 40, y: midY }], 12);
+    const cut = B.brushStroke(doc.items, { kind: "woods", brush: false }, "remove", across, { x: minX - 40, y: midY }, woods.id, []);
+    const after = B.applyEdit(doc.items, cut);
+    const pieces = after.filter((i: any) => i.id === woods.id || cut.add.some((a: any) => a.id === i.id));
+    const kept = new Set(pieces.flatMap((i: any) => i.points.map((p: any) => `${p.x},${p.y}`)));
+    const far = woods.points.filter((p: any) => Math.abs(p.y - midY) > 20);
+    // (Add from inside: the same wood, bigger)
+    const c = { x: woods.points.reduce((s: number, p: any) => s + p.x, 0) / woods.points.length, y: woods.points.reduce((s: number, p: any) => s + p.y, 0) / woods.points.length };
+    const out = woods.points.reduce((b: any, p: any) => (Math.hypot(p.x - c.x, p.y - c.y) > Math.hypot(b.x - c.x, b.y - c.y) ? p : b), woods.points[0]);
+    const start = { x: c.x + (out.x - c.x) * 0.9, y: c.y + (out.y - c.y) * 0.9 }, end = { x: c.x + (out.x - c.x) * 1.3, y: c.y + (out.y - c.y) * 1.3 };
+    const grow = B.brushStroke(doc.items, { kind: "woods", brush: false }, "add", B.strokeOutline([start, end], 15), start, null, []);
+    const grown = grow?.update.find((a: any) => a.id === woods.id);
+    // (underbrush: a level a pass, at a spot inside the heaviest patch)
+    const lvAt = (items: any[], p: any) => { let m = 0; for (const i of items) if (i.type === "area" && i.bushes >= 1 && inside(p, i.points)) m = Math.max(m, i.density === 0.5 ? 1 : i.density === 2 ? 3 : 2); return m; };
+    const brush = doc.items.filter((i: any) => i.type === "area" && i.bushes >= 1).sort((a: any, b: any) => (b.density ?? 1) - (a.density ?? 1) || area(b.points) - area(a.points))[0];
+    const bp = brush.points.reduce((s: any, p: any) => ({ x: s.x + p.x / brush.points.length, y: s.y + p.y / brush.points.length }), { x: 0, y: 0 });
+    const spot = inside(bp, brush.points) ? bp : brush.points[0];
+    const dab = B.strokeOutline([spot], 10);
+    let items = doc.items;
+    const steps = [lvAt(items, spot)];
+    for (const m of ["thinner", "thinner", "thicker"]) { const e = B.brushStroke(items, { kind: "woods", brush: true }, m, dab, spot, null, []); if (e) items = B.applyEdit(items, e); steps.push(lvAt(items, spot)); }
+    // (a locked wood: nothing)
+    const locked = B.brushStroke(doc.items.map((i: any) => (i.id === woods.id ? { ...i, locked: true } : i)), { kind: "woods", brush: false }, "remove", across, { x: minX - 40, y: midY }, null, []);
+    return {
+      pieces: pieces.length, before: Math.round(area(woods.points)), afterArea: Math.round(pieces.reduce((s: number, i: any) => s + area(i.points), 0)),
+      farKept: far.filter((p: any) => kept.has(`${p.x},${p.y}`)).length, far: far.length,
+      grown: !!grown && area(grown.points) > area(woods.points), sameId: !!grown,
+      steps, lockedTouched: !!locked && (locked.update.some((a: any) => a.id === woods.id) || locked.remove.includes(woods.id)),
+      woodsId: woods.id, mid: { x: (minX + maxX) / 2, y: midY }, box: { minX, minY: Math.min(...ys), maxX, maxY: Math.max(...ys) }
+    };
+  });
+  console.log("painting areas:", JSON.stringify({ ...r, mid: undefined, box: undefined }));
+  expect(r.pieces, "a stroke right across: two woods").toBeGreaterThanOrEqual(2);
+  expect(r.afterArea, "less wood after the cut").toBeLessThan(r.before);
+  expect(r.farKept, "corners the stroke didn't reach, still exactly where they were").toBe(r.far);
+  expect(r.grown && r.sameId, "Add from inside: the same wood, bigger").toBe(true);
+  const [s0, s1, s2, s3] = r.steps;
+  expect(s1, "a Thinner pass").toBe(Math.max(0, s0 - 1));
+  expect(s2, "another").toBe(Math.max(0, s0 - 2));
+  expect(s3, "a Thicker pass").toBe(Math.min(3, s2 + 1));
+  expect(r.lockedTouched, "a locked wood, changed").toBe(false);
+  // (Reshape with the brush, from the wood's panel, and a real drag across it: one undo puts it back)
+  await frame(page, r.box);
+  await draw(page, false);
+  await page.evaluate(id => (window as any).__dgActions.select(id), r.woodsId);
+  await page.getByTestId("reshape-brush").click();
+  await page.getByTestId("area-brush-remove").click();
+  const before = JSON.stringify((await course(page)).items.find((i: any) => i.id === r.woodsId).points);
+  const a = await at(page, r.mid.x - 30, r.mid.y, 0), b = await at(page, r.mid.x + 30, r.mid.y, 0);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(b.x, b.y, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => JSON.stringify((await course(page)).items.find((i: any) => i.id === r.woodsId)?.points), { message: "the wood after a stroke" }).not.toBe(before);
+  await page.getByTestId("reshape-done").click();
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => JSON.stringify((await course(page)).items.find((i: any) => i.id === r.woodsId)?.points), { message: "after one undo" }).toBe(before);
+});
+
 test("a refresh in a course comes back to it, on its step and printout; on the course list, to the list", async () => {
   await page.evaluate(() => (window as any).__dgEditor().set({ step: "map", designTab: "sign", tool: "select" }));
   await page.waitForTimeout(400);

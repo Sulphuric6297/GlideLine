@@ -9,6 +9,8 @@ import type { CourseDoc, MapStyle } from "../types";
 import { BEST_GUESS, UG_BLOCK, brushAcres, brushAreas, brushLevels, tapPatch, underbrushChance } from "./undergrowth";
 import { treeFree } from "./treeFree";
 import { pointInPolygon, distanceToPath } from "./geom";
+import { applyEdit, brushStroke } from "./areaBrush";
+import { strokeOutline } from "./brush";
 
 // (the last few, so a style compared with many others is painted once)
 const kept = new Map<string, Uint8ClampedArray>();
@@ -209,4 +211,9 @@ if (typeof window !== "undefined") {
       onNever, overBuilt, areas, startsAt: most, taps
     };
   };
+}
+
+// For the tests: the brush on areas, worked out on a course without changing it (lib/areaBrush).
+if (typeof window !== "undefined") {
+  (window as unknown as { __dgAreaBrush: unknown }).__dgAreaBrush = { brushStroke, applyEdit, strokeOutline };
 }
