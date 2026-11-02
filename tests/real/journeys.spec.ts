@@ -515,6 +515,8 @@ test("painting areas: Remove cuts a wood drawn by points (a stroke across splits
   expect(s3, "a Thicker pass").toBe(Math.min(3, s2 + 1));
   expect(r.lockedTouched, "a locked wood, changed").toBe(false);
   // (Reshape with the brush, from the wood's panel, and a real drag across it: one undo puts it back)
+  // (on the Design step, where the panel is: the checks before leave the map on the Map step)
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "select" }));
   await frame(page, r.box);
   await draw(page, false);
   await page.evaluate(id => (window as any).__dgActions.select(id), r.woodsId);
