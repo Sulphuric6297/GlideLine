@@ -727,6 +727,8 @@ export interface MapStyle {
 export type Units = "ft" | "m";
 
 export interface SiteInfo {
+  /** How much brush and how thick, as the import last had it (lib/undergrowth). */
+  brushTune?: { much: number; thick: number };
   /** The searched place (the middle of the imported area). */
   location: { lat: number; lon: number; label: string } | null;
   /** Real-world edges of the plan. */

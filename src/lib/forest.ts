@@ -19,6 +19,7 @@ import { isLineKind, offsetPolygon, roofFor, structureHeight, structurePath, str
 import { latitudeOf, lookParts, paintLight, sunFromOf, themeOf } from "./mapLook";
 import { STYLE_GREENS, drawMist, drawShadows, drawTrees, gradeLight, type PaintTree } from "./paintTrees";
 import { drawBrushedSteps, type Wait } from "./brushCrown";
+import { BRUSH, brushOnly, spotDraw, underbrushSpots } from "./brushSpots";
 import { LOOK_TINT, LOOK_VARIANTS, conifersWith, drawOf, lookFor, shapeWith, sharesOf, standShares, type TreeLookId } from "./treeMix";
 
 /** Where the photo shows trees, on a grid over the site (1 = canopy). */
@@ -526,7 +527,8 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       else if (a.kind === "nogo") poly(CLEAR, a.points);
       // (a field, court or play area: mown, no treetops over it; the map draws it on top)
       else if (a.kind === "field") { poly(FAIR, a.points); poly(CLEAR, offsetPolygon(a.points, (crownR * 0.8) / k)); }
-      else if (a.kind === "woods") poly(WOODS, a.points);
+      // (a wood of bushes only: its bushes drawn one by one, below, no woods floor or treetops)
+      else if (a.kind === "woods" && !brushOnly(a)) poly(WOODS, a.points);
     } else if (i.type === "line") {
       const l = i as LineItem;
       const { points: pts, width: lw, widthAt } = paintedLine(l, view.scale);
@@ -748,7 +750,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     // outline took seconds on a phone, in one go, the view stuck meanwhile)
     const inDrawn = mask();
     const DRAWN = ch(inDrawn, 0);
-    for (const a of doc.items.filter(i => i.type === "area" && i.kind === "woods" && (i as AreaItem).trees !== "none") as AreaItem[]) poly(DRAWN, drawnAreas([a])[0].points);
+    for (const a of doc.items.filter(i => i.type === "area" && i.kind === "woods" && (i as AreaItem).trees !== "none" && !brushOnly(i as AreaItem)) as AreaItem[]) poly(DRAWN, drawnAreas([a])[0].points);
     const drawn = inDrawn.g.getImageData(0, 0, mw, mh).data;
     // (more woods asked for, from the photo or everywhere: never under a measured crown, no woods
     // floor round the measured trees)
@@ -987,6 +989,34 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       }
     }
   }
+  // Underbrush on its own (the brush that came in with the import): its bushes and young trees,
+  // the very ones 3D grows (lib/brushSpots), low, under the trees; where brush areas overlap the
+  // smaller one's grows, as in 3D. Never closer together than reads at this scale.
+  const brushWoods = opts.under ? [] : (doc.items.filter(i => i.type === "area" && i.kind === "woods" && brushOnly(i as AreaItem) && (i as AreaItem).trees !== "none") as AreaItem[]);
+  brushWoods.forEach((w, n) => {
+    const box = boundsOf(w.points), sb = { a: toScreen({ x: box.minX, y: box.minY }), b: toScreen({ x: box.maxX, y: box.maxY }) };
+    if (Math.max(sb.a.x, sb.b.x) < 0 || Math.max(sb.a.y, sb.b.y) < 0 || Math.min(sb.a.x, sb.b.x) > W || Math.min(sb.a.y, sb.b.y) > H) return;
+    const over = brushWoods.slice(n + 1).filter(o => { const b = boundsOf(o.points); return b.minX < box.maxX && b.maxX > box.minX && b.minY < box.maxY && b.maxY > box.minY; }).map(o => o.points);
+    const clearAt = (x: number, y: number) => { const cx = Math.min(mw - 1, Math.max(0, Math.floor(x / cell))), cy = Math.min(mh - 1, Math.max(0, Math.floor(y / cell))); return a[(cy * mw + cx) * 4 + 1] > 90; };
+    const keepOut = (p: P, reach: number) => {
+      if (over.some(o => pointInPolygon(p, o))) return true;
+      const q = toScreen(p), d = reach * k;
+      return clearAt(q.x, q.y) || clearAt(q.x + d, q.y) || clearAt(q.x - d, q.y) || clearAt(q.x, q.y + d) || clearAt(q.x, q.y - d);
+    };
+    const density = w.density ?? 1, level = density < 0.75 ? "light" : density > 1.4 ? "heavy" : "medium";
+    // (closer than reads: fewer bushes, each bigger, the same ground covered)
+    const least = crownR / k, closer = Math.min(1, BRUSH[level].spacing / least), grow = Math.min(2, 1 / closer);
+    const spots = underbrushSpots(w.points, keepOut, level, 0, w.points, w.brushKind ?? "mixed", closer);
+    for (const b of spots) {
+      const sp = toScreen(b);
+      const r = Math.max(1.6 * pt, (b.width / 2) * k * treeScale * grow);
+      if (sp.x < -r || sp.y < -r || sp.x > W + r || sp.y > H + r) continue;
+      const top = Math.max(r * 1.1, b.height * k * treeScale), seed = spotDraw(b, 31), tone = 1 + Math.floor(seed * 6);
+      if (vector) { vtrees.push({ x: sp.x, y: sp.y, r: b.growth ? r * 0.9 : r, h: b.growth ? Math.min(top, r * 1.1) : top, pine: false, col: treeColor(spotDraw(b, 32)), seed, look: null }); continue; }
+      if (!b.growth) natural ? leafy(sp.x, sp.y, r, top, tone) : stamp(sp.x, sp.y, r, top, tone);
+      else natural ? leafy(sp.x, sp.y, r * 0.9, Math.min(top, r * 1.1), tone, 4) : stamp(sp.x, sp.y, r * 0.9, Math.min(top, r * 1.1), tone);
+    }
+  });
   // The measured trees, each drawn whole where it stands, at its own size and height and of its
   // own kind, as a tree placed by hand is (crowns that touch are the woods' canopy)
   if (measured && !opts.under) measured.trees.forEach(([x0, y0, h0, radius, conifer], idx) => {

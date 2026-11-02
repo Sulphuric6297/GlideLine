@@ -32,6 +32,8 @@ export function SitePickerMap({
   outline,
   fit,
   arrived,
+  brush,
+  onTap,
   angle = 0,
   onAngle
 }: {
@@ -54,6 +56,10 @@ export function SitePickerMap({
   fit?: { bounds: GeoBounds; key: number } | null;
   /** What has come in so far, drawn on the map as it lands: the photo, then the shapes and trees. */
   arrived?: Arrived | null;
+  /** The brush as it's tuned, over what came in (drawn on its own, so tuning it stays quick). */
+  brush?: { points: { x: number; y: number }[]; color: string }[] | null;
+  /** A tap on what came in, at plan feet (the map stays where it is). */
+  onTap?: (x: number, y: number) => void;
   /** The frame turned this many degrees clockwise from north, and told when it's turned. */
   angle?: number;
   onAngle?: (deg: number) => void;
@@ -364,6 +370,28 @@ export function SitePickerMap({
     for (const t of arrived.trees) drawn.push(L.circle(at(t.x, t.y), { renderer: canvas, radius: Math.max(1.5, t.r * 0.3048), stroke: true, weight: t.color ? 1.4 : 0.6, color: t.color ?? "#d9f2b8", fillColor: t.color ? t.color : "#2f5d34", fillOpacity: t.color ? 0.12 : 0.7, interactive: false }).addTo(map));
     return () => { drawn.forEach(d => d.remove()); };
   }, [arrived]);
+
+  // The brush, as it's tuned: redrawn alone while How much or How thick moves
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !arrived || !brush?.length) return;
+    const b = arrived.bounds;
+    const at = (x: number, y: number): L.LatLngTuple => [b.north - (y / arrived.height) * (b.north - b.south), b.west + (x / arrived.width) * (b.east - b.west)];
+    const canvas = L.canvas({ padding: 0.2 });
+    const drawn = brush.map(a => L.polygon(a.points.map(p => at(p.x, p.y)), { renderer: canvas, stroke: true, color: a.color, weight: 1.5, fillColor: a.color, fillOpacity: 0.32, interactive: false }).addTo(map));
+    return () => { drawn.forEach(d => d.remove()); };
+  }, [arrived?.bounds, brush]);
+  // A tap on what came in (never moves the map)
+  const onTapRef = useRef(onTap);
+  onTapRef.current = onTap;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !arrived || !onTap) return;
+    const b = arrived.bounds, w = arrived.width, h = arrived.height;
+    const tap = (e: L.LeafletMouseEvent) => onTapRef.current?.(((e.latlng.lng - b.west) / (b.east - b.west)) * w, ((b.north - e.latlng.lat) / (b.north - b.south)) * h);
+    map.on("click", tap);
+    return () => { map.off("click", tap); };
+  }, [arrived?.bounds, !!onTap]);
 
   return <div ref={containerRef} className="absolute inset-0 bg-white/[0.07]" />;
 }

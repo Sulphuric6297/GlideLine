@@ -403,17 +403,31 @@ const workers = () => {
   return pool;
 };
 let jobId = 0;
-const waiting = new Map<number, (p: Painted | null) => void>();
-const ask = (w: Worker, trees: BrushTree[], sun: number[], scale: number) => new Promise<Painted | null>(res => {
+const waiting = new Map<number, (p: unknown) => void>();
+const ask = <T = Painted>(w: Worker, trees: BrushTree[], sun: number[], scale: number, list = false) => new Promise<T | null>(res => {
   const id = ++jobId;
-  waiting.set(id, res);
+  waiting.set(id, res as (p: unknown) => void);
   if (!(w as unknown as { told?: boolean }).told) {
     (w as unknown as { told?: boolean }).told = true;
-    w.onmessage = (e: MessageEvent<{ id: number; out: Painted | null }>) => { const f = waiting.get(e.data.id); waiting.delete(e.data.id); f?.(e.data.out); };
+    w.onmessage = (e: MessageEvent<{ id: number; out: unknown }>) => { const f = waiting.get(e.data.id); waiting.delete(e.data.id); f?.(e.data.out); };
     w.onerror = () => { for (const [k, f] of waiting) { waiting.delete(k); f(null); } };
   }
-  w.postMessage({ id, trees, sun, scale });
+  w.postMessage({ id, trees, sun, scale, list });
 });
+
+/** Trees' strokes listed for the graphics chip, in order (a worker's, or the page's own). */
+export type Listed = { data: Float32Array; n: number };
+let nowhere: Ctx | null = null;
+export const listTrees = (trees: BrushTree[], sun: number[], into?: Listed): Listed => {
+  const r: Rec = { data: into?.data ?? new Float32Array(Math.max(1024, trees.length * 400) * OP), n: 0, soft: 0, crown: [0, 0, 1, 0, 0, 0, 0, 0] };
+  // (nothing is drawn while strokes are listed: a canvas for the shape of the calls)
+  nowhere ??= canvas(1, 1).getContext("2d") as Ctx;
+  for (const t of trees) {
+    rec = r;
+    try { (t.pine ? paintPine : paintCrown)(nowhere, t.x, t.y, t.r, t.col, t.seed, sun); } finally { rec = null; }
+  }
+  return { data: r.data, n: r.n };
+};
 
 /** A thing for the painter's driver to wait for (lib/forest: forestCanvasAsync); what it gives is
  * handed back into the steps. A driver that can't wait hands back nothing. */
@@ -460,6 +474,29 @@ export function* drawBrushedSteps(g: Ctx, trees: BrushTree[], sun: number[], sca
       const mine: Rec = { data: new Float32Array(BATCH * OP * 1.25), n: 0, soft: 0, crown: [0, 0, 1, 0, 0, 0, 0, 0] };
       map = beginMap(p, W, H, look, bristles() as TexImageSource);
       let ok = !!map, i = 0, since = performance.now();
+      // (many trees: their strokes listed by the workers, a slice each, a few slices ahead, and
+      // painted here in order as they come; the very strokes the page would list)
+      const ws = canWork() ? workers() : [];
+      if (ws.length > 1 && sorted.length > 200) {
+        const SLICE = 64, slices: BrushTree[][] = [];
+        for (let k = 0; k < sorted.length; k += SLICE) slices.push(sorted.slice(k, k + SLICE));
+        const asked: Promise<Listed | null>[] = [], ahead = ws.length * 3;
+        const more = (done: number) => { while (asked.length < slices.length && asked.length < done + ahead) { const k = asked.length; asked.push(ask<Listed>(ws[k % ws.length], slices[k], sun, scale, true)); } };
+        more(0);
+        for (let k = 0; k < slices.length && ok; k++) {
+          const l0 = performance.now();
+          let got = (yield { wait: asked[k] }) as Listed | null | undefined;
+          // (the driver can't wait, or a worker failed: listed here)
+          if (!got) { pxPerFt = scale; got = listTrees(slices[k], sun, mine); mine.data = got.data; }
+          listing += performance.now() - l0;
+          more(k + 1);
+          const q0 = performance.now();
+          ok = paintBatch(p, map!, got.data, got.n);
+          painting += performance.now() - q0; strokes += got.n;
+          i += slices[k].length;
+          if (performance.now() - since > 12) { yield; since = performance.now(); }
+        }
+      }
       for (; i < sorted.length && ok; i++) {
         const t = sorted[i], l0 = performance.now();
         rec = mine;

@@ -4,9 +4,11 @@
 import type { CourseItem, P } from "../types";
 import type { ImportedSite } from "./importSite";
 import { centroid, pointInPolygon } from "./geom";
+import { signed } from "./importSite";
+import { BEST_GUESS, brushAreas, brushLevels, type BrushTune } from "./undergrowth";
 
 export type SourceKey =
-  | "lidarTrees" | "summerTrees" | "photoTrees" | "bushes" | "osmTrees"
+  | "lidarTrees" | "summerTrees" | "photoTrees" | "bushes" | "underbrush" | "osmTrees"
   | "osmBuildings" | "femaBuildings" | "tracedBuildings" | "lidarBuildings"
   | "osmWater" | "govWater" | "photoWater"
   | "foundParking" | "osmParking" | "courts"
@@ -20,6 +22,7 @@ export const SOURCES: Record<SourceKey, { group: SourceGroup; label: string; who
   summerTrees: { group: "trees", label: "From the photo", who: "the survey's gaps", color: "#bef264" },
   photoTrees: { group: "trees", label: "From the photo", color: "#bef264" },
   bushes: { group: "trees", label: "Bushes", who: "LiDAR", color: "#6ee7b7" },
+  underbrush: { group: "trees", label: "Underbrush", who: "survey and satellite", color: "#f59e0b" },
   osmTrees: { group: "trees", label: "OpenStreetMap", color: "#86efac" },
   femaBuildings: { group: "buildings", label: "FEMA", who: "checked by hand", color: "#facc15" },
   osmBuildings: { group: "buildings", label: "OpenStreetMap", color: "#ffffff" },
@@ -52,6 +55,7 @@ export const sourceOf = (i: CourseItem): SourceKey | null => {
   const src = (i as { importSource?: string }).importSource;
   if (!src) return null;
   if (i.type === "tree") return src === "lidar" ? "bushes" : src === "photo" ? "photoTrees" : "osmTrees";
+  if (i.type === "area" && i.kind === "woods" && src === "lidar" && (i.bushes ?? 0) >= 1) return "underbrush";
   if (isBuilding(i)) return src === "fema" ? "femaBuildings" : src === "traced" ? "tracedBuildings" : src === "lidar" ? "lidarBuildings" : "osmBuildings";
   if (src === "usgs" || src === "nwi") return "govWater";
   if (i.type === "area" && i.kind === "field" && src === "photo") return "courts";
@@ -73,6 +77,8 @@ export const sourceCounts = (site: ImportedSite) => {
   const lidar = site.lidar, summer = lidar?.fromPhoto ?? 0;
   if (lidar) { add("lidarTrees", lidar.trees.length - summer); if (summer) add("summerTrees", summer); }
   add("photoWater", site.alternates?.photoWater?.length ?? 0);
+  // (the brush: its row says how many acres, as tuned)
+  if (site.underbrush) add("underbrush");
   return n;
 };
 
@@ -84,7 +90,7 @@ const overlaps = (a: P[], b: P[]) => pointInPolygon(centroid(a), b) || pointInPo
 
 /** The site with only what's on, and where FEMA and OpenStreetMap have the same building, the one
  * asked for. */
-export const reviewedSite = (site: ImportedSite, on: Partial<Record<SourceKey, boolean>>, keep: "osm" | "fema" = "osm"): ImportedSite => {
+export const reviewedSite = (site: ImportedSite, on: Partial<Record<SourceKey, boolean>>, keep: "osm" | "fema" = "osm", tune: BrushTune = BEST_GUESS): ImportedSite => {
   const yes = (k: SourceKey | null) => !k || on[k] !== false;
   let mapped = site.mapped.filter(i => yes(sourceOf(i)));
   const trees = site.trees.filter(i => yes(sourceOf(i)));
@@ -110,7 +116,10 @@ export const reviewedSite = (site: ImportedSite, on: Partial<Record<SourceKey, b
     const { fromPhoto, ...rest } = lidar;
     lidar = { ...rest, trees: lidar.trees.slice(0, lidar.trees.length - fromPhoto) };
   }
-  return { ...site, mapped, trees, lidar };
+  // The brush, as tuned (and the tuning kept with the course, for the next time it comes in)
+  const u = site.underbrush;
+  if (u && on.underbrush !== false) mapped = [...mapped, ...brushAreas(brushLevels(u, tune), u.bx, u.by).map(signed)];
+  return { ...site, site: u ? { ...site.site, brushTune: { much: tune.much, thick: tune.thick } } : site.site, mapped, trees, lidar };
 };
 
 /** How many FEMA buildings OpenStreetMap has too (the choice of which to keep matters only then). */

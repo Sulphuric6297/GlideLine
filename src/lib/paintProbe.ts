@@ -6,6 +6,9 @@ import { courseStats } from "./holeStats";
 import { coursePoints, renderPoster } from "./mapSvg";
 import { rotatePoint } from "./geom";
 import type { CourseDoc, MapStyle } from "../types";
+import { BEST_GUESS, UG_BLOCK, brushAcres, brushAreas, brushLevels, tapPatch, underbrushChance } from "./undergrowth";
+import { treeFree } from "./treeFree";
+import { pointInPolygon, distanceToPath } from "./geom";
 
 // (the last few, so a style compared with many others is painted once)
 const kept = new Map<string, Uint8ClampedArray>();
@@ -148,5 +151,62 @@ if (typeof window !== "undefined") {
     await stopped;
     const after = px(await forestCanvasAsync(doc, b, stats, opts));
     return { a: share(px(ca), soloA), b: share(px(cb), soloB), afterStopped: share(after, soloB) };
+  };
+}
+
+// For the tests: the brush on a course, from a satellite that sees it greener from west to east (so
+// there's brush all over the east, wherever it may go): how many acres at each step of How much
+// and How thick, whether any block of it is on a building, road, path, parking or water, or any
+// brush area over a building, parking lot or road, and what taps on a patch do to it.
+if (typeof window !== "undefined") {
+  (window as unknown as { __dgBrush: unknown }).__dgBrush = (doc: CourseDoc) => {
+    const W = doc.canvas.width, H = doc.canvas.height, w = 48, h = 48;
+    // (greener from west to east: the brush surer the further east)
+    const green = (v: number) => Float32Array.from({ length: w * h }, (_, q) => v + ((q % w) / w) * 0.5);
+    const seasons = { w, h, winter: green(0.1), spring: green(0.25), summer: green(0.35), dates: ["2025-01-10", "2025-07-10"] };
+    const items = doc.items;
+    const water = {
+      areas: items.filter(i => i.type === "area" && i.kind === "water").map(i => (i as { points: { x: number; y: number }[] }).points),
+      lines: items.filter(i => i.type === "line" && i.kind === "stream").map(i => (i as { points: { x: number; y: number }[] }).points)
+    };
+    const never = treeFree(items);
+    const u = underbrushChance(W, H, null, seasons, water, never);
+    if (!u) return null;
+    const acres = (t: typeof BEST_GUESS) => { const a = brushAcres(brushLevels(u, t)); return a[1] + a[2] + a[3]; };
+    const heavy = (t: typeof BEST_GUESS) => brushAcres(brushLevels(u, t))[3];
+    const lv = brushLevels(u, BEST_GUESS);
+    // (blocks of brush with their middle on somewhere it never goes)
+    let onNever = 0;
+    for (let q = 0; q < lv.length; q++) {
+      if (!lv[q]) continue;
+      const i = q % u.bx, j = (q - i) / u.bx;
+      if (never({ x: (i + 0.5) * UG_BLOCK, y: (j + 0.5) * UG_BLOCK })) onNever++;
+    }
+    // (brush areas over the middle of a building or a parking lot, or over a road's middle line)
+    const areas = brushAreas(lv, u.bx, u.by);
+    const covered = (p: { x: number; y: number }) => areas.some(a => pointInPolygon(p, a.points));
+    let overBuilt = 0;
+    for (const it of items) {
+      if (it.type === "area" && (it.kind === "building" || it.kind === "parking")) {
+        const pts = it.points, c = pts.reduce((s, p) => ({ x: s.x + p.x / pts.length, y: s.y + p.y / pts.length }), { x: 0, y: 0 });
+        if (pointInPolygon(c, pts) && covered(c)) overBuilt++;
+      } else if (it.type === "line" && it.kind === "road") {
+        for (let k = 1; k < it.points.length; k++) {
+          const a = it.points[k - 1], b = it.points[k], n = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 20);
+          for (let s = 0; s <= n; s++) { const p = { x: a.x + ((b.x - a.x) * s) / n, y: a.y + ((b.y - a.y) * s) / n }; if (distanceToPath(p, it.points) < 1 && covered(p)) { overBuilt++; break; } }
+        }
+      }
+    }
+    // (taps on one patch: lighter a step at a time, then gone, then back as found)
+    let q0 = -1, most = 0;
+    for (let q = 0; q < lv.length; q++) if (lv[q] > most) { most = lv[q]; q0 = q; }
+    const taps: number[] = [];
+    let t = { ...BEST_GUESS };
+    for (let k = 0; k < most + 1 && q0 >= 0; k++) { t = tapPatch(u, t, q0) ?? t; taps.push(brushLevels(u, t)[q0]); }
+    return {
+      much: [0, 1, 2, 3, 4].map(m => Math.round(acres({ much: m, thick: 0 }) * 10) / 10),
+      heavy: [-1, 0, 1].map(k => Math.round(heavy({ much: 2, thick: k }) * 10) / 10),
+      onNever, overBuilt, areas, startsAt: most, taps
+    };
   };
 }

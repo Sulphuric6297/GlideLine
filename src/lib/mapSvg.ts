@@ -3,6 +3,7 @@
 // tees, baskets, mandos, drop zones, distances), labels, and the frame (title, legend, hole table,
 // north arrow, scale bar). The same renderer draws a single hole for tee signs, turned so the tee
 // is at the bottom.
+import { brushOnly } from "./brushSpots";
 import { extrasSvg, keepsItsSize, keepsItsTurn, turned } from "./pieces";
 import { fitAttr } from "./fitText";
 import { SCRIPT_FONTS } from "./fontKinds";
@@ -305,6 +306,9 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     if (a.kind === "water") {
       out.push(`<polygon points="${pts(a.points)}" fill="${fill}" opacity="${o}" stroke="${shade(fill, -0.25)}" stroke-width="${n(px(1.4))}" stroke-linejoin="round"/>`);
       out.push(`<polygon points="${pts(a.points)}" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="${n(px(3))}" stroke-linejoin="round" transform="translate(0 0)" style="paint-order:stroke"/>`);
+    } else if (a.kind === "woods" && brushOnly(a)) {
+      // (brush on its own: a soft lighter green, thicker the heavier, no treetops)
+      out.push(`<polygon points="${pts(a.points)}" fill="${shade(fill, 0.3)}" opacity="${n(((a.density ?? 1) < 0.75 ? 0.3 : (a.density ?? 1) > 1.4 ? 0.6 : 0.45) * o)}" stroke-linejoin="round"/>`);
     } else if (a.kind === "woods") {
       if (!forest) out.push(woods(a, fill, k, uid, pal.treeShadow, o));
     } else if (a.kind === "building") {

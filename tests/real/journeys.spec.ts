@@ -357,6 +357,27 @@ test("a whole new painting shared out among workers on a computer: the same pixe
   expect(r.differ, "pixels unlike the page's own painting").toBe(0);
 });
 
+test("underbrush from the import: more with How much, heavier with How thick, never on buildings, roads, paths, parking or water; a tap steps a patch lighter, then gone, then back; painted alike in workers", async () => {
+  await page.waitForFunction(() => typeof (window as any).__dgBrush === "function", null, { timeout: 60_000 });
+  const r = await page.evaluate(() => { const w = window as any; return w.__dgBrush(w.__dgCourse()); });
+  console.log("underbrush:", JSON.stringify({ ...r, areas: r.areas.length }));
+  expect(r.much[0], "acres at Only the surest").toBeGreaterThan(0);
+  for (let k = 1; k < 5; k++) expect(r.much[k], `acres at step ${k} of How much`).toBeGreaterThanOrEqual(r.much[k - 1]);
+  expect(r.much[4], "Every hint against Only the surest").toBeGreaterThan(r.much[0]);
+  expect(r.heavy[2], "heavy acres at Much thicker against Much thinner").toBeGreaterThan(r.heavy[0]);
+  expect(r.onNever, "blocks of brush on a building, road, path, parking or water").toBe(0);
+  expect(r.overBuilt, "brush areas over a building, a parking lot or a road").toBe(0);
+  // (heavy, medium, light, gone, then heavy again)
+  expect(r.taps).toEqual([...Array.from({ length: r.startsAt }, (_, k) => r.startsAt - 1 - k), r.startsAt]);
+  // (its bushes painted the same shared out among workers as on the page alone)
+  const p = await page.evaluate(async areas => {
+    const w = window as any, doc = w.__dgCourse();
+    return w.__dgPaintBands({ ...doc, items: [...doc.items, ...areas] }, { cx: doc.canvas.width * 0.7, cy: doc.canvas.height / 2, rotation: 0, scale: 1.2, width: 900, height: 700 });
+  }, r.areas);
+  console.log("underbrush painted:", JSON.stringify(p));
+  expect(p.differ, "pixels unlike the page's own painting").toBe(0);
+});
+
 test("a refresh in a course comes back to it, on its step and printout; on the course list, to the list", async () => {
   await page.evaluate(() => (window as any).__dgEditor().set({ step: "map", designTab: "sign", tool: "select" }));
   await page.waitForTimeout(400);

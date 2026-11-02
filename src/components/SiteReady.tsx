@@ -1,8 +1,9 @@
 // The site just brought in: what came, in a card over the 3D view of it, and two ways on.
-import { Flag, Image as ImageIcon, LandPlot, MapPin, Mountain, Route, Trees, Warehouse, Waves } from "lucide-react";
+import { Flag, Image as ImageIcon, LandPlot, MapPin, Mountain, Route, Shrub, Trees, Warehouse, Waves } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ImportedSite } from "../lib/importSite";
 import { fmtArea, fmtDist } from "../lib/units";
+import { polygonArea } from "../lib/geom";
 import type { CourseItem, Units } from "../types";
 import { useLayout } from "./useLayout";
 
@@ -23,6 +24,9 @@ export const readyFacts = (site: ImportedSite, units: Units, holes: number): Rea
   const photoTrees = site.trees.filter(i => from(i) === "photo").length;
   if (measured) facts.push({ icon: <Trees size={17} />, label: "Trees", value: measured.toLocaleString(), note: "measured" });
   else if (photoTrees) facts.push({ icon: <Trees size={17} />, label: "Trees", value: photoTrees.toLocaleString(), note: "from the photo" });
+  // (the brush: its light patches hold the medium and heavy ones)
+  const brush = all.filter(i => i.type === "area" && i.kind === "woods" && from(i) === "lidar" && (i.bushes ?? 0) >= 1 && i.density === 0.5) as { points: { x: number; y: number }[] }[];
+  if (brush.length) facts.push({ icon: <Shrub size={17} />, label: "Underbrush", value: fmtArea(brush.reduce((s, a) => s + Math.abs(polygonArea(a.points)), 0), units) });
   const roads = all.filter(i => i.type === "line" && (i.kind === "road" || i.kind === "path")) as { points: { x: number; y: number }[] }[];
   if (roads.length) facts.push({ icon: <Route size={17} />, label: "Paths and roads", value: fmtDist(roads.reduce((s, l) => s + lengthOf(l.points), 0), units) });
   const water = all.filter(i => (i.type === "area" && i.kind === "water") || (i.type === "line" && i.kind === "stream")).length;

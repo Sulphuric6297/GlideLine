@@ -3375,6 +3375,14 @@ export class CourseView {
     // (fields in their real colors, their grass leaning toward the map's)
     const inks = fieldInks("natural", st.fairway);
     const nogoColor = pdga ? RESTRICTED : AREA_KINDS.nogo.color;
+    // (woods of bushes only, biggest first: where they overlap, the smaller one's brush grows, as
+    // the measured brush's medium and heavy patches lie inside its light)
+    const brushWoods = areas.filter(a => a.kind === "woods" && (a.bushes ?? 0) >= 1);
+    const brushInside = (a: AreaItem) => {
+      const k = brushWoods.indexOf(a), box = boundsOf(a.points);
+      if (k < 0) return [];
+      return brushWoods.slice(k + 1).filter(o => { const b = boundsOf(o.points); return b.minX < box.maxX && b.maxX > box.minX && b.minY < box.maxY && b.maxY > box.minY; }).map(o => o.points);
+    };
     areas.forEach((a, order) => {
       if (a.kind === "field") {
         // A field, court or play area: its ground painted as it is (on the painted map and when
@@ -3519,17 +3527,17 @@ export class CourseView {
         const edge = brushOnly || grass ? 0 : Math.min(1, Math.max(0, a.brushEdge ?? 0.6));
         // (`over`: the sections drawn after this one, which have their say where they overlap it)
         const plant = (key: string, outline: P[], level: "light" | "medium" | "heavy", kind: BrushKind, outside: boolean, over: P[][] = []) =>
-          held(key) || put(key, JSON.stringify([outline, level, kind, hv, st.trees, st.landscape, st.treeMix, st.conifers, here().key, cutKey, outside ? sections.map(b => b.points) : over, edge, a.points]), () => {
+          held(key) || put(key, JSON.stringify([outline, level, kind, hv, st.trees, st.landscape, st.treeMix, st.conifers, here().key, cutKey, outside ? sections.map(b => b.points) : 0, over, edge, a.points]), () => {
             this.plantings++;
             // (the wood's own level stays out of its sections; a section keeps to the wood)
-            const keepOut = (p: P, r: number) => here().test(p, r) || cutAt(p) || (outside ? inSection(p) : !pointInPolygon(p, a.points) || over.some(o => pointInPolygon(p, o)));
+            const keepOut = (p: P, r: number) => here().test(p, r) || cutAt(p) || over.some(o => pointInPolygon(p, o)) || (outside ? inSection(p) : !pointInPolygon(p, a.points));
             const brush = createUnderbrush(outline, (x, y) => this.h(x, y), st.trees, treeMixOf(st), keepOut, level, edge, a.points, kind, grass ? TALL_GRASS_BRUSH : 1);
             brush.traverse(o => { o.userData.itemId = a.id; });
             this.shadowsDirty = true;
             return brush;
           }, this.itemsGroup, true);
         const kind = a.brushKind ?? "mixed";
-        if (brushLevel) plant(`woods:${a.id}:under`, a.points, brushLevel, kind, true);
+        if (brushLevel) plant(`woods:${a.id}:under`, a.points, brushLevel, kind, true, brushOnly ? brushInside(a) : []);
         sections.forEach((b, i) => { if (b.level !== "none") plant(`woods:${a.id}:under:${i}`, b.points, b.level, b.kind ?? kind, false, sections.slice(i + 1).map(s => s.points)); });
       }
     });
