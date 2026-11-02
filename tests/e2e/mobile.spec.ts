@@ -203,11 +203,11 @@ test.describe("phone", () => {
     expect((await course(page)).holes).toHaveLength(1);
   });
 
-  test("the map's buttons all sit above the panel; the compass shows once the map is turned", async ({ page }) => {
+  test("the map's buttons all sit above the step's row and its panel; the compass shows once the map is turned", async ({ page }) => {
     await oneHole(page);
     const above = async () => {
       await settle(page);
-      const top = (await sheet(page).boundingBox())!.y;
+      const top = (await (await sheet(page).count() ? sheet(page) : page.getByTestId("tool-strip")).boundingBox())!.y;
       const buttons = page.getByTestId("map-controls").locator("button");
       const n = await buttons.count();
       expect(n).toBeGreaterThan(1);
@@ -277,17 +277,24 @@ test.describe("phone", () => {
         await expect(page.getByTestId("page-tool-panel").getByTestId("print-layers")).toHaveCount(0);
         await page.getByTestId("page-tool-done").tap();
         await expect(page.getByTestId("page-tool-panel")).toHaveCount(0);
+      } else if (label === "Design") {
+        // (about the map: its tools in the row over the steps, its panel in its tab)
+        await expect(sheet(page)).toHaveCount(0);
+        await expect(page.getByTestId("tool-strip")).toBeVisible();
+        await expect(page.getByTestId("tool-select")).toHaveCount(0);
       } else await expect(page.getByTestId("sheet-title")).toHaveText(title);
       await expect(nav(page).getByRole("button", { name: new RegExp(label) })).toHaveAttribute("aria-current", "step");
     }
-    // Tapping the step that is open shows more of its panel, and tapping again less
+    // Tapping the step you're on brings its panel up out of the tab, and again puts it away
     await nav(page).getByRole("button", { name: /Design/ }).tap();
-    await settle(page);
-    expect(await detent(page)).toBe("peek");
+    await expect(page.getByTestId("tool-strip")).toBeVisible();
     await nav(page).getByRole("button", { name: /Design/ }).tap();
     await expect.poll(() => detent(page)).toBe("half");
+    await expect(page.getByTestId("sheet-title")).toHaveText("Design");
+    await expect(page.getByTestId("tool-strip")).toHaveCount(0);
     await nav(page).getByRole("button", { name: /Design/ }).tap();
-    await expect.poll(() => detent(page)).toBe("peek");
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(page.getByTestId("tool-strip")).toBeVisible();
   });
 
   test("finding the park on a phone: the search in the sheet, then the place on top, the map, and the panel dragged down to give the map the screen, its button still there", async ({ page }) => {
@@ -320,19 +327,18 @@ test.describe("phone", () => {
     await expect.poll(async () => (await editorState(page)).tool).toBe("select");
   });
 
-  test("the sheet rests at peek, half and full: drag it, tap its handle, or use the arrow keys", async ({ page }) => {
+  test("a step's panel comes up out of its tab, half and full: drag it, tap its handle, or use the arrow keys; at its smallest it goes back into the tab", async ({ page }) => {
     await oneHole(page);
+    const design = nav(page).getByRole("button", { name: /Design/ });
+    const away = async () => { await expect(sheet(page)).toHaveCount(0); await expect(page.getByTestId("tool-strip")).toBeVisible(); };
+    // (Design at rest: its tools over the steps, its panel in its tab)
+    await away();
+    await design.tap();
+    await expect.poll(() => detent(page)).toBe("half");
     const handle = page.getByTestId("sheet-handle");
-    expect(await detent(page)).toBe("peek");
     const top = async () => (await sheet(page).boundingBox())!.y;
-    const visible = async () => (await page.getByTestId("bottom-nav").boundingBox())!.y - (await top());
-    const peekH = await visible();
-    // Tap: peek, half, full, and round again
-    await handle.tap();
+    // Tap: half, full, then back into the tab
     await settle(page);
-    expect(await detent(page)).toBe("half");
-    const halfH = await visible();
-    expect(halfH).toBeGreaterThan(peekH + 100);
     await handle.tap();
     await settle(page);
     expect(await detent(page)).toBe("full");
@@ -340,31 +346,33 @@ test.describe("phone", () => {
     const bar = (await page.getByTestId("top-bar").boundingBox())!;
     expect(await top()).toBeGreaterThanOrEqual(bar.y + bar.height - 4);
     await handle.tap();
-    await settle(page);
-    expect(await detent(page)).toBe("peek");
-    // Drag the handle up: it follows the finger, then rests at the nearest height
-    let h = (await handle.boundingBox())!;
-    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y - halfH + peekH }, 16);
-    await settle(page);
-    expect(await detent(page)).toBe("half");
-    // ...and down again
-    h = (await handle.boundingBox())!;
-    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y + 260 }, 16);
-    await settle(page);
-    expect(await detent(page)).toBe("peek");
-    // The keyboard: the handle is a button that takes the arrow keys, and says what it does
-    await handle.focus();
-    await expect(handle).toHaveAttribute("aria-label", /Panel: small/);
-    await page.keyboard.press("ArrowUp");
+    await away();
+    // Drag the handle up: it follows the finger, then rests at the nearest height; dragged right
+    // down, it goes back into its tab
+    await design.tap();
     await expect.poll(() => detent(page)).toBe("half");
+    await settle(page);
+    let h = (await handle.boundingBox())!;
+    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y - 300 }, 16);
+    await settle(page);
+    expect(await detent(page)).toBe("full");
+    h = (await handle.boundingBox())!;
+    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y + 700 }, 16);
+    await away();
+    // The keyboard: the handle is a button that takes the arrow keys
+    await design.tap();
+    await expect.poll(() => detent(page)).toBe("half");
+    await handle.focus();
     await page.keyboard.press("ArrowUp");
     await expect.poll(() => detent(page)).toBe("full");
     await page.keyboard.press("ArrowDown");
+    await expect.poll(() => detent(page)).toBe("half");
     await page.keyboard.press("ArrowDown");
-    await expect.poll(() => detent(page)).toBe("peek");
-    // The list itself: pulled up while the sheet isn't at full height, it brings the sheet up;
-    // pulled down from its top, it lets the sheet down
-    await handle.tap();
+    await away();
+    // The list itself: pulled up while the panel isn't at full height, it brings it up; pulled
+    // down from its top, it lets it down
+    await design.tap();
+    await expect.poll(() => detent(page)).toBe("half");
     await settle(page);
     const list = (await page.getByTestId("sheet-body").boundingBox())!;
     const at = { x: list.x + list.width / 2, y: list.y + 40 };
@@ -399,7 +407,7 @@ test.describe("phone", () => {
 
   test("an area drawn with taps: Undo takes a point back, Done finishes it", async ({ page }) => {
     await oneHole(page);
-    await nav(page).getByRole("button", { name: /Design/ }).tap();
+    // (on Design already: its tools in the row over the steps)
     await page.locator('[data-tool="rules"]').tap();
     // (what it puts down: Kind, on the tool's bar)
     await page.getByTestId("tool-options").tap();
@@ -428,12 +436,13 @@ test.describe("phone", () => {
   });
 
   test("the app never scrolls as a whole when something low in the sheet is brought into view", async ({ page }) => {
-    // (on the Design step, its sheet peeking)
+    // (on the Design step, its panel up at half height)
     await oneHole(page);
+    await nav(page).getByRole("button", { name: /Design/ }).tap();
+    await expect.poll(() => detent(page)).toBe("half");
     await settle(page);
-    expect(await detent(page)).toBe("peek");
     const before = (await page.getByTestId("plan").boundingBox())!;
-    // The sheet's last button is below the screen while the sheet peeks; a keyboard, a screen
+    // The panel's last button is below the screen at half height; a keyboard, a screen
     // reader or find in page brings it into view like this (it once scrolled the whole app up,
     // map, sheet and step bar, with no way back)
     const below = await sheet(page).evaluate(el => {
@@ -473,7 +482,7 @@ test.describe("phone", () => {
     await page.getByTestId("pill-open").tap();
     await page.getByTestId("bar-done").tap();
     await expect.poll(async () => (await editorState(page)).selectedId).toBeNull();
-    await expect(page.getByTestId("sheet-title")).toHaveText("Design");
+    await expect(page.getByTestId("tool-strip")).toBeVisible();
     await expect(page.getByTestId("bottom-nav")).toBeVisible();
   });
 
