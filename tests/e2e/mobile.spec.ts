@@ -62,6 +62,9 @@ test.describe("phone", () => {
     // Fairway: the dial dragged left widens it as it goes, one undo step in all
     await page.getByTestId("strip-fairway").tap();
     const dial = page.getByTestId("dial");
+    // (the menu grown out of its button all the way before the dial's place is measured)
+    await expect(dial).toBeVisible();
+    await page.waitForTimeout(400);
     const w0 = (await course(page)).holes[0].fairwayWidth;
     const past0 = await page.evaluate(() => (window as any).__dgHistory().past);
     const b = (await dial.boundingBox())!;
