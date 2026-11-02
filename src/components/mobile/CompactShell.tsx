@@ -38,7 +38,7 @@ import { BottomSheet, type Detent } from "./BottomSheet";
 import { PageTools } from "./PageTools";
 import { useHoleSettings, useItemSettings } from "./HoleStrip";
 import { ActRow, EdgeSlider, GlassBar, useBarNav, type BarSetting } from "./GlassBar";
-import { MoveCornerHere, MoveHere } from "../PlaceByGps";
+import { MoveCornerHere } from "../PlaceByGps";
 import { GettingStarted, openGettingStarted } from "../GettingStarted";
 import { accountActions, CourseChip, SaveAlert } from "../../auth/AccountMenu";
 import { LOCKED, LockBadge, showLocked, type LockedId } from "../DemoNote";
@@ -586,7 +586,6 @@ function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: Course
   const holeId = "holeId" in item ? item.holeId : undefined;
   const kind = item.type === "area" || item.type === "line" || item.type === "structure" ? `${item.type}:${item.kind}` : item.type;
   const pill = { name: itemTitle(item), small: holeId ? `Hole ${holeLabel(doc, holeId)}` : item.locked ? "Locked in place" : undefined, testid: "selection-header" };
-  const placeable = item.type !== "area" && item.type !== "line" && item.type !== "structure";
   // (a height opened in 3D: the camera looks at it from the side, close up, and back after; not as
   // the thing is picked, only when the setting is tapped)
   const [opened, setOpened] = useState<string | null>(null);
@@ -602,7 +601,7 @@ function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: Course
   const menu = (
     <div className="flex flex-col gap-0.5">
       {holeId && <ActRow icon={<Flag size={18} />} label={`Hole ${holeLabel(doc, holeId)}`} hint="Its par, fairway, tees and pins" onClick={() => select(holeId)} testid="pill-hole" />}
-      {placeable ? <div className="px-1.5 py-1 empty:hidden"><MoveHere item={item} wide /></div> : (item.type === "area" || item.type === "line") && <div className="px-1.5 py-1 empty:hidden"><MoveCornerHere item={item} /></div>}
+      {(item.type === "area" || item.type === "line") && <div className="px-1.5 py-1 empty:hidden"><MoveCornerHere item={item} /></div>}
       <PillActions id={item.id} />
     </div>
   );

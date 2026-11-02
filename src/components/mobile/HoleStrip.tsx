@@ -21,7 +21,8 @@ import { HoleChips } from "../ApplyToHoles";
 import { HoleFlight } from "../FlyoverSettings";
 import { OnSiteButton } from "../OnSite";
 import { useTouch } from "../useLayout";
-import { canShowLocation } from "../../state/gps";
+import { canShowLocation, useGps } from "../../state/gps";
+import { MoveHere } from "../PlaceByGps";
 import { KindTiles, areaPicture, bigIcon, linePicture } from "./KindTiles";
 import { TREE_KINDS, speciesNow } from "../TreeSettings";
 import { SPECIES } from "../../three/ezShapes";
@@ -173,6 +174,10 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
   const deg = (v: number) => `${Math.round(((v % 360) + 360) % 360)}°`;
   const out: BarSetting[] = [];
   const dial = (id: string, name: string, value: ReactNode, d: Parameters<typeof Dial>[0]) => out.push({ id, name, value, wide: true, control: <Dial {...d} /> });
+  // (with your location on, first: put it where you stand, saying how far it moves first)
+  const located = useGps(g => g.mode !== "off") && canShowLocation();
+  if (located && item.type !== "area" && item.type !== "line" && item.type !== "structure")
+    out.push({ id: "movehere", name: "Where you stand", value: "Move here", wide: true, control: <div className="p-1.5"><MoveHere item={item} wide /></div> });
   if (item.type === "tree") {
     const t = item as TreeItem;
     const height = t.height ?? t.radius * 2.6;

@@ -176,6 +176,8 @@ test.describe("phone", () => {
     // Move here: where it goes and how far, then Move it
     await page.evaluate(() => (window as any).__dgEditor().set({ tool: "select" }));
     await page.evaluate(id => (window as any).__dgActions.select(id), bench.id);
+    // (the first setting on its bar while your location is on)
+    await page.getByTestId("strip-movehere").tap();
     await page.getByTestId("move-here").tap();
     await expect(page.getByTestId("move-here-check")).toContainText("moves");
     await page.getByTestId("move-here-go").tap();
