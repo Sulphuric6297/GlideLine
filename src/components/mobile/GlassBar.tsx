@@ -266,10 +266,11 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
           </div>
         </div>
       )}
-      <div ref={boxRef} className={`absolute z-[35] transition-opacity duration-200 ${faded ? "opacity-[0.14]" : ""} ${side ? "right-3 top-3 bottom-3 flex flex-col gap-2 items-stretch w-[98px]" : "left-2.5 right-2.5 flex flex-col gap-2 items-start"}`}
+      {/* (only the pill and the row take a touch: the room kept for the drawing's buttons doesn't) */}
+      <div ref={boxRef} className={`absolute z-[35] pointer-events-none [&>*]:pointer-events-auto transition-opacity duration-200 ${faded ? "opacity-[0.14]" : ""} ${side ? "right-3 top-3 bottom-3 flex flex-col gap-2 items-stretch w-[98px]" : "left-2.5 right-2.5 flex flex-col gap-2 items-start"}`}
         style={side ? undefined : { bottom: bottom + kb + 18 }} data-testid={testid}>
         {pillEl}
-        <div className={side ? "flex-1 min-h-0" : "w-full"}>{row}</div>
+        <div className={`${side ? "flex-1 min-h-0" : "w-full"} ${replace !== undefined ? "!pointer-events-none" : ""}`}>{row}</div>
       </div>
     </BarNav.Provider>
   );

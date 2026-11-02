@@ -662,14 +662,17 @@ test.describe("phone", () => {
     await page.getByRole("textbox", { name: "Area name" }).tap();
     await page.keyboard.type("Big woods");
     await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === id).label).toBe("Big woods");
-    // Kind: a picture of each; a tap changes it at once
+    // Kind: a picture of each, never taking more than about a third of the screen; a tap changes it
+    // at once, and the menu closes
     await page.getByTestId("strip-kind").tap();
     await expect(page.getByTestId("kind-tiles").getByRole("radio", { name: "Woods" })).toHaveAttribute("aria-checked", "true");
+    expect((await menu(page).boundingBox())!.height).toBeLessThanOrEqual(Math.min(vh * 0.36, 340) + 1);
     await page.getByTestId("kind-water").tap();
     await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === id).kind).toBe("water");
-    // (what's open never takes more than about a third of the screen)
-    expect((await menu(page).boundingBox())!.height).toBeLessThanOrEqual(Math.min(vh * 0.36, 340) + 1);
-    // A tap on the map closes it without drawing anything
+    await expect(menu(page)).toHaveCount(0);
+    // A tap on the map closes what's open without drawing anything
+    await page.getByTestId("strip-name").tap();
+    await expect(menu(page)).toBeVisible();
     const n = (await course(page)).items.length;
     await page.getByTestId("bar-away").dispatchEvent("pointerdown");
     await expect(menu(page)).toHaveCount(0);
@@ -931,6 +934,9 @@ test.describe("phone", () => {
     expect(close.height).toBeGreaterThanOrEqual(44);
     await page.getByTestId("hud-close").tap();
     await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
+    // (back on the map with the hole still picked: its bar, the steps waiting till it's put down)
+    await expect(page.getByTestId("hole-strip")).toBeVisible();
+    await page.getByTestId("bar-done").tap();
     await expect(page.getByTestId("bottom-nav")).toBeVisible();
   });
 
@@ -1033,6 +1039,8 @@ test.describe("phone", () => {
     await expect(page.getByTestId("tee-view-hud")).toBeVisible();
     expect((await editorState(page)).teeView).not.toBeNull();
     await page.getByTestId("hud-close").tap();
+    await expect(page.getByTestId("hole-strip")).toBeVisible();
+    await page.getByTestId("bar-done").tap();
     await expect(page.getByTestId("bottom-nav")).toBeVisible();
   });
 
