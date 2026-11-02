@@ -575,6 +575,33 @@ test.describe("phone", () => {
     await expect.poll(scale).toBeLessThan(now * 0.85);
   });
 
+  test("two fingers twisted turn the map in 2D as in 3D, round the ground between them; it stays looking straight down", async ({ page }) => {
+    await openGround(page);
+    const info = () => page.evaluate(() => (window as any).__dgView.viewInfo());
+    const i0 = await info();
+    expect(i0.tiltDeg).toBeLessThan(1);
+    const box = (await page.getByTestId("plan").boundingBox())!;
+    const at = { x: box.x + box.width / 2, y: box.y + box.height * 0.4 };
+    const g0 = (await planAt(page, at.x, at.y))!;
+    // (a quarter turn of the fingers, a little at a time, as a hand turns)
+    await touches(page, async send => {
+      const two = (deg: number) => { const r = (deg * Math.PI) / 180; return [{ x: at.x - 70 * Math.cos(r), y: at.y - 70 * Math.sin(r) }, { x: at.x + 70 * Math.cos(r), y: at.y + 70 * Math.sin(r) }]; };
+      await send("touchStart", two(0));
+      for (let i = 1; i <= 15; i++) await send("touchMove", two(4 * i));
+      await send("touchEnd", []);
+    });
+    await page.waitForTimeout(500);
+    const i1 = await info();
+    const turned = Math.abs((((i1.heading - i0.heading) % 360) + 540) % 360 - 180);
+    expect(turned).toBeGreaterThan(30);
+    expect(i1.tiltDeg).toBeLessThan(1);
+    await expect.poll(async () => (await editorState(page)).view).toBe("2d");
+    await expect(page.getByTestId("compass")).toBeVisible();
+    // (the ground that was between the fingers is still there)
+    const g1 = (await planAt(page, at.x, at.y))!;
+    expect(Math.hypot(g1.x - g0.x, g1.y - g0.y)).toBeLessThan(6);
+  });
+
   test("a finger holds the ground as it moves the map, flat and tilted; let go while moving and it slides on, slowing; two fingers slide it too", async ({ page }) => {
     await oneHole(page);
     const box = (await page.getByTestId("plan").boundingBox())!;

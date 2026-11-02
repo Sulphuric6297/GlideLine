@@ -6007,11 +6007,13 @@ export class CourseView {
     if (Math.abs(da) > 1e-4) {
       const under = this.groundAt(cx, cy);
       if (under) {
-        // (camera and target turned together about the vertical through that ground point)
-        const pos = this.controls.getPosition(new THREE.Vector3(), true), tgt = this.controls.getTarget(new THREE.Vector3(), true);
-        const up = new THREE.Vector3(0, 1, 0);
-        const np = pos.sub(under).applyAxisAngle(up, da).add(under), nt = tgt.sub(under).applyAxisAngle(up, da).add(under);
-        void this.controls.setLookAt(np.x, np.y, np.z, nt.x, nt.y, nt.z, false);
+        // (camera and target turned together about the vertical through that ground point: the
+        // heading turned and the target moved, not a new look-at, which looking straight down (2D)
+        // has no heading in and would put north back up)
+        const tgt = this.controls.getTarget(new THREE.Vector3(), true);
+        const nt = tgt.sub(under).applyAxisAngle(new THREE.Vector3(0, 1, 0), da).add(under);
+        void this.controls.rotate(da, 0, false);
+        void this.controls.moveTo(nt.x, nt.y, nt.z, false);
       } else void this.controls.rotate(da, 0, false);
     }
     if (Math.abs(d / was.d - 1) > 1e-3) this.zoomAt(cx, cy, was.d / d, false);
