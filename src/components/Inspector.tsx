@@ -1115,10 +1115,12 @@ export function SelectionHeader({ back }: { back?: string }) {
 /** What's picked, on Design: down the map's left side next to the hole list (slim while this
  * shows), so the map's middle and right stay clear to work on. (On Site it takes the step's panel.) */
 export function Inspector() {
-  const { open } = useSelection();
-  if (!open) return null;
+  const { open, hole, item, group } = useSelection();
+  const teeView = useEditor(e => !!e.teeView);
+  // (tee view: the hole is in its Flyover panel; a thing selected there, its panel at the left edge)
+  if (!open || (teeView && hole && !item && !group.length)) return null;
   return (
-    <aside className="absolute top-3 left-[76px] w-[300px] max-h-[calc(100%-24px)] flex flex-col glass rounded-[22px] shadow-xl shadow-black/40 z-20" data-testid="inspector" aria-label="Selection">
+    <aside className={`absolute top-3 ${teeView ? "left-3" : "left-[76px]"} w-[300px] max-h-[calc(100%-24px)] flex flex-col glass rounded-[22px] shadow-xl shadow-black/40 z-20`} data-testid="inspector" aria-label="Selection">
       <SelectionHeader />
       <div className="overflow-y-auto min-h-0">
         <InspectorBody />

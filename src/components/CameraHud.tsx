@@ -3,8 +3,8 @@
 // to go to it, drag along it to see the flight at that moment), and the row: Add keyframe, Update,
 // Field of view, Altitude, Time, Delete; ✓ Done. Moved with the keyboard (on a phone, a thumb stick
 // and up and down buttons), turned by dragging the view.
-import { useEffect, useMemo, useState, type PointerEvent as RPointerEvent } from "react";
-import { ChevronDown, ChevronUp, HelpCircle, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState, type PointerEvent as RPointerEvent } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, HelpCircle, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { holeLabel } from "../lib/course";
 import { LENS, flightAt, flyoverOf, insertKeyAt, keyFlight, keyTimes } from "../lib/flight";
 import { fmtDist } from "../lib/units";
@@ -13,7 +13,7 @@ import { getView } from "../state/view";
 import { toast } from "../state/toast";
 import type { FlyKey, Hole } from "../types";
 import { useExportJob } from "../state/exportJob";
-import { askHelp } from "./ui";
+import { Button, HelpLink, Slider, askHelp } from "./ui";
 import { ActRow, GlassBar, type BarSetting } from "./mobile/GlassBar";
 import { Dial } from "./mobile/HoleStrip";
 import { FlightLine, clock, retimeKeys } from "./FlyoverBar";
@@ -325,9 +325,65 @@ export function CameraHud({ compact = false }: { compact?: boolean }) {
     </div>
   );
   const bar = (
-    <GlassBar remember="camera" pill={pill} pillMenu={pillMenu} settings={settings} line={line} tucked={flying} onDone={done} doneLabel="Done (Esc)"
-      center={compact ? undefined : 1010} testid="camera-bar" />
+    <GlassBar remember="camera" pill={pill} pillMenu={pillMenu} settings={settings} line={line} tucked={flying} onDone={done} doneLabel="Done (Esc)" testid="camera-bar" />
   );
+  // A computer: the same in the computer's parts: the side panel (the camera's altitude and field of
+  // view; Add keyframe, the selected keyframe with Update and Delete and its time; the keys), and over
+  // the view the hole, the timeline and Done
+  if (!compact) {
+    const head = "w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-50 hover:bg-white/[0.09] disabled:opacity-30";
+    const pillCls = "h-10 px-3 rounded-full text-[13.5px] font-semibold flex items-center gap-1.5 text-zinc-50 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400";
+    const lineBare = (
+      <FlightLine bare playing={flying} canPlay={keys.length >= 2} onPlay={play} onPause={pauseHere} length={flight?.dur ?? null}
+        at={flying ? playAt : flight ? scrub ?? 0 : null} keys={times.length ? times : undefined} picked={at} onPick={go} onRetime={retime} moved={moved}
+        onScrub={flying ? t => { setPlayAt(t); getView()?.flySeek(t); } : flight ? scrubTo : undefined} playId="cam-play" />
+    );
+    const keysList: [string[], string][] = [[["W", "A", "S", "D"], "Move"], [["E", "Q"], "Up, down"], [["Shift"], "Faster"], [["Enter"], "Add keyframe"], [["U"], "Update"], [["[", "]"], "Keyframe before, after"]];
+    return (
+      <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui data-testid="camera-hud">
+        <aside className="absolute top-3 left-3 w-[300px] max-h-[calc(100%-24px)] flex flex-col glass rounded-[22px] shadow-xl shadow-black/40 z-20 pointer-events-auto" data-testid="cam-panel" aria-label="Camera path">
+          <div className="flex items-center gap-0.5 px-2 pt-2">
+            <span className="flex-1 pl-2 text-[14px] font-bold text-zinc-50 flex items-center gap-1.5">Camera path <span className="font-normal text-zinc-400 text-[13px]">· Hole {holeLabel(doc, hole.id)}</span><HelpLink topic="fly-camera" label="Edit camera path" /></span>
+            <button className={head} aria-label="Done" title="Done (Esc)" onClick={done}><X size={15} /></button>
+          </div>
+          <div className="overflow-y-auto min-h-0 dg-scroll px-4 pb-4 pt-2">
+            <h4 className="text-xs font-semibold text-zinc-400 mb-2">Camera</h4>
+            <Slider label="Altitude" min={2} max={400} value={Math.round(alt)} onChange={v => { const k = getView()?.freeKey(); if (k) { getView()?.freeGo({ ...k, alt: v }); setAlt(v); } }} format={v => fmtDist(v, u)} />
+            <Slider label="Field of view" min={LENS.min} max={LENS.max} value={Math.round(lens)} onChange={setLensTo} format={v => `${Math.round(v)}°`} />
+            <h4 className="text-xs font-semibold text-zinc-400 mt-4 mb-2">Keyframe</h4>
+            <Button full tone="primary" onClick={addKeyHere} testid="cam-add" title="Add a keyframe where the camera is, looking where it looks (Enter)"><Plus size={15} /> Add keyframe <span className="font-semibold opacity-70">· {addWhere.toLowerCase()}</span></Button>
+            {keys.length > 0 && (
+              <div className="flex items-center gap-0.5 rounded-[14px] bg-white/[0.06] p-1 mt-3" data-testid="cam-key">
+                <button className={head} aria-label="Keyframe before" title="Keyframe before ( [ )" disabled={!keys.length} onClick={() => jump(-1)}><ChevronLeft size={16} /></button>
+                <span className="flex-1 text-center text-[13px] font-semibold text-zinc-100">{at !== null ? <>Keyframe {at + 1} <span className="font-normal text-zinc-400">of {keys.length}{moved ? " · moved" : ""}</span></> : <span className="font-normal text-zinc-400">{scrubbed !== null && scrub !== null ? `At ${clock(scrub, true)}` : `${keys.length} keyframe${keys.length > 1 ? "s" : ""}`}</span>}</span>
+                <button className={head} aria-label="Keyframe after" title="Keyframe after ( ] )" disabled={!keys.length} onClick={() => jump(1)}><ChevronRight size={16} /></button>
+              </div>
+            )}
+            {at !== null && (
+              <div className="grid grid-cols-2 gap-1.5 mt-1.5">
+                <Button small onClick={updateKeyHere} disabled={!moved} testid="cam-update" title={moved ? `Move keyframe ${at + 1} to where the camera is (U)` : "The camera hasn't moved from it"}><RefreshCw size={13} /> Update {at + 1}</Button>
+                <Button small onClick={removeKey} disabled={!canRemove} testid="cam-remove" title={canRemove ? `Delete keyframe ${at + 1}` : REMOVE_NO}><Trash2 size={13} /> Delete {at + 1}</Button>
+              </div>
+            )}
+            {at !== null && at > 0 && times.length > 0 && <div className="mt-3"><Slider label="Time" min={Math.round((times[at - 1] + 0.5) * 10) / 10} max={Math.round((at + 1 < keys.length ? times[at + 1] - 0.5 : times[at] + 30) * 10) / 10} step={0.1} value={Math.round(times[at] * 10) / 10} onChange={v => retime(at, v, false)} onDone={() => useCourse.getState().commit()} format={v => clock(v, true)} /></div>}
+            <h4 className="text-xs font-semibold text-zinc-400 mt-4 mb-2">Keys</h4>
+            <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[12.5px] text-zinc-300" data-testid="cam-hint">
+              {keysList.map(([ks, what]) => <Fragment key={what}><span>{ks.map(k => <Key key={k} k={k} />)}</span><span>{what}</span></Fragment>)}
+              <span>Drag · scroll</span><span>Look around · field of view</span>
+            </div>
+          </div>
+        </aside>
+        {!flying && <div className="absolute top-4 h-[38px] px-4 rounded-full glass border border-white/10 shadow-xl flex items-center gap-1.5 text-[13.5px] whitespace-nowrap tabular-nums" style={{ left: "calc(50% + 162px)", transform: "translateX(-50%)" }} data-testid="cam-readout">{readout}</div>}
+        <div className="absolute pointer-events-auto glass rounded-full border border-white/10 shadow-2xl h-[52px] px-1.5 flex items-center gap-1 whitespace-nowrap" style={{ bottom: 18, left: "calc(50% + 162px)", transform: "translateX(-50%)" }} data-testid="camera-bar">
+          <span className="text-[14px] font-bold text-zinc-50 px-3">Hole {holeLabel(doc, hole.id)}</span>
+          <span className="w-px h-6 bg-white/[0.12] mx-1" />
+          <div className="w-[min(480px,34vw)]">{lineBare}</div>
+          <span className="w-px h-6 bg-white/[0.12] mx-1" />
+          <button className={`${pillCls} bg-white/[0.07]`} onClick={done} title="Done: back to tee view (Esc)" data-testid="bar-done"><X size={15} /> Done</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui data-testid="camera-hud">
       {!flying && <div className={`absolute left-1/2 -translate-x-1/2 ${compact ? "top-[max(12px,env(safe-area-inset-top))]" : "top-4"} h-[38px] px-4 rounded-full glass border border-white/10 shadow-xl flex items-center gap-1.5 text-[13.5px] whitespace-nowrap tabular-nums`} data-testid="cam-readout">{readout}</div>}
@@ -336,7 +392,6 @@ export function CameraHud({ compact = false }: { compact?: boolean }) {
         <div className="absolute left-4 bottom-[calc(max(10px,env(safe-area-inset-bottom))+156px)] flex flex-col items-center gap-1"><Stick /><span className="text-[11.5px] font-bold text-white/80 pointer-events-none">Move</span></div>
         <div className="absolute right-4 bottom-[calc(max(10px,env(safe-area-inset-bottom))+168px)] flex flex-col gap-2"><Lift dir={1} /><Lift dir={-1} /></div>
       </>}
-      {!compact && !flying && <div className="absolute left-1/2 -translate-x-1/2 bottom-[150px] text-[12.5px] text-zinc-200 bg-black/45 rounded-xl px-3.5 py-1.5 whitespace-nowrap" data-testid="cam-hint"><Key k="W" /><Key k="A" /><Key k="S" /><Key k="D" /> move · <Key k="E" /> up · <Key k="Q" /> down · <Key k="Shift" /> faster · drag to look · scroll to change field of view</div>}
       {bar}
     </div>
   );

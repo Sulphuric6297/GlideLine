@@ -209,6 +209,8 @@ type EditorStore = {
   flyover: boolean;
   /** The flyover playing, paused: held on its moment, to look at it or change it (Play goes on). */
   flyPaused: boolean;
+  /** Colour pickers open now: what's selected shows solid meanwhile, to judge its colours. */
+  colorPicking: number;
   /** The selected hole's keyframe picked (its place in the list; null: none). */
   flyKey: number | null;
   /** Flying the camera yourself, first person, over the tee view's hole (making keyframes). */
@@ -294,6 +296,7 @@ export const useEditor = create<EditorStore>()(set => ({
   teeView: null,
   flyover: false,
   flyPaused: false,
+  colorPicking: 0,
   flyKey: null,
   flyCam: false,
   flyLoading: null,

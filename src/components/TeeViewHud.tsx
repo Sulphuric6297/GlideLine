@@ -4,7 +4,7 @@
 // a phone and a computer (centred along the bottom there, its keys in the tips). While a flyover
 // plays the card goes, and left alone for a few seconds the bar folds to just its timeline.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Square, Video, X, ChevronDown } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Settings2, Square, Video, X } from "lucide-react";
 import { useAllowed } from "../auth/perms";
 import { STAND_HERE, TEE_LEVELS } from "../constants";
 import { activeLayout } from "../lib/course";
@@ -17,7 +17,7 @@ import { VIDEO_SIZES } from "../lib/video";
 import type { Hole, TeeItem } from "../types";
 import { ElevationProfile } from "./ElevationProfile";
 import { SceneButton } from "./ScenePanel";
-import { cameraFrom } from "./FlyoverSettings";
+import { HoleFlight, cameraFrom } from "./FlyoverSettings";
 import { FlightLine, TapModes, retimeKeys, useFlight, useFlyoverSettings } from "./FlyoverBar";
 import { askHelp } from "./ui";
 import { getView } from "../state/view";
@@ -93,7 +93,10 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   // (a computer: the side panel beside the view when something is picked, the drawing tools under
   // it in Tap mode Select)
   const editing = !playing && !readOnly && !compact;
-  const panel = useSelection().open;
+  const selection = useSelection();
+  const picked3 = selection.item;
+  const pickedGroup = selection.group.length > 0;
+  const [panelOn, setPanelOn] = useState(true);
   const toolbar = useToolbarRoom(r => r.height);
   const select = useEditor(e => e.standTap === "edit");
   const toolsUp = editing && select;
@@ -129,7 +132,21 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   useEffect(() => {
     if (!running) { setIdle(false); return; }
     let t = window.setTimeout(() => setIdle(true), 3000);
+    const wakeNow = () => { setIdle(false); window.clearTimeout(t); t = window.setTimeout(() => setIdle(true), 3000); };
     const wake = (e: Event) => {
+      // (folded, a finger on the line itself: the bar comes back once it lifts, so the line doesn't
+      // move from under it, and Pause or a drag along it does what it touched)
+      if (idleNow.current && (e.target as HTMLElement | null)?.closest?.('[data-testid="fly-line"]')) {
+        if (e.type !== "pointerdown") return;
+        const lifted = () => {
+          window.removeEventListener("pointerup", lifted, true);
+          window.removeEventListener("pointercancel", lifted, true);
+          window.setTimeout(wakeNow, 80);
+        };
+        window.addEventListener("pointerup", lifted, true);
+        window.addEventListener("pointercancel", lifted, true);
+        return;
+      }
       // (only that tap's own click, under the same finger: a tap the view keeps to itself makes no
       // click, and the next tap somewhere else, Pause say, must still work)
       if (idleNow.current && e.type === "pointerdown" && !(e.target as HTMLElement | null)?.closest?.('[data-testid="fly-line"]')) {
@@ -143,7 +160,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
         window.addEventListener("click", swallow, { capture: true });
         window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 500);
       }
-      setIdle(false); window.clearTimeout(t); t = window.setTimeout(() => setIdle(true), 3000);
+      wakeNow();
     };
     window.addEventListener("pointerdown", wake, true);
     window.addEventListener("pointermove", wake, true);
@@ -190,6 +207,12 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
     <FlightLine playing={playing} paused={ed.flyPaused} onPlay={() => ed.set(playing ? { flyPaused: false } : { flyover: true })} onPause={() => ed.set({ flyPaused: true })} length={flight.length} at={playing ? at : null}
       keys={flight.keys ? flight.times : undefined} picked={picked} onRetime={readOnly ? undefined : retime}
       onPick={k => { ed.set({ flyKey: k }); if (playing && flight.keys) { setAt(flight.times[k]); getView()?.flySeek(flight.times[k]); } }}
+      onScrub={playing ? t => { setAt(t); getView()?.flySeek(t); } : undefined} short={!!flight.keys} />
+  );
+  const lineBare = (
+    <FlightLine bare playing={playing} paused={ed.flyPaused} onPlay={() => ed.set(playing ? { flyPaused: false } : { flyover: true })} onPause={() => ed.set({ flyPaused: true })} length={flight.length} at={playing ? at : null}
+      keys={flight.keys ? flight.times : undefined} picked={picked} onRetime={readOnly ? undefined : retime}
+      onPick={k => { ed.set({ flyKey: k }); if (playing && flight.keys) { setAt(flight.times[k]); getView()?.flySeek(flight.times[k]); } }}
       onScrub={playing ? t => { setAt(t); getView()?.flySeek(t); } : undefined} />
   );
   const many = done.length > 1;
@@ -198,10 +221,10 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const bar = !sheetUp && (
     <GlassBar remember="flyover" pill={{ name: `Hole ${s.label}`, prev: many ? () => go(-1) : undefined, next: many ? () => go(1) : undefined, testid: "flyover-pill" }}
       pillMenu={pillMenu} settings={settings} line={line} tucked={tucked} onDone={() => ed.set({ teeView: null, flyover: false })} doneLabel="Done: back to the map"
-      center={compact ? undefined : 1010} inset={!compact && editing && panel ? 376 : 0} bottom={base} onOpen={id => setMenuOpen(!!id)} testid="tee-bar" />
+      bottom={base} onOpen={id => setMenuOpen(!!id)} testid="tee-bar" />
   );
-  const wide = typeof window !== "undefined" && window.innerWidth >= 1290;
-  const taps = !readOnly && !playing && !menuOpen && (compact ? <TapModes bottom={BAR_H + 12} /> : <TapModes bottom={base + (wide ? 18 : BAR_H + 12)} right={16} />);
+  const wide = typeof window !== "undefined" && window.innerWidth >= 1200;
+  const taps = !readOnly && !playing && !menuOpen && (compact ? <TapModes bottom={BAR_H + 12} /> : <TapModes bottom={base + (wide ? 18 : 84)} right={16} />);
   const hintText = select ? (compact ? "Tap to select · drag to look" : "Click something to select it · drag to look around · Esc back to the map") : compact ? "Tap to walk · drag to look" : `Click the ground to walk · drag to look around${many ? " · ← → other holes" : ""} · Space plays the flyover`;
 
   if (compact) {
@@ -232,29 +255,71 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
       </div>
     );
   }
+  // A computer: the flyover's settings in the side panel (the side panel's own card, as anything
+  // selected has), the hole's card at its top; over the view only what's done while watching: the
+  // hole, Play or Pause and the timeline, Back to map. Something selected (Select): its own panel in
+  // that place, the hole's card floating beside it, as on the map
+  const thing = !!picked3 || pickedGroup;
+  const flyPanel = !readOnly && panelOn && !thing;
+  const offset = flyPanel || (editing && thing) ? 162 : 0;
+  const card = (
+    <div className="relative flex items-center gap-3">
+      <div className="w-12 h-12 rounded-full flex items-center justify-center text-2xl font-bold shrink-0" style={{ background: lvl.color, color: lvl.ink, fontFamily: "Oswald, Inter" }}>{s.label}</div>
+      <div className="min-w-0">
+        <div className="text-xs uppercase tracking-wider text-zinc-300 truncate">{sub}</div>
+        <div className="text-2xl font-bold leading-tight" style={{ fontFamily: "Oswald, Inter" }}>Par {s.par} · {fmtDist(s.length, doc.units)}</div>
+        <div className="text-xs text-zinc-300">{fmtElev(s.elevationChange, doc.units)} · plays like {fmtDist(s.playsLike, doc.units)}</div>
+      </div>
+    </div>
+  );
+  const head = "w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-50 hover:bg-white/[0.09] disabled:opacity-30";
+  const pill = "h-10 px-3 rounded-full text-[13.5px] font-semibold flex items-center gap-1.5 text-zinc-50 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400";
   return (
     <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui>
       {loading}
-      {/* (beside the side panel when something is picked there) */}
-      {ed.teeCardHidden && !playing && <div className={`absolute top-4 ${editing && panel ? "left-[388px]" : "left-4"}`}><CardChip label={s.label} color={lvl.color} ink={lvl.ink} /></div>}
-      <div className={`absolute top-4 pointer-events-auto glass backdrop-blur rounded-[24px] px-4 py-3 text-white shadow-2xl border border-white/10 w-[300px] ${playing || ed.teeCardHidden ? "hidden" : ""} ${editing && panel ? "left-[388px]" : "left-4"}`} data-testid="tee-view-hud">
-        <div className="relative flex items-center gap-3">
-          <div className="absolute -right-2 -top-1"><HideCard /></div>
-          <div className="w-12 h-12 rounded-full flex items-center justify-center text-2xl font-bold" style={{ background: lvl.color, color: lvl.ink, fontFamily: "Oswald, Inter" }}>{s.label}</div>
-          <div>
-            <div className="text-xs uppercase tracking-wider text-zinc-300">{sub}</div>
-            <div className="text-2xl font-bold leading-tight" style={{ fontFamily: "Oswald, Inter" }}>Par {s.par} · {fmtDist(s.length, doc.units)}</div>
-            <div className="text-xs text-zinc-300">{fmtElev(s.elevationChange, doc.units)} · plays like {fmtDist(s.playsLike, doc.units)}</div>
+      {flyPanel && (
+        <aside className="absolute top-3 left-3 w-[300px] max-h-[calc(100%-24px)] flex flex-col glass rounded-[22px] shadow-xl shadow-black/40 z-20 pointer-events-auto" data-testid="fly-panel" aria-label="Flyover">
+          <div className="flex items-center gap-0.5 px-2 pt-2">
+            <button className={head} aria-label="Previous hole" title="Previous hole (←)" disabled={!many} onClick={() => go(-1)}><ChevronLeft size={16} /></button>
+            <button className={head} aria-label="Next hole" title="Next hole (→)" disabled={!many} onClick={() => go(1)}><ChevronRight size={16} /></button>
+            <span className="flex-1 pl-1.5 text-[14px] font-bold text-zinc-50">Flyover</span>
+            <button className={head} aria-label="Close the Flyover panel" title="Close" onClick={() => setPanelOn(false)} data-testid="fly-panel-close"><X size={15} /></button>
           </div>
+          <div className="overflow-y-auto min-h-0 dg-scroll px-4 pb-4 pt-1">
+            <div className="text-white">{card}</div>
+            <div className="mt-2 mb-4"><ElevationProfile doc={doc} line={s.line} height={56} teeColor={lvl.color} /></div>
+            <HoleFlight key={hole.id} hole={hole} inTee exportVideo={mayRecord ? { label: `${VIDEO_SIZES[video.resolution].label}, ${video.fps} fps`, run: record, busy: job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : job ? "Exporting…" : null } : undefined} />
+          </div>
+        </aside>
+      )}
+      {/* (no Flyover panel: the hole's card floating, beside a selected thing's panel) */}
+      {!flyPanel && ed.teeCardHidden && !playing && <div className={`absolute top-4 ${editing && thing ? "left-[324px]" : "left-4"}`}><CardChip label={s.label} color={lvl.color} ink={lvl.ink} /></div>}
+      {!flyPanel && (
+        <div className={`absolute top-4 pointer-events-auto glass backdrop-blur rounded-[24px] px-4 py-3 text-white shadow-2xl border border-white/10 w-[300px] ${playing || ed.teeCardHidden ? "hidden" : ""} ${editing && thing ? "left-[324px]" : "left-4"}`} data-testid="tee-view-hud">
+          <div className="absolute right-2 top-2 flex items-center gap-0.5">
+            {!readOnly && !thing && <button className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-300 hover:text-white hover:bg-white/10" aria-label="Flyover settings" title="Flyover settings" onClick={() => setPanelOn(true)} data-testid="fly-panel-open"><Settings2 size={15} /></button>}
+            <HideCard />
+          </div>
+          {card}
+          <div className="mt-2"><ElevationProfile doc={doc} line={s.line} height={70} teeColor={lvl.color} /></div>
+          {hole.notes && <p className="text-xs text-zinc-200 mt-1">{hole.notes}</p>}
         </div>
-        <div className="mt-2"><ElevationProfile doc={doc} line={s.line} height={70} teeColor={lvl.color} /></div>
-        {hole.notes && <p className="text-xs text-zinc-200 mt-1">{hole.notes}</p>}
-      </div>
+      )}
       {editing && <TeeMap big={ed.teeMap === "big"} off={ed.teeMap === "off"} />}
       <div className="absolute top-4 right-4 pointer-events-auto"><SceneButton /></div>
-      {!playing && !menuOpen && <div className="absolute text-xs text-white/80 bg-black/40 rounded-lg px-2.5 py-1 whitespace-nowrap" style={{ bottom: base + BAR_H + 10, left: `calc(50% + ${editing && panel ? 188 : 0}px)`, transform: "translateX(-50%)" }} data-testid="tee-hint">{hintText}</div>}
+      {!playing && <div className="absolute text-xs text-white/80 bg-black/40 rounded-lg px-2.5 py-1 whitespace-nowrap" style={{ bottom: base + 84, left: `calc(50% + ${offset}px)`, transform: "translateX(-50%)" }} data-testid="tee-hint">{hintText}</div>}
       {taps}
-      {bar}
+      <div className="absolute pointer-events-auto glass rounded-full border border-white/10 shadow-2xl h-[52px] px-1.5 flex items-center gap-1 whitespace-nowrap" style={{ bottom: base + 18, left: `calc(50% + ${offset}px)`, transform: "translateX(-50%)" }} data-testid="tee-bar">
+        {ed.teeStand && !playing && <button className={pill} onClick={() => ed.set({ teeStand: null })} title="Return to tee" data-testid="hud-to-tee"><Home size={15} /> Tee</button>}
+        <button className={`${pill} !px-0 w-9 justify-center text-zinc-300`} aria-label="Previous hole" title="Previous hole (←)" disabled={!many} onClick={() => go(-1)} data-testid="hole-prev"><ChevronLeft size={18} /></button>
+        <span className="text-[14px] font-bold text-zinc-50 px-0.5" data-testid="sheet-title">Hole {s.label}</span>
+        <button className={`${pill} !px-0 w-9 justify-center text-zinc-300`} aria-label="Next hole" title="Next hole (→)" disabled={!many} onClick={() => go(1)} data-testid="hole-next"><ChevronRight size={18} /></button>
+        <span className="w-px h-6 bg-white/[0.12] mx-1" />
+        <div className="w-[min(480px,34vw)]">{lineBare}</div>
+        <span className="w-px h-6 bg-white/[0.12] mx-1" />
+        {playing && <button className={pill} onClick={() => ed.set({ flyover: false })} title="Stop and go back to the tee (Esc)" data-testid="hud-stop"><Square size={13} /> Stop</button>}
+        <button className={`${pill} bg-white/[0.07]`} onClick={() => ed.set({ teeView: null, flyover: false })} title="Back to the map (Esc)" data-testid="bar-done"><X size={15} /> Back to map</button>
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { TOPICS } from "../lib/guide";
+import { useEditor } from "../state/course";
 
 /** The nearest box that scrolls (or the page). */
 const scrollerOf = (el: HTMLElement | null): HTMLElement | null => {
@@ -413,6 +414,14 @@ export function ColorInput({ value, onChange, label, onDone }: { value: string; 
   const box = useRef<HTMLDivElement>(null);
   // (opened: from the colour it is now)
   useEffect(() => { if (open) { setHsl(hexHsl(value)); setCode(value); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (open, the thing it colours shows solid on the map, though it's selected: see-through, its
+  // colours couldn't be judged)
+  useEffect(() => {
+    if (!open) return;
+    const ed = useEditor.getState();
+    ed.set({ colorPicking: ed.colorPicking + 1 });
+    return () => { const e = useEditor.getState(); e.set({ colorPicking: Math.max(0, e.colorPicking - 1) }); };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) { setOpen(false); onDone?.(); } };

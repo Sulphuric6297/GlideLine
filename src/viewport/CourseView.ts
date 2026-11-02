@@ -3150,8 +3150,15 @@ export class CourseView {
   /** A building, a road or a path selected (its shape being changed): see-through, so the map
    * under it shows while its corners and edges are dragged; solid again once it's let go. */
   private seeThrough: { obj: THREE.Object3D } | null = null;
+  /** Its colours being picked: what's selected shows solid meanwhile. */
+  private colorPicking = false;
+  setColorPicking(on: boolean) {
+    if (on === this.colorPicking) return;
+    this.colorPicking = on;
+    this.syncSeeThrough();
+  }
   private syncSeeThrough() {
-    const it = this.selectedId ? this.item(this.selectedId) : null;
+    const it = this.selectedId && !this.colorPicking ? this.item(this.selectedId) : null;
     const key = it?.type === "structure" ? `struct:${it.id}` : it?.type === "line" && (it.kind === "road" || it.kind === "path" || it.kind === "walk") ? `line:${it.id}` : null;
     const obj = key ? this.shapes.get(key)?.obj ?? null : null;
     if (this.seeThrough?.obj === obj) return;

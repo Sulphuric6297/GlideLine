@@ -28,7 +28,7 @@ export const clock = (t: number, tenths = false) => {
  * with keyframes, ▶ or ❚❚ Pause at its start, the line with its keyframes (tap one to select it;
  * drag one to change when it happens), the playhead (drag along the line to go to that moment) and
  * the time. `playing`: a flyover under way, `paused` or not. */
-export function FlightLine({ playing, paused = false, canPlay = true, onPlay, onPause, length, at = null, keys, picked = null, onPick, onRetime, onScrub, moved = false, short = false, playId = "hud-flyover" }: {
+export function FlightLine({ playing, paused = false, canPlay = true, onPlay, onPause, length, at = null, keys, picked = null, onPick, onRetime, onScrub, moved = false, short = false, bare = false, playId = "hud-flyover" }: {
   playing: boolean; paused?: boolean; canPlay?: boolean; onPlay: () => void; onPause: () => void;
   /** How long it plays (s), if known. */
   length: number | null;
@@ -44,6 +44,8 @@ export function FlightLine({ playing, paused = false, canPlay = true, onPlay, on
   moved?: boolean;
   /** Room for the keyframes on a phone: the playhead's time alone, not "of" how long. */
   short?: boolean;
+  /** Inside a bar of its own (a computer's): no glass of its own. */
+  bare?: boolean;
   playId?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -56,7 +58,7 @@ export function FlightLine({ playing, paused = false, canPlay = true, onPlay, on
       {running ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
     </button>
   );
-  const box = "h-11 rounded-full glass border border-white/10 shadow-xl flex items-center gap-2.5 pl-1.5 pr-3.5";
+  const box = bare ? "h-10 rounded-full flex items-center gap-2.5 pl-1 pr-2" : "h-11 rounded-full glass border border-white/10 shadow-xl flex items-center gap-2.5 pl-1.5 pr-3.5";
   const time = <span className="shrink-0 text-[12.5px] font-semibold text-zinc-300 tabular-nums whitespace-nowrap" data-testid="fly-time">{playing || at !== null ? (short ? clock(at ?? 0) : `${clock(at ?? 0)} / ${clock(dur)}`) : clock(dur)}</span>;
   // (standing, flying by itself: just Play flyover; the whole of it plays)
   if (!playing && !keys?.length) return (

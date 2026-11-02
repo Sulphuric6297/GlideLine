@@ -126,6 +126,14 @@ type Props = {
 
 export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want, from, line, tucked = false, center, inset = 0 }: Props) {
   const [open, setOpen] = useState<Open>(null);
+  // (tucked: first the pill and the row fade where they are; a moment later, folded, only the line
+  // at the foot; brought back from there by the page once no finger is on the line)
+  const [low, setLow] = useState(false);
+  useEffect(() => {
+    if (!tucked) { setLow(false); return; }
+    const t = window.setTimeout(() => setLow(true), 350);
+    return () => window.clearTimeout(t);
+  }, [tucked]);
   const openNow = useRef<Open>(null);
   openNow.current = open;
   const [stack, setStack] = useState<{ title: string; node: ReactNode }[]>([]);
@@ -322,16 +330,16 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
       {/* (only the pill and the row take a touch: the room kept for the drawing's buttons doesn't) */}
       <div ref={boxRef} className={`absolute z-[35] pointer-events-none [&>*]:pointer-events-auto transition-opacity duration-200 ${faded ? "opacity-[0.14]" : ""} ${side ? "right-3 top-3 bottom-3 flex flex-col gap-2 items-stretch w-[98px]" : `${center ? "" : "left-2.5 right-2.5"} flex flex-col gap-2 items-start`}`}
         style={side ? undefined : center ? { bottom: bottom + kb + 18, left: `calc(50% + ${inset / 2}px)`, width: `min(${center}px, calc(100% - ${20 + inset}px))`, transform: "translateX(-50%)" } : { bottom: bottom + kb + 18 }} data-testid={testid}>
-        {/* (tucked: only the line; the pill and the row fade out where they are, so nothing moves
-            and a tap on the line as the bar comes back lands on what it touched) */}
+        {/* (tucked: the pill and the row fade where they are, then, folded, only the line at the
+            foot, centred; the line itself is always the same element) */}
         {line && !side ? (
-          <div className="w-full flex items-center gap-2">
-            <div className={`shrink-0 transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""}`}>{pillEl}</div>
-            <div className="flex-1 min-w-0">{line}</div>
-            {noRow && <div className={`transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""}`}>{doneEl}</div>}
+          <div className={`w-full flex items-center gap-2 ${tucked && low ? "justify-center" : ""}`}>
+            <div className={`shrink-0 transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""} ${tucked && low ? "hidden" : ""}`}>{pillEl}</div>
+            <div className={tucked && low ? "w-[min(360px,100%)] dg-fade-in" : "flex-1 min-w-0"}>{line}</div>
+            {noRow && <div className={`transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""} ${tucked && low ? "hidden" : ""}`}>{doneEl}</div>}
           </div>
         ) : pillEl}
-        {!noRow && <div className={`${side ? "flex-1 min-h-0" : "w-full"} transition-opacity duration-300 ${replace !== undefined || (tucked && line) ? "!pointer-events-none" : ""} ${tucked && line ? "opacity-0" : ""}`} data-tucked={tucked && line ? "" : undefined}>{row}</div>}
+        {!noRow && <div className={`${side ? "flex-1 min-h-0" : "w-full"} transition-opacity duration-300 ${replace !== undefined || (tucked && line) ? "!pointer-events-none" : ""} ${tucked && line ? "opacity-0" : ""} ${tucked && line && low ? "hidden" : ""}`} data-tucked={tucked && line ? "" : undefined}>{row}</div>}
       </div>
     </BarNav.Provider>
   );

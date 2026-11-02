@@ -276,6 +276,7 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
     else { view.setTeeView(ed.teeView, ed.teeViewTee ?? null, ed.teeStand ?? null); useEditor.getState().set({ flyLoading: null, ...(ed.teeView ? {} : { teeViewTee: null, teeStand: null }) }); }
   }, [view, ed.teeView, ed.teeViewTee, ed.flyover, ed.teeStand]);
   useEffect(() => { view?.flyPause(ed.flyPaused); }, [view, ed.flyPaused, ed.flyover]);
+  useEffect(() => { view?.setColorPicking(ed.colorPicking > 0); }, [view, ed.colorPicking]);
 
   const scale = info ? scaleBar(info.pxPerUnit, 110, doc.units) : null;
   const elevation = hover ? heightAt(doc.terrainHeights, doc.gridSize, hover.x, hover.y) + doc.site.baseElevationFt : null;

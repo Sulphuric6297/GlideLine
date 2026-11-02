@@ -350,7 +350,7 @@ test("a flyover's keyframes: two set, the timeline scrubbed (the camera follows 
   // (half way through the flyover: the camera there, Add keyframe saying it goes in at that moment)
   const end = Number(await page.getByTestId("fly-scrub").getAttribute("max"));
   await page.getByTestId("fly-scrub").fill(String(Math.round((end / 2) * 20) / 20));
-  await expect(page.getByTestId("cam-add")).toContainText("At ");
+  await expect(page.getByTestId("cam-add")).toContainText(/at \d/i);
   await page.keyboard.press("Enter");
   await expect.poll(async () => (await keys()).length).toBe(had + 3);
   expect((await editor(page)).flyKey).toBe(had + 1);
