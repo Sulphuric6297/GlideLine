@@ -149,7 +149,15 @@ test("only what's drawn is picked: no tree with the trees hidden, no underbrush 
   await expect(page.getByTestId("stand-tip")).toContainText(/edge$/, { timeout: 3000 });
   await page.mouse.move(5, 5);
   // (an area picked, then a drag from inside it, here from a tree standing in it: the map moves,
-  // not the area; then a drag from its edge: the area moves)
+  // not the area; then a drag from its edge: the area moves) (a wood framed, so trees stand in it)
+  const woodBox = await page.evaluate(() => {
+    const d = (window as any).__dgCourse(), size = (pts: any[]) => { let s = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; s += p.x * q.y - q.x * p.y; } return Math.abs(s); };
+    const w = d.items.filter((i: any) => i.type === "area" && i.kind === "woods" && !i.locked && !(i.bushes >= 1)).sort((a: any, b: any) => size(b.points) - size(a.points))[0];
+    const xs = w.points.map((p: any) => p.x), ys = w.points.map((p: any) => p.y);
+    return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+  });
+  await frame(page, woodBox);
+  await draw(page, false);
   const onTree = await page.evaluate(() => {
     const v = (window as any).__dgView, doc = (window as any).__dgCourse(), r = v.container.getBoundingClientRect();
     for (let y = r.top + 80; y < r.bottom - 80; y += 9) for (let x = r.left + 80; x < r.right - 80; x += 9) {

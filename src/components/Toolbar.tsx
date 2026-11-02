@@ -207,7 +207,7 @@ function AreaBrushes({ ed }: { ed: Editor }) {
       </div>
       {own && (
         <div className={GROUP} data-testid="reshaping">
-          <span className={`${RADIO} text-zinc-300`}>Just this {brush ? "underbrush" : AREA_KINDS[kind].label.toLowerCase()}</span>
+          <span className={`${RADIO} text-zinc-300`}>Just this {brush ? "underbrush" : kind === "woods" ? "wood" : AREA_KINDS[kind].label.toLowerCase()}</span>
           <button className={`${RADIO} text-orange-300 hover:bg-white/[0.09]`} onClick={() => ed.set({ tool: "select", reshapeId: null })} data-testid="reshape-done">Done</button>
         </div>
       )}
@@ -418,7 +418,11 @@ export function toolHint(ed: Editor, touch = false): string | undefined {
   const shape = lineDrawn && (ed.drawShape === "box" || ed.drawShape === "circle") ? "freehand" : ed.drawShape;
   // (the brush on areas: what a stroke does, as the Ground tool says)
   if (ed.tool === "draw-area" && shape === "paint") {
-    const what = { add: "paint it on (from inside an area it grows that one)", remove: "take it away", thinner: "make it a step thinner", thicker: "make it a step thicker", restore: "put back what the import found" }[ed.areaBrush] ?? "paint it on";
+    const levels = ed.areaKind === "woods", restore = ed.standOf === "bush" && !!getDoc().site.brushFound;
+    const mode = (ed.areaBrush === "thinner" || ed.areaBrush === "thicker") && !levels ? "add" : ed.areaBrush === "restore" && !restore ? "add" : ed.areaBrush;
+    const what = ed.reshapeId
+      ? { add: "add to it", remove: "take from it", thinner: "make part of it a step thinner", thicker: "make part of it a step thicker", restore: "put back what the import found in it" }[mode]
+      : { add: "paint it on (inside one, it grows that one)", remove: "take it away", thinner: "make it a step thinner", thicker: "make it a step thicker", restore: "put back what the import found" }[mode];
     return touch ? `One finger to ${what} · two fingers move the map` : `Drag to ${what} · Space+drag moves the map`;
   }
   if (drawing && shape !== "points") return (touch ? TOUCH_SHAPE_HINTS : SHAPE_HINTS)[shape];

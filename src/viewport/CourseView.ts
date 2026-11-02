@@ -742,6 +742,7 @@ export class CourseView {
     // (painting underbrush: each patch tinted by how thick it is, as Look first shows it)
     const k = this.paintKind(), tint = !!k?.brush;
     if (tint !== this.brushTint) { this.brushTint = tint; if (this.doc) this.syncShapes(); }
+    if (this.doc) this.syncSelection();
     this.updateCursor();
     this.handleKey = "";
     this.syncHandles();
@@ -3992,7 +3993,8 @@ export class CourseView {
       disposeObjectDeep(this.selectionFx);
       this.selectionFx = null;
     }
-    const fx = this.outlineFor(this.selectedId, SELECT, 1);
+    // (the area being reshaped with the brush stays outlined, as picked)
+    const fx = this.outlineFor(this.selectedId ?? this.tool.reshape ?? null, SELECT, 1);
     if (this.group.length) {
       const g = new THREE.Group();
       for (const id of this.group.slice(0, 400)) {
@@ -6252,6 +6254,9 @@ export class CourseView {
   }
 
   private onPointerDown(e: PointerEvent) {
+    window.clearTimeout(this.restTimer);
+    this.restKey = "";
+    this.tip(null);
     const target = e.target as HTMLElement;
     if (!this.doc) return;
     this.glide = null;
@@ -6829,11 +6834,20 @@ export class CourseView {
   private paintsOver(e: { clientX: number; clientY: number }) {
     const k = this.paintKind(), t = this.tool, doc = this.doc;
     if (!k || !doc || this.readOnly) return false;
-    if ((t.areaBrush ?? "add") !== "add" || t.reshape) return true;
+    if (this.brushMode(k) !== "add" || t.reshape) return true;
     const g = this.groundAt(e.clientX, e.clientY);
     if (!g) return false;
     const p = { x: g.x, y: g.z };
     return doc.course.items.some(i => i.type === "area" && !i.locked && kindOf(i).kind === k.kind && kindOf(i).brush === k.brush && pointInPolygon(p, i.points));
+  }
+
+  /** What the brush does to this kind, as its row shows it: a level only for kinds with levels,
+   * Restore only for underbrush the import found; otherwise Add. */
+  private brushMode(k: PaintKind) {
+    const m = this.tool.areaBrush ?? "add";
+    if ((m === "thinner" || m === "thicker") && k.kind !== "woods") return "add";
+    if (m === "restore" && !(k.brush && this.doc?.course.site.brushFound)) return "add";
+    return m;
   }
 
   /** What the import found, as areas by level (for Restore), worked out once a course. */
@@ -6847,7 +6861,7 @@ export class CourseView {
     if (!doc || !k || this.readOnly) return null;
     const g0 = this.groundAt(start.clientX, start.clientY);
     if (!g0) return null;
-    const t = this.tool, mode = t.areaBrush ?? "add", r = t.brush?.size ?? 20;
+    const t = this.tool, mode = this.brushMode(k), r = t.brush?.size ?? 20;
     const base = doc.course.items, a = { x: g0.x, y: g0.z }, path: P[] = [a];
     const bf = doc.course.site.brushFound;
     if (mode === "restore" && bf && this.found?.key !== bf) this.found = { key: bf, areas: foundAreas(bf) };

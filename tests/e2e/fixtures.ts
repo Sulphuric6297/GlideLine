@@ -390,6 +390,8 @@ export const test = base.extend<Fixtures>({
     await page.goto("/");
     await page.evaluate(async () => {
       localStorage.clear();
+      // (and this tab's place: a refresh keeps it, a new visit has none)
+      sessionStorage.clear();
       // (an empty app: no dashboard and no example course, as a new visitor to the demo gets)
       localStorage.setItem("hyzerlab-start-blank", "1");
       await new Promise<void>(resolve => {
