@@ -541,6 +541,17 @@ function PhoneToolBar({ faded, side, onHeight, mainH }: BarProps) {
   const top = side ? 76 : 128, room = Math.max(160, mainH - top - (side ? 16 : 160));
   const sizeH = Math.min(250, edge.strength ? room * 0.55 : room * 0.8);
   const ring = (v: number | null) => getView()?.previewBrush(v);
+  // (the room kept for the drawing's buttons in the row's place: as tall as they are, two rows
+  // while a line is walked, so the pill stays clear above them)
+  const [drawH, setDrawH] = useState(64);
+  useEffect(() => {
+    if (!drawing) return;
+    const el = document.querySelector<HTMLElement>('[data-testid="draw-bar"]');
+    if (!el) return;
+    const ro = new ResizeObserver(() => setDrawH(Math.max(64, Math.round(el.getBoundingClientRect().height))));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [drawing]);
   return (
     <>
       {hint && !drawing && !faded && !menuOpen && <div className="absolute left-1/2 -translate-x-1/2 z-[33] max-w-[calc(100%-24px)] px-4 py-2 rounded-full glass border border-white/10 shadow-xl text-[13.5px] font-semibold text-zinc-50 text-center pointer-events-none dg-fade-in" style={side ? { bottom: 16, left: "calc(50% - 60px)" } : { bottom: 146 }} data-testid="tool-hint">{hint}</div>}
@@ -553,7 +564,7 @@ function PhoneToolBar({ faded, side, onHeight, mainH }: BarProps) {
           top={top + sizeH + 16} height={Math.min(200, room - sizeH - 16)} faded={faded} onChange={v => ed.set({ brushStrength: v })} />
       )}
       <GlassBar remember={`tool:${t?.id ?? ed.tool}`} pill={pill} pillMenu={own ? undefined : <ToolGrid />} pillWide settings={drawing ? [] : settings} onDone={done} doneLabel={own ? "Done reshaping" : "Done: back to Select"}
-        replace={drawing ? <div className="h-[64px]" aria-hidden /> : undefined} faded={faded} side={side} onHeight={onHeight} onOpen={id => setMenuOpen(!!id)} testid="tool-bar" />
+        replace={drawing ? <div style={{ height: drawH }} aria-hidden /> : undefined} faded={faded} side={side} onHeight={onHeight} onOpen={id => setMenuOpen(!!id)} testid="tool-bar" />
     </>
   );
 }
@@ -957,14 +968,15 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
         {welcome && !immersive && (
           <div className="absolute inset-0 z-10 flex items-end justify-center px-3 pb-3 pointer-events-none" style={{ paddingTop: top }}>{welcome}</div>
         )}
+        {/* (the map moved away from what's picked: back to it, over the sheet or the bar) */}
+        {(sheet || bar) && away && (
+          <button className="absolute left-1/2 -translate-x-1/2 z-30 h-11 px-4 rounded-full glass border border-white/10 shadow-2xl text-[14px] font-semibold text-zinc-50 flex items-center gap-2 active:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+            style={{ bottom: sheetH + 12 }} onClick={() => { const id = useEditor.getState().selectedId; if (id) getView()?.frame(id); }} data-testid="back-to-it">
+            <LocateFixed size={17} /> Back to it
+          </button>
+        )}
         {sheet && (
           <>
-          {away && (
-            <button className="absolute left-1/2 -translate-x-1/2 z-30 h-11 px-4 rounded-full glass border border-white/10 shadow-2xl text-[14px] font-semibold text-zinc-50 flex items-center gap-2 active:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-              style={{ bottom: sheetH + 12 }} onClick={() => { const id = useEditor.getState().selectedId; if (id) getView()?.frame(id); }} data-testid="back-to-it">
-              <LocateFixed size={17} /> Back to it
-            </button>
-          )}
           <BottomSheet detent={detent} onDetent={setDetent} header={panel.header} label={panel.mode === "selection" ? "Selection" : panel.mode === "tool" ? "Tool" : "Step panel"} topGap={top + 8} onHeight={setRestH} contentKey={panel.key} locked={panel.mode === "selection" && holePicked}>
             {panel.body}
           </BottomSheet>
