@@ -467,3 +467,10 @@ select {
 @keyframes dgfadein { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .dg-fade-in { animation: dgfadein 0.25s ease; }
 @media (prefers-reduced-motion: reduce) { .dg-fade-in { animation: none; } }
+
+/* The phone's steps tucking away under a tool's bar, and coming back up (mobile/CompactShell) */
+@keyframes dgtuck { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(60%) scale(0.94); } }
+@keyframes dguntuck { from { opacity: 0; transform: translateY(60%) scale(0.94); } to { opacity: 1; transform: none; } }
+.dg-tuck { animation: dgtuck 0.26s cubic-bezier(0.2, 0.9, 0.3, 1) forwards; }
+.dg-untuck { animation: dguntuck 0.26s cubic-bezier(0.2, 0.9, 0.3, 1); }
+@media (prefers-reduced-motion: reduce) { .dg-tuck, .dg-untuck { animation: none; } }

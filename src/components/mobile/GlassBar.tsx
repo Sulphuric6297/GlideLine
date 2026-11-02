@@ -101,15 +101,28 @@ type Props = {
   onOpen?: (id: string | null) => void;
   /** A setting to open, asked for from outside (a field's part tapped on the map: its Parts). */
   want?: string | null;
+  /** Where the bar came from: the button tapped in the step's row, its pill rising out of it and
+   * its settings sliding in, as one motion. */
+  from?: DOMRect | null;
 };
 
-export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want }: Props) {
+export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want, from }: Props) {
   const [open, setOpen] = useState<Open>(null);
   const [stack, setStack] = useState<{ title: string; node: ReactNode }[]>([]);
   const [closing, setClosing] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [past, setPast] = useState(0);
+  const pillRef = useRef<HTMLDivElement>(null);
+  // (come up out of the button tapped: the pill from its place, the settings from the right)
+  useLayoutEffect(() => {
+    const el = pillRef.current;
+    if (!from || !el) return;
+    const to = el.getBoundingClientRect();
+    const ease = "cubic-bezier(0.2, 0.9, 0.3, 1)";
+    el.animate?.([{ transform: `translate(${from.left + from.width / 2 - (to.left + to.width / 2)}px, ${from.top + from.height / 2 - (to.top + to.height / 2)}px) scale(0.9)`, opacity: 0.7 }, { transform: "none", opacity: 1 }], { duration: 260, easing: ease });
+    rowRef.current?.animate?.([{ transform: "translateX(48px)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 260, easing: ease });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const close = useCallback(() => {
     if (!open) return;
@@ -199,7 +212,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   const panelBottom = side ? undefined : bottom + kb + 18 + rowH + gap + (open?.pill ? pillH + gap : 0);
 
   const pillEl = (
-    <div className={`flex items-center h-11 rounded-full border shadow-xl transition-opacity duration-200 ${open && !open.pill ? "opacity-0 pointer-events-none" : ""} ${open?.pill ? "bg-zinc-100 border-transparent text-zinc-900" : "glass border-white/10 text-zinc-50"}`} data-testid={pill.testid ?? "bar-pill"}>
+    <div ref={pillRef} className={`flex items-center h-11 rounded-full border shadow-xl transition-opacity duration-200 ${open && !open.pill ? "opacity-0 pointer-events-none" : ""} ${open?.pill ? "bg-zinc-100 border-transparent text-zinc-900" : "glass border-white/10 text-zinc-50"}`} data-testid={pill.testid ?? "bar-pill"}>
       {pill.prev && <button className="w-10 h-11 flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole before" onClick={pill.prev} data-testid="hole-prev"><ChevronLeft size={19} /></button>}
       <button className={`h-11 ${pill.prev ? "px-1" : "pl-3.5"} pr-3 flex items-center gap-2 rounded-full min-w-0 ${side ? "flex-1 justify-center !px-2 gap-1" : "max-w-[calc(100vw-120px)]"} focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`}
         aria-haspopup={pillMenu ? "menu" : undefined} aria-expanded={!!open?.pill} disabled={!pillMenu}

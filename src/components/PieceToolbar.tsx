@@ -254,12 +254,12 @@ export function PieceToolbar({ t, id, onGrow, onGrowLive, onPreviewFont, onEditT
     const shownPanel = shownKey ? panels[shownKey] ?? null : null;
     const tool = (key: string, label: string, icon: ReactNode, onClick?: () => void) => (
       <button key={key} onClick={onClick ?? (() => { setPop(pop === key ? null : (key as typeof pop)); if (key === "link") setTimeout(() => linkRef.current?.focus(), 0); })} aria-pressed={onClick ? undefined : pop === key} data-testid={`piece-tool-${key}`}
-        className={tileCls(pop === key).replace("min-w-[52px]", "min-w-[46px]")}>
+        className={tileCls(pop === key).replace("min-w-[58px]", "min-w-[46px]")}>
         {icon}<span className="text-[11px] leading-none font-semibold whitespace-nowrap">{label}</span>
       </button>
     );
     return (
-      <div className={`w-full ${SHEET}`} onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} data-testid="piece-sheet">
+      <div className={SHEET} onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} data-testid="piece-sheet">
         <div className="flex items-center gap-1 px-2 pt-2.5 pb-2" data-page-bar data-testid="piece-toolbar" role="toolbar" aria-label={`${p.label} settings`}>
           <button className="shrink-0 min-w-[56px] h-[54px] px-1.5 rounded-xl flex flex-col items-center justify-center gap-1 bg-orange-500 text-zinc-950 shadow-lg shadow-orange-900/40 active:bg-orange-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400" onClick={onDone} aria-label="Done" data-testid="piece-done"><Check size={20} strokeWidth={2.6} /><span className="text-[11px] leading-none font-bold">Done</span></button>
           {has.text && tool("words", "Words", <Pencil size={19} />, onEditText)}

@@ -76,7 +76,7 @@ export function PageTools() {
   const tool = tools.find(t => t.id === shownId);
   return (
     <div className={`relative z-30 ${SHEET}`} data-testid="page-tools">
-      <div role="toolbar" aria-label="Page settings" className="flex gap-1 px-2 pt-2.5 pb-2 overflow-x-auto dg-noscrollbar touch-pan-x">
+      <div role="toolbar" aria-label="Page settings" className="flex gap-1 px-1.5 py-[7px] overflow-x-auto dg-noscrollbar touch-pan-x">
         {tools.map(t => {
           const on = open === t.id;
           return (
