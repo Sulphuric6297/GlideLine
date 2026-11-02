@@ -546,6 +546,8 @@ export class Forest {
   private lastFov = 0;
   private version = -1;
   private matrices: THREE.Matrix4[][] = [];
+  /** Which of each set's trees are drawn just now (in reach and in sight), for picking. */
+  private drawnNow: Uint8Array[] = [];
 
   /** `maxFt`: not drawn past this far from the eye; `ladder`: its versions close, middle and far
    * off, and where the first gives way (underbrush: lighter ones, the middle only close by). */
@@ -618,6 +620,7 @@ export class Forest {
     this.sets.forEach((set, si) => {
       const n = [0, 0, 0];
       const levels = [set.near, set.mid, set.far];
+      const drawn = (this.drawnNow[si] = new Uint8Array(set.spots.length));
       set.spots.forEach((s, i) => {
         const dx = s.x - eye.x, dz = s.y - eye.z, dy = s.ground + s.height * 0.5 - eye.y;
         const d2 = dx * dx + dz * dz + dy * dy;
@@ -628,6 +631,7 @@ export class Forest {
           if (!see.intersectsSphere(seeBall)) return;
         }
         const l = all || d2 < r2 ? 0 : d2 < m2 ? 1 : 2;
+        drawn[i] = 1;
         const mat = this.matrices[si][i];
         levels[l][0].setMatrixAt(n[l], mat);
         levels[l][1].setMatrixAt(n[l], mat);
@@ -651,6 +655,12 @@ export class Forest {
         });
       });
     });
+  }
+
+  /** Each tree drawn just now (not past its reach or out of sight), for picking: only what you see
+   * can be picked. */
+  eachDrawn(f: (s: TreeSpot) => void) {
+    this.sets.forEach((set, si) => { const on = this.drawnNow[si]; set.spots.forEach((s, i) => { if (on?.[i]) f(s); }); });
   }
 
   /** Trees standing within `r` of a plan point (for tests). */

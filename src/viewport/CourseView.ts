@@ -33,6 +33,7 @@ import { autoFlight, flightClock, flyoverOf, insertKey, keyFlight, keyTimes, key
 import { VIDEO_HOLD, titleStrength } from "../lib/video";
 import { drawOverlay, holeTitle, overlayShow, type HoleTitle } from "./flyTitle";
 import { forestDetail, type Forest, type TreeSpot, woodsCrownWidth } from "../three/treeKit";
+import { brushOnly } from "../lib/brushSpots";
 import { GRASS, Grass, type GrassQuality } from "../three/grass";
 import { Tufts } from "../three/tufts";
 import { setWaterSky, waterMaterial, waterUniforms } from "../three/water";
@@ -558,7 +559,7 @@ export class CourseView {
     on(container, "pointerdown", e => this.onPointerDown(e), { capture: true });
     on(container, "wheel", e => this.onWheel(e), { capture: true, passive: false });
     on(container, "pointermove", e => this.onHoverMove(e));
-    on(container, "pointerleave", () => { this.lastPointer = null; this.cb.onHover(null); this.setHover(null); this.updateGhost(null); this.showStep(null); this.tip(null); this.invalidate(); });
+    on(container, "pointerleave", () => { this.lastPointer = null; this.cb.onHover(null); this.setHover(null); this.restKey = ""; window.clearTimeout(this.restTimer); this.updateGhost(null); this.showStep(null); this.tip(null); this.invalidate(); });
     on(container, "dblclick", e => this.onDoubleClick(e));
     on(window, "pointerup", e => this.touchUp(e));
     on(window, "pointercancel", e => this.touchUp(e));
@@ -4051,9 +4052,23 @@ export class CourseView {
     this.fx.add(g);
   }
 
-  private setHover(id: string | null) {
-    if (id === this.hoverId) return;
+  /** What a click at a client point picks, as the select click works it out: a tree or bush
+   * drawn there when the pointer is over an area, a line or a hole's line (most trees stand in a
+   * wood) but not on an area's edge; otherwise the thing itself. */
+  clickTarget(clientX: number, clientY: number, dom: string | null = null): { id: string | null; tree: ReturnType<CourseView["treeAt"]> } {
+    const hit = dom ?? this.pick(clientX, clientY);
+    const it = hit ? this.item(hit) : null;
+    const big = (!hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit))) && !(hit && !dom && this.pickedEdge);
+    const tree = big && !this.readOnly ? this.treeAtScreen(clientX, clientY) : null;
+    return tree ? { id: null, tree } : { id: hit, tree: null };
+  }
+
+  /** The tree or bush the pointer is over (not an item of its own), outlined as a hovered thing is. */
+  private hoverTree: ReturnType<CourseView["treeAt"]> = null;
+  private setHover(id: string | null, tree: ReturnType<CourseView["treeAt"]> = null) {
+    if (id === this.hoverId && JSON.stringify(tree) === JSON.stringify(this.hoverTree)) return;
     this.hoverId = id;
+    this.hoverTree = tree;
     if (this.hoverFx) {
       this.fx.remove(this.hoverFx);
       disposeObjectDeep(this.hoverFx);
@@ -4062,9 +4077,59 @@ export class CourseView {
     if (id && id !== this.selectedId && !this.group.includes(id)) {
       this.hoverFx = this.outlineFor(id, "#ffffff", 0.5);
       if (this.hoverFx) this.fx.add(this.hoverFx);
+    } else if (tree) {
+      // (a ring round its crown, on the ground)
+      const at = this.treeSpotOf(tree);
+      if (at) {
+        const ring: P[] = [];
+        for (let i = 0; i < 48; i++) ring.push({ x: at.x + Math.cos((i / 48) * Math.PI * 2) * at.r, y: at.y + Math.sin((i / 48) * Math.PI * 2) * at.r });
+        const g = new THREE.Group();
+        g.add(this.fatLine(this.drapeLine(ring, 0.4, true), "#ffffff", 2.5, { opacity: 0.5, order: 9 }));
+        this.hoverFx = g;
+        this.fx.add(g);
+      }
     }
     this.updateCursor();
     this.invalidate();
+  }
+
+  /** Where a tree that isn't an item of its own stands, and how wide its crown is. */
+  private treeSpotOf(tree: NonNullable<ReturnType<CourseView["treeAt"]>>): { x: number; y: number; r: number } | null {
+    if (tree.kind === "spot") return { x: tree.x, y: tree.y, r: Math.max(1.5, tree.width / 2) };
+    const lidar = this.doc?.course.lidar, t = lidar?.trees[tree.k];
+    if (!t) return null;
+    const [x, y, , r] = grownTree(t, lidar!.growYears ?? 0);
+    return { x, y, r: Math.max(1.5, r) };
+  }
+
+  /** What a hovered thing is called, for the tip after the pointer rests on it. */
+  private hoverName(id: string | null, tree: ReturnType<CourseView["treeAt"]>) {
+    if (tree) return tree.kind === "measured" ? "Measured tree" : tree.conifer ? "Pine" : tree.height < 9 ? "Bush" : "Tree";
+    if (!id) return null;
+    const it = this.item(id);
+    if (!it) { const h = this.hole(id); return h ? `Hole ${this.num(h.id)}` : null; }
+    if (it.type === "area") {
+      const name = brushOnly(it) ? `${(it.density ?? 1) < 0.75 ? "Light" : (it.density ?? 1) > 1.4 ? "Heavy" : "Medium"} underbrush` : it.label || AREA_KINDS[it.kind].label;
+      return this.pickedEdge ? `${name} edge` : name;
+    }
+    if (it.type === "line") return it.label || LINE_KINDS[it.kind].label;
+    return this.nameOf(id);
+  }
+
+  /** After the pointer rests a moment on something, its name beside it (what a click picks); it
+   * goes as soon as the pointer moves on. */
+  private restTimer = 0;
+  private restKey = "";
+  private restTip(p: { x: number; y: number }, id: string | null, tree: ReturnType<CourseView["treeAt"]>) {
+    const key = id ?? (tree ? JSON.stringify(tree) : "");
+    if (key === this.restKey && key) return;
+    this.restKey = key;
+    window.clearTimeout(this.restTimer);
+    this.tip(null);
+    if (!key || id === this.selectedId) return;
+    const name = this.hoverName(id, tree);
+    if (!name) return;
+    this.restTimer = window.setTimeout(() => { const q = this.lastPointer; if (q && this.restKey === key) this.tip(name, q.x, q.y); }, 450);
   }
 
   // ------------------------------------------------------------------ labels and badges (DOM)
@@ -4413,8 +4478,13 @@ export class CourseView {
     };
     // (each crown as wide as the woods draw it)
     const drawnR = (conifer: boolean | number, variant: number, height: number, width: number) => woodsCrownWidth(conifer ? "conifer" : "broadleaf", variant, height, width) / 2;
+    // (only what's drawn just now can be picked: none with the trees hidden, none of a wood or its
+    // underbrush out of sight, and none past where a forest stops drawing them)
+    if (this.treesHidden) return [];
+    const shown = (o: THREE.Object3D | null) => { for (let x = o; x; x = x.parent) if (!x.visible) return false; return true; };
+    const measuredShown = this.itemsGroup.children.some(g => g.userData.measured && shown(g));
     const lidar = this.doc?.course.lidar, ls = this.lidarState;
-    if (lidar && ls) {
+    if (lidar && ls && measuredShown) {
       for (const k of ls.stand) {
         const tr = lidar.trees[k];
         if (!tr) continue;
@@ -4424,14 +4494,17 @@ export class CourseView {
     }
     for (const g of this.itemsGroup.children) {
       const spots = g.userData.spots as TreeSpot[] | undefined;
-      if (!spots) continue;
+      if (!spots || !shown(g)) continue;
       // (the measured forest: its measured trees are tested above by index; its saplings here)
       const measuredCount = g.userData.measured ? (lidar?.trees.length ?? 0) : 0;
       const indexOf = g.userData.indexes as number[] | undefined;
-      spots.forEach((s, i) => {
+      const one = (s: TreeSpot, i: number) => {
         if (measuredCount && indexOf && indexOf[i] < measuredCount) return;
         test(s.x, s.y, s.ground, s.height, s.shape === "bush" ? s.width / 2 : drawnR(s.shape === "conifer", s.variant, s.height, s.width), { kind: "spot", x: s.x, y: s.y, height: s.height, width: s.width, conifer: s.shape === "conifer" });
-      });
+      };
+      const forest = g.userData.forest as Forest | undefined;
+      if (forest && !measuredCount) forest.eachDrawn(s => one(s, -1));
+      else spots.forEach(one);
     }
     // Nearest first; but a nearer crown only grazed at its thin edge gives way to one behind that
     // the pointer is well into
@@ -5508,7 +5581,11 @@ export class CourseView {
     try { return this.pickIn(clientX, clientY); } finally { this.eye = was; }
   }
 
+  /** Whether the last pick was an area's edge (a click there picks the area, not a tree on it). */
+  private pickedEdge = false;
+
   private pickIn(clientX: number, clientY: number): string | null {
+    this.pickedEdge = false;
     const doc = this.doc;
     if (!doc) return null;
     const r = this.container.getBoundingClientRect();
@@ -5587,7 +5664,18 @@ export class CourseView {
       if (d < tol && (!near || d < near.d)) near = { id: s.holeId, d };
     }
     if (near) return near.id;
-    const areas = (doc.course.items.filter(i => i.type === "area") as AreaItem[]).map(a => ({ id: a.id, ...this.shapeOf(a) })).filter(a => inBounds(p, a.box) && pointInPolygon(p, a.pts));
+    // An area's edge, within a few pixels (its edge is what's drawn of it): the nearest, the smaller
+    // where two run together; then the inside of the smallest round the pointer
+    const shapes = (doc.course.items.filter(i => i.type === "area") as AreaItem[]).map(a => ({ id: a.id, ...this.shapeOf(a) }));
+    const edgeTol = 6 * reach * upp;
+    let edge: { id: string; d: number; size: number } | null = null;
+    for (const a of shapes) {
+      if (a.pts.length < 3 || pointBoundsGap(p, a.box) >= edgeTol) continue;
+      const d = distanceToPath(p, [...a.pts, a.pts[0]]), size = Math.abs(polygonArea(a.pts));
+      if (d < edgeTol && (!edge || d < edge.d - upp || (d < edge.d + upp && size < edge.size))) edge = { id: a.id, d, size };
+    }
+    if (edge) { this.pickedEdge = true; return edge.id; }
+    const areas = shapes.filter(a => inBounds(p, a.box) && pointInPolygon(p, a.pts));
     if (areas.length) return areas.sort((a, b) => polygonArea(a.pts) - polygonArea(b.pts))[0].id;
     // Inside a fairway: its hole
     for (const s of doc.stats) {
@@ -6094,7 +6182,7 @@ export class CourseView {
   private menuFor(x: number, y: number, domItem: string | null): { itemId: string | null; under: string | null } {
     const hit = domItem ?? this.pick(x, y);
     const it = hit ? this.item(hit) : null;
-    const big = !!hit && !domItem && (it ? it.type === "area" || it.type === "line" || it.type === "structure" : !!this.hole(hit));
+    const big = !!hit && !domItem && !this.pickedEdge && (it ? it.type === "area" || it.type === "line" || it.type === "structure" : !!this.hole(hit));
     return big && !this.readOnly && this.treeAtScreen(x, y) ? { itemId: null, under: hit } : { itemId: hit, under: null };
   }
 
@@ -6419,8 +6507,8 @@ export class CourseView {
     // a click opens the tree's menu (cut it, make it the course's own, or select the wood)
     const hitItem = hit ? this.item(hit) : null;
     // (over a hole's line or fairway too: a tree stands above it; tees, baskets, signs and the
-    // course's own trees still come first)
-    const overBig = !hit || (!!hitItem && (hitItem.type === "area" || hitItem.type === "line" || hitItem.type === "structure")) || (!hitItem && !!this.hole(hit));
+    // course's own trees still come first; on an area's edge, the area)
+    const overBig = (!hit || (!!hitItem && (hitItem.type === "area" || hitItem.type === "line" || hitItem.type === "structure")) || (!hitItem && !!this.hole(hit))) && !(hit && !domItem && this.pickedEdge);
     if (overBig && !e.shiftKey && !tool.dragSelect && !this.readOnly) {
       const tree = this.treeAtScreen(e.clientX, e.clientY);
       if (tree) {
@@ -7315,7 +7403,7 @@ export class CourseView {
   private povTapPick(ev: PointerEvent) {
     const hit = this.pick(ev.clientX, ev.clientY);
     const it = hit ? this.item(hit) : null;
-    const big = !hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit));
+    const big = (!hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit))) && !(hit && this.pickedEdge);
     const tree = big && !this.readOnly ? this.treeAtScreen(ev.clientX, ev.clientY) : null;
     if (tree) this.cb.onAdoptTree(tree, this.lookOf(tree));
     else this.cb.onSelect(hit);
@@ -7491,8 +7579,9 @@ export class CourseView {
       const target = document.elementFromPoint(p.x, p.y) as HTMLElement | null;
       if (this.tool.mode === "select") {
         const dom = (target?.closest?.("[data-item-id]") as HTMLElement | null)?.dataset.itemId ?? null;
-        const over = dom ?? (target?.closest?.("[data-handle]") ? null : this.pick(p.x, p.y));
-        this.setHover(this.readOnly ? this.holeFor(over) : over);
+        if (this.readOnly) this.setHover(this.holeFor(dom ?? (target?.closest?.("[data-handle]") ? null : this.pick(p.x, p.y))));
+        else if (target?.closest?.("[data-handle]")) this.setHover(null);
+        else { const t = this.clickTarget(p.x, p.y, dom); this.setHover(t.id, t.tree); this.restTip(p, t.id, t.tree); }
       } else {
         this.setHover(null);
         this.updateGhost(g);
@@ -7509,7 +7598,7 @@ export class CourseView {
     else if (this.hoverId) {
       const it = this.item(this.hoverId);
       c = !it || ((it.type === "area" || it.type === "line" || it.type === "structure") && this.hoverId !== this.selectedId && !this.group.includes(this.hoverId)) ? "pointer" : "move";
-    }
+    } else if (this.hoverTree) c = "pointer";
     this.container.style.cursor = c;
   }
 

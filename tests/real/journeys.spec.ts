@@ -115,6 +115,41 @@ test("picking in 3D: a roof in front of a tree picks the house; the path in fron
   expect(await pickAt(await at(page, BEHIND.x, BEHIND.y, 36))).toBe("t-behind");
 });
 
+test("only what's drawn is picked: no tree with the trees hidden, no underbrush past where it's drawn; an area's edge picks the area, and the pointer over it outlines and names it", async () => {
+  await draw(page, false);
+  const sweep = () => page.evaluate(() => {
+    const v = (window as any).__dgView, doc = (window as any).__dgCourse(), r = v.container.getBoundingClientRect(), cam = v.mainEye().cam.position;
+    const out = { trees: 0, farBrush: 0, edges: 0, inside: 0, edge: null as null | { x: number; y: number; id: string } };
+    for (let y = r.top + 40; y < r.bottom - 40; y += 22) for (let x = r.left + 40; x < r.right - 40; x += 22) {
+      const t = v.clickTarget(x, y);
+      if (t.tree) { out.trees++; if (t.tree.kind === "spot" && t.tree.height < 9 && Math.hypot(t.tree.x - cam.x, t.tree.y - cam.z) > 420) out.farBrush++; }
+      else if (t.id && doc.items.find((i: any) => i.id === t.id)?.type === "area") {
+        if (v.pickedEdge) { out.edges++; out.edge ??= { x, y, id: t.id }; } else out.inside++;
+      }
+    }
+    return out;
+  });
+  const shown = await sweep();
+  console.log("picks over the view:", JSON.stringify({ ...shown, edge: !!shown.edge }));
+  expect(shown.trees, "trees picked over the view").toBeGreaterThan(0);
+  expect(shown.farBrush, "underbrush picked past where it's drawn").toBe(0);
+  expect(shown.edges, "area edges picked").toBeGreaterThan(0);
+  expect(shown.inside, "insides of areas picked").toBeGreaterThan(0);
+  // (the trees hidden: none of them picked)
+  await page.evaluate(() => (window as any).__dgView.setTreesHidden(true));
+  await draw(page, false);
+  const hidden = await sweep();
+  await page.evaluate(() => (window as any).__dgView.setTreesHidden(false));
+  expect(hidden.trees, "trees picked with the trees hidden").toBe(0);
+  // (the pointer resting on an edge: that area outlined, and its name beside it)
+  const e = shown.edge!;
+  await page.mouse.move(e.x - 3, e.y);
+  await page.mouse.move(e.x, e.y);
+  await expect.poll(() => page.evaluate(() => (window as any).__dgView.hoverId)).toBe(e.id);
+  await expect(page.getByTestId("stand-tip")).toContainText(/edge$/, { timeout: 3000 });
+  await page.mouse.move(5, 5);
+});
+
 test("dragging a house: each step quick, letting go quick, back with one undo", async () => {
   await draw(page, false);
   const was = (await course(page)).items.find((i: any) => i.id === "t-house").points[0];
