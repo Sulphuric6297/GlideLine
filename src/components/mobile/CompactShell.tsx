@@ -37,6 +37,7 @@ import { ActionSheet, type SheetAction } from "./ActionSheet";
 import { BottomSheet, type Detent } from "./BottomSheet";
 import { PageTools } from "./PageTools";
 import { useHoleSettings, useItemSettings } from "./HoleStrip";
+import { FlightLine, useFlight, useFlyoverSettings } from "../FlyoverBar";
 import { Disc } from "./SheetFold";
 import { ActRow, EdgeSlider, GlassBar, useBarNav, type BarSetting } from "./GlassBar";
 import { MoveCornerHere } from "../PlaceByGps";
@@ -633,14 +634,29 @@ function PhoneToolBar({ faded, side, onHeight, mainH, from }: BarProps) {
   );
 }
 
-/** A hole picked: its pill (with the holes either side), every setting it has, and ✓. */
+/** A hole picked: its pill (with the holes either side), every setting it has, and ✓. Its Flyover
+ * opens the flyover's bar in place: the timeline and every flyover setting, ‹ back to the hole's. */
 function PhoneHoleBar({ hole, faded, side, onHeight }: BarProps & { hole: Hole }) {
   const doc = useCourse(s => s.doc);
   const s = holeStats(doc, hole);
-  const settings = useHoleSettings(hole);
+  const [fly, setFly] = useState(false);
+  const settings = useHoleSettings(hole, { onFlyover: () => setFly(true) });
   const many = doc.holes.length > 1;
+  if (fly) return <HoleFlyoverBar hole={hole} back={() => setFly(false)} faded={faded} side={side} onHeight={onHeight} />;
   const pill = { name: `Hole ${holeLabel(doc, hole.id)}`, small: s.complete ? `${fmtDist(s.length, doc.units)} · Par ${s.par}` : s.teeId ? "Needs a basket" : "Needs a tee", prev: many ? () => stepHole(-1) : undefined, next: many ? () => stepHole(1) : undefined, testid: "selection-header" };
   return <GlassBar remember="hole" pill={pill} pillMenu={<PillActions id={hole.id} />} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
+}
+
+/** A hole's flyover, from its bar on the map: Play flyover (to the tee, playing), every flyover
+ * setting, as tee view has them. */
+function HoleFlyoverBar({ hole, back, faded, side, onHeight }: { hole: Hole; back: () => void; faded: boolean; side?: boolean; onHeight: (px: number) => void }) {
+  const doc = useCourse(s => s.doc);
+  const settings = useFlyoverSettings(hole);
+  const flight = useFlight(hole);
+  const s = holeStats(doc, hole);
+  const play = () => useEditor.getState().set({ teeView: hole.id, teeViewTee: null, flyover: true });
+  const line = s.complete ? <FlightLine playing={false} onPlay={play} onStop={() => {}} length={flight.length} keys={flight.keys ? flight.times : undefined} picked={flight.keys ? Math.min(useEditor.getState().flyKey ?? 0, flight.keys.length - 1) : null} onPick={k => useEditor.getState().set({ flyKey: k })} /> : undefined;
+  return <GlassBar remember="hole-flyover" pill={{ name: `Hole ${holeLabel(doc, hole.id)}`, small: "Flyover", back, testid: "selection-header" }} settings={settings} line={side ? undefined : line} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
 }
 
 /** Anything else picked: its pill (its hole, and what can be done with it), every setting it has. */
@@ -1073,9 +1089,9 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
         {stepRow && <StepTools onPick={setFrom} back={back} />}
         {bar && <PhoneBar faded={faded} onHeight={setBarH} mainH={mainH} from={from} />}
         {onSite ? <OnSite /> : ed.teeView && (ed.flyCam && !useCourse.getState().readOnly ? <CameraHud compact /> : <TeeViewHud compact />)}
-        <ExportProgressPill top={immersive ? undefined : top + 4} bottom={immersive ? 96 : undefined} />
+        <ExportProgressPill top={immersive ? undefined : top + 4} bottom={immersive ? 146 : undefined} />
         {/* (above the drawing buttons when they're up) */}
-        {toasts(onSite ? 340 : immersive ? (exporting ? 156 : 96) : pageTools ? 84 : sheetH + 12 + (drawBar ? 64 : 0))}
+        {toasts(onSite ? 340 : immersive ? (exporting ? 206 : 146) : pageTools ? 84 : sheetH + 12 + (drawBar ? 64 : 0))}
         {welcome && !immersive && (
           <div className="absolute inset-0 z-10 flex items-end justify-center px-3 pb-3 pointer-events-none" style={{ paddingTop: top }}>{welcome}</div>
         )}

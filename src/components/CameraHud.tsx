@@ -1,17 +1,22 @@
-// Flying the camera yourself, first person, to make a hole's flyover: moved with the keyboard (on a
-// phone, a thumb stick and up and down buttons), turned by dragging the view, and a keyframe added
-// right where it is, looking where it looks.
+// Edit camera path: the camera moved yourself, first person, to set a hole's keyframes, on the
+// flyover's own glass bar (mobile/GlassBar): the timeline with the keyframes beside its name (tap one
+// to go to it, drag along it to see the flight at that moment), and the row: Add keyframe, Update,
+// Field of view, Altitude, Time, Delete; ✓ Done. Moved with the keyboard (on a phone, a thumb stick
+// and up and down buttons), turned by dragging the view.
 import { useEffect, useMemo, useState, type PointerEvent as RPointerEvent } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Check, Play, Plus, RefreshCw, Square, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, HelpCircle, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { holeLabel } from "../lib/course";
-import { LENS, flightAt, flyoverOf, insertKeyAt, keyFlight, keyTimes, lensLabel } from "../lib/flight";
+import { LENS, flightAt, flyoverOf, insertKeyAt, keyFlight, keyTimes } from "../lib/flight";
 import { fmtDist } from "../lib/units";
 import { getDoc, updateHole, useCourse, useEditor } from "../state/course";
 import { getView } from "../state/view";
 import { toast } from "../state/toast";
 import type { FlyKey, Hole } from "../types";
 import { useExportJob } from "../state/exportJob";
-import { HelpLink } from "./ui";
+import { askHelp } from "./ui";
+import { ActRow, GlassBar, type BarSetting } from "./mobile/GlassBar";
+import { Dial } from "./mobile/HoleStrip";
+import { FlightLine, clock, retimeKeys } from "./FlyoverBar";
 
 /** The hole being flown and its keyframes, as they are now. */
 const now = () => {
@@ -70,10 +75,10 @@ const jump = (d: number) => {
   ed.set({ flyKey: i });
 };
 
-/** Whether the picked keyframe can go: not one of a flight's last two (the hole would quietly fly
- * by itself again; the Flyover section has the same rule). */
+/** Whether the selected keyframe can be deleted: not one of a custom path's last two (the hole would
+ * quietly go back to Automatic; the Flyover settings have the same rule). */
 const removable = (count: number) => count !== 2;
-const REMOVE_NO = "A flight needs two keyframes";
+const REMOVE_NO = "A custom camera path needs two keyframes";
 
 const removeKey = () => {
   const { ed, hole, keys, at } = now();
@@ -138,8 +143,8 @@ function Stick() {
     el.addEventListener("pointercancel", up);
   };
   return (
-    <div className="relative w-[124px] h-[124px] rounded-full bg-black/35 ring-1 ring-white/25 backdrop-blur-sm touch-none pointer-events-auto" onPointerDown={down} aria-label="Move the camera" role="application" data-testid="cam-stick">
-      <div className="absolute left-1/2 top-1/2 w-[52px] h-[52px] -ml-[26px] -mt-[26px] rounded-full bg-white/80 shadow-lg" style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} />
+    <div className="relative w-[118px] h-[118px] rounded-full glass border border-white/10 shadow-xl touch-none pointer-events-auto" onPointerDown={down} aria-label="Move the camera" role="application" data-testid="cam-stick">
+      <div className="absolute left-1/2 top-1/2 w-[48px] h-[48px] -ml-[24px] -mt-[24px] rounded-full bg-white/[0.88] shadow-[0_3px_10px_rgba(0,0,0,.4)]" style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} />
     </div>
   );
 }
@@ -149,7 +154,7 @@ function Lift({ dir }: { dir: 1 | -1 }) {
   const go = (on: boolean) => getView()?.freeMove({ u: on ? dir : 0 });
   return (
     <button
-      className="w-14 h-14 rounded-2xl bg-black/35 ring-1 ring-white/25 backdrop-blur-sm text-white flex items-center justify-center active:bg-white/25 touch-none pointer-events-auto"
+      className="w-[52px] h-[52px] rounded-[18px] glass border border-white/10 shadow-xl text-white flex items-center justify-center active:bg-white/25 touch-none pointer-events-auto"
       aria-label={dir > 0 ? "Up" : "Down"}
       onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); go(true); }}
       onPointerUp={() => go(false)}
@@ -157,7 +162,7 @@ function Lift({ dir }: { dir: 1 | -1 }) {
       onContextMenu={e => e.preventDefault()}
       data-testid={dir > 0 ? "cam-up" : "cam-down"}
     >
-      {dir > 0 ? <ChevronUp size={26} /> : <ChevronDown size={26} />}
+      {dir > 0 ? <ChevronUp size={24} /> : <ChevronDown size={24} />}
     </button>
   );
 }
@@ -251,6 +256,15 @@ export function CameraHud({ compact = false }: { compact?: boolean }) {
       clear();
     };
   }, []);
+  // (playing: the playhead from the view, as it flies)
+  const [playAt, setPlayAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (!flying) { setPlayAt(null); return; }
+    let raf = 0, last = 0;
+    const tick = (now: number) => { if (now - last > 90) { last = now; setPlayAt(getView()?.flyClock()?.t ?? 0); } raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [flying]);
   if (!hole) return null;
   const u = doc.units;
   // (the camera put away, standing on the hole's tee again: Back from there goes to the map)
@@ -269,104 +283,58 @@ export function CameraHud({ compact = false }: { compact?: boolean }) {
     ed.set({ flyKey: null });
     scrubbed = t;
   };
-  const clock = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
-  const timeline = flight && (
-    <div className="mt-1.5 px-1 flex items-center gap-2.5" data-testid="cam-timeline">
-      <div className="relative flex-1 min-w-0 h-7 flex items-center">
-        {/* (each keyframe's moment, a tick on the bar) */}
-        {times.map((t, i) => <span key={i} className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-1.5 h-4 rounded-full pointer-events-none ${i === at ? "bg-orange-400" : "bg-sky-400/90"}`} style={{ left: `${(t / flight.dur) * 100}%` }} aria-hidden />)}
-        <input aria-label="Timeline" type="range" min={0} max={flight.dur} step={0.05} value={scrub ?? 0} onChange={e => scrubTo(Number(e.target.value))} className="slider relative w-full h-7 bg-transparent" data-testid="cam-scrub" />
-      </div>
-      <span className="shrink-0 text-[12px] text-zinc-300 tabular-nums">{clock(scrub ?? 0)} / {clock(flight.dur)}</span>
-    </div>
-  );
-  const addBtn = (
-    <button className={`shrink-0 rounded-full ${compact ? "flex-[2] h-11 px-4 text-[14px] justify-center" : "h-9 px-4 text-[13.5px]"} font-bold flex items-center gap-1.5 bg-orange-500 text-zinc-950 hover:bg-orange-400`} onClick={addKeyHere} title={at !== null ? `Add a keyframe here, after keyframe ${at + 1} (Enter)` : "Add a keyframe right here, looking where the camera looks (Enter)"} data-testid="cam-add"><Plus size={16} /> Add keyframe</button>
-  );
-  // (the arrows a thumb's size on a phone)
-  const arrow = `shrink-0 ${compact ? "w-11 h-11 rounded-xl" : "w-8 h-8 rounded-lg"} text-zinc-300 hover:bg-white/10 active:bg-white/15 flex items-center justify-center disabled:opacity-30`;
-  // The keyframes in order, along the bottom with the camera's buttons: tap one to go to it (and
-  // change it), Add keyframe at the end to add one where the camera is
-  const strip = (
-    <div className="flex items-center gap-1.5 min-w-0">
-      <button className={arrow} aria-label="Keyframe before ( [ )" title="Keyframe before ( [ )" disabled={!keys.length} onClick={() => jump(-1)}><ChevronLeft size={18} /></button>
-      <div className="flex items-center gap-1.5 overflow-x-auto min-w-0 py-0.5 dg-scroll" data-testid="cam-keys">
-        {keys.map((_, i) => (
-          <button key={i} className={`relative shrink-0 ${compact ? "w-11 h-11 text-[15px]" : "w-9 h-9 text-[13.5px]"} rounded-xl font-bold text-white ${i === at ? "bg-orange-500 ring-2 ring-white" : "bg-sky-600/90 hover:bg-sky-500"}`} aria-label={`Go to keyframe ${i + 1}`} aria-pressed={i === at} title={`Keyframe ${i + 1}: go to it`} onClick={() => go(i)}>
-            {i + 1}
-            {i === at && moved && <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-yellow-300 ring-2 ring-zinc-900" aria-hidden />}
-          </button>
-        ))}
-        {!keys.length && <span className="text-[12.5px] text-zinc-300 px-1 whitespace-nowrap">No keyframes yet</span>}
-      </div>
-      <button className={arrow} aria-label="Keyframe after ( ] )" title="Keyframe after ( ] )" disabled={!keys.length} onClick={() => jump(1)}><ChevronRight size={18} /></button>
-      {!compact && <span className="ml-auto" />}
-      {!compact && addBtn}
-    </div>
-  );
-  const pill = "rounded-full px-3.5 py-2 text-[13.5px] font-semibold flex items-center gap-1.5 text-white hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent";
-  const title = <><span className="truncate min-w-0">Camera · Hole {holeLabel(doc, hole.id)}</span><HelpLink topic="fly-camera" label="Flying the camera yourself" /></>;
-  const status = at !== null ? `Keyframe ${at + 1} of ${keys.length}${moved ? " · moved" : ""}` : scrubbed !== null && scrub !== null ? `At ${clock(scrub)} · Add keyframe puts one here` : keys.length ? "Pick a keyframe or drag the timeline" : "Fly somewhere you like, then add a keyframe";
-  const playTitle = keys.length < 2 ? "Add a second keyframe to play the flight." : "Fly through the keyframes";
   const canRemove = removable(keys.length);
-  const readout = `${fmtDist(alt, u)} up · lens ${lensLabel(lens)}`;
-  if (flying)
-    return (
-      <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui>
-        <div className="absolute bottom-[max(16px,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 pointer-events-auto glass rounded-full p-1 border border-white/10 shadow-2xl">
-          <button className={pill} onClick={() => ed.set({ flyover: false })} data-testid="cam-stop"><Square size={14} /> Stop</button>
-        </div>
-      </div>
-    );
-  if (compact)
-    return (
-      <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui data-testid="camera-hud">
-        <div className="absolute left-2 right-2 top-[max(8px,env(safe-area-inset-top))] pointer-events-auto glass rounded-2xl px-3 py-2 text-white shadow-2xl border border-white/10">
-          <div className="flex items-center gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-semibold flex items-center gap-1.5 min-w-0">{title}</div>
-              <div className="text-[12px] text-zinc-300 tabular-nums" data-testid="cam-readout">{readout}</div>
-            </div>
-            <button className="h-11 px-3.5 rounded-xl bg-white/10 text-[14px] font-semibold flex items-center gap-1" onClick={done} data-testid="cam-done"><Check size={17} /> Done</button>
-          </div>
-          <label className="mt-1 flex items-center gap-2.5 text-[12px] text-zinc-300">Lens<input aria-label="Lens" type="range" min={LENS.min} max={LENS.max} value={lens} onChange={e => setLensTo(Number(e.target.value))} className="slider flex-1 min-w-0 h-7" /></label>
-        </div>
-        {/* (above the stick and the up and down arrows; not while an export's progress shows) */}
-        {!job && <div className={`absolute left-1/2 -translate-x-1/2 ${flight ? "bottom-[calc(max(10px,env(safe-area-inset-bottom))+352px)]" : "bottom-[calc(max(10px,env(safe-area-inset-bottom))+316px)]"} w-max max-w-[calc(100%-24px)] text-center text-[13px] text-white/90 bg-black/45 rounded-2xl px-3 py-1`} data-testid="cam-hint">Drag to look around</div>}
-        <div className={`absolute left-3 ${flight ? "bottom-[calc(max(10px,env(safe-area-inset-bottom))+192px)]" : "bottom-[calc(max(10px,env(safe-area-inset-bottom))+156px)]"} flex flex-col items-center gap-1`}><Stick /><span className="text-[12px] font-semibold text-white/90 bg-black/45 rounded-full px-2 py-0.5 pointer-events-none">Move</span></div>
-        <div className={`absolute right-3 ${flight ? "bottom-[calc(max(10px,env(safe-area-inset-bottom))+192px)]" : "bottom-[calc(max(10px,env(safe-area-inset-bottom))+156px)]"} flex flex-col gap-2`}><Lift dir={1} /><Lift dir={-1} /></div>
-        <div className="absolute left-2 right-2 bottom-[max(8px,env(safe-area-inset-bottom))] pointer-events-auto glass rounded-[22px] p-2 border border-white/10 shadow-2xl">
-          {strip}
-          {timeline}
-          <div className="mt-1.5 px-1 text-[12px] text-zinc-300 truncate" data-testid="cam-status">{status}</div>
-          <div className="mt-1.5 flex items-center gap-1">
-            {addBtn}
-            {at !== null && <button className="flex-1 h-11 rounded-2xl bg-white/[0.1] text-white text-[13px] font-semibold flex items-center justify-center gap-1 active:bg-white/20 disabled:opacity-40" onClick={updateKeyHere} disabled={!moved} data-testid="cam-update"><RefreshCw size={14} /> Update {at + 1}</button>}
-            {at !== null && <button className="w-11 h-11 rounded-2xl text-white flex items-center justify-center active:bg-white/15 disabled:opacity-40" onClick={removeKey} disabled={!canRemove} aria-label={`Remove keyframe ${at + 1}`} title={canRemove ? `Remove keyframe ${at + 1}` : REMOVE_NO} data-testid="cam-remove"><Trash2 size={16} /></button>}
-            <button className="w-11 h-11 rounded-2xl text-white flex items-center justify-center active:bg-white/15 disabled:opacity-40" onClick={play} disabled={keys.length < 2} aria-label="Play" title={playTitle} data-testid="cam-play"><Play size={17} /></button>
-          </div>
-        </div>
-      </div>
-    );
+  // (a keyframe dragged along the timeline: it and the one after share the time between them)
+  const retime = (i: number, t: number, end: boolean) => {
+    updateHole(hole.id, { flyKeys: retimeKeys(keys, times, i, t) }, false);
+    if (end) useCourse.getState().commit();
+  };
+  const line = (
+    <FlightLine playing={flying} canPlay={keys.length >= 2} onPlay={play} onStop={() => ed.set({ flyover: false })} length={flight?.dur ?? null}
+      at={flying ? playAt : flight ? scrub ?? 0 : null} keys={times.length ? times : undefined} picked={at} onPick={go} onRetime={retime} moved={moved}
+      onScrub={flying ? t => { setPlayAt(t); getView()?.flySeek(t); } : flight ? scrubTo : undefined} short={compact} playId="cam-play" />
+  );
+  // (what Add keyframe does, said over it: after the selected one, at the moment scrubbed to, or the first)
+  const addWhere = at !== null ? `After keyframe ${at + 1}` : scrubbed !== null && scrub !== null ? `At ${clock(scrub, true)}` : keys.length ? "At the end" : "The first";
+  const settings: BarSetting[] = [
+    { id: "add", name: addWhere, value: "Add keyframe", icon: <Plus size={16} />, run: addKeyHere, testid: "cam-add", title: "Add a keyframe where the camera is, looking where it looks (Enter)" }
+  ];
+  if (at !== null) settings.push({ id: "update", name: `Keyframe ${at + 1}`, value: "Update", icon: <RefreshCw size={16} />, run: updateKeyHere, disabled: !moved, testid: "cam-update", title: moved ? `Move keyframe ${at + 1} to where the camera is (U)` : "The camera hasn't moved from it" });
+  settings.push(
+    { id: "fov", name: "Field of view", value: `${Math.round(lens)}°`, wide: true, testid: "cam-fov", control: <Dial label="Field of view" value={Math.round(lens)} min={LENS.min} max={LENS.max} step={1} format={v => `${Math.round(v)}°`} onChange={setLensTo} onDone={() => {}} /> },
+    { id: "altitude", name: "Altitude", value: fmtDist(alt, u), wide: true, testid: "cam-altitude", control: <Dial label="Altitude" value={Math.round(alt)} min={2} max={400} step={1} format={v => fmtDist(v, u)} onChange={v => { const k = getView()?.freeKey(); if (k) { getView()?.freeGo({ ...k, alt: v }); setAlt(v); } }} onDone={() => {}} /> }
+  );
+  if (at !== null && at > 0 && times.length) {
+    const lo = times[at - 1] + 0.5, hi = at + 1 < keys.length ? times[at + 1] - 0.5 : times[at] + 30;
+    settings.push({ id: "time", name: "Time", value: clock(times[at], true), wide: true, testid: "cam-time", control: <Dial label="Time" value={Math.round(times[at] * 10) / 10} min={Math.round(lo * 10) / 10} max={Math.round(hi * 10) / 10} step={0.1} format={v => clock(v, true)} onChange={v => retime(at, v, false)} onDone={() => useCourse.getState().commit()} /> });
+  }
+  if (at !== null) settings.push({ id: "delete", name: `Keyframe ${at + 1}`, value: "Delete", icon: <Trash2 size={16} />, run: removeKey, disabled: !canRemove, testid: "cam-remove", title: canRemove ? `Delete keyframe ${at + 1}` : REMOVE_NO });
+  const readout = <><span className="text-zinc-400">Altitude</span> <b className="text-zinc-50">{fmtDist(alt, u)}</b> <span className="text-zinc-500">·</span> <span className="text-zinc-400">Field of view</span> <b className="text-zinc-50">{Math.round(lens)}°</b></>;
+  // (on a phone, the name short: the timeline beside it needs the room)
+  const pill = { name: "Camera path", small: compact ? undefined : `Hole ${holeLabel(doc, hole.id)}`, testid: "cam-pill" };
+  const pillMenu = (
+    <div className="flex flex-col gap-0.5">
+      <ActRow icon={<HelpCircle size={18} />} label="Camera path help" hint="Moving the camera and setting keyframes" onClick={() => askHelp("fly-camera")} testid="cam-help" />
+    </div>
+  );
+  const bar = (
+    <GlassBar remember="camera" pill={pill} pillMenu={pillMenu} settings={settings} line={line} tucked={flying} onDone={done} doneLabel="Done (Esc)"
+      center={compact ? undefined : 1010} testid="camera-bar" />
+  );
   return (
     <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui data-testid="camera-hud">
-      <div className="absolute top-4 left-4 pointer-events-auto glass rounded-full pl-4 pr-1.5 py-1.5 text-white shadow-2xl border border-white/10 flex items-center gap-3">
-        <div className="text-[14px] font-semibold flex items-center gap-1.5">{title}</div>
-        <div className="text-[12.5px] text-zinc-300 tabular-nums" data-testid="cam-readout">{readout}</div>
-        <button className={pill} onClick={done} title="Back to the tee view (Esc)" data-testid="cam-done"><X size={15} /> Done</button>
-      </div>
-      <div className={`absolute ${flight ? "bottom-[176px]" : "bottom-[136px]"} left-1/2 -translate-x-1/2 text-[12px] text-white/85 bg-black/45 rounded-lg px-2.5 py-1 whitespace-nowrap`}>W A S D or the arrows to move · Space or E up, Q down · Shift for faster · drag to look · scroll for the lens</div>
-      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-[min(760px,calc(100%-32px))] pointer-events-auto glass rounded-[24px] p-2 border border-white/10 shadow-2xl">
-        {strip}
-        {timeline}
-        <div className="mt-1.5 flex items-center gap-1">
-          <div className="flex-1 min-w-0 px-2 text-[12.5px] text-zinc-300 truncate" data-testid="cam-status">{status}</div>
-          {at !== null && <button className={`${pill} bg-white/[0.08]`} onClick={updateKeyHere} disabled={!moved} title={`Move keyframe ${at + 1} to here (U)`} data-testid="cam-update"><RefreshCw size={14} /> Update {at + 1}</button>}
-          {at !== null && <button className={`${pill} hover:!text-red-300`} onClick={removeKey} disabled={!canRemove} aria-label={`Remove keyframe ${at + 1}`} title={canRemove ? `Remove keyframe ${at + 1}` : REMOVE_NO} data-testid="cam-remove"><Trash2 size={14} /></button>}
-          <label className="flex items-center gap-2 px-2 text-[12.5px] text-zinc-300">Lens<input aria-label="Lens" type="range" min={LENS.min} max={LENS.max} value={lens} onChange={e => setLensTo(Number(e.target.value))} className="slider w-24" /></label>
-          <button className={pill} onClick={play} disabled={keys.length < 2} title={playTitle} data-testid="cam-play"><Play size={14} /> Play</button>
-        </div>
-      </div>
+      {!flying && <div className={`absolute left-1/2 -translate-x-1/2 ${compact ? "top-[max(12px,env(safe-area-inset-top))]" : "top-4"} h-[38px] px-4 rounded-full glass border border-white/10 shadow-xl flex items-center gap-1.5 text-[13.5px] whitespace-nowrap tabular-nums`} data-testid="cam-readout">{readout}</div>}
+      {compact && !flying && <>
+        {!job && <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(max(10px,env(safe-area-inset-bottom))+300px)] w-max max-w-[calc(100%-24px)] text-center text-[13px] font-semibold text-white/90 bg-black/45 rounded-full px-3.5 py-1.5" data-testid="cam-hint">Drag to look around</div>}
+        <div className="absolute left-4 bottom-[calc(max(10px,env(safe-area-inset-bottom))+156px)] flex flex-col items-center gap-1"><Stick /><span className="text-[11.5px] font-bold text-white/80 pointer-events-none">Move</span></div>
+        <div className="absolute right-4 bottom-[calc(max(10px,env(safe-area-inset-bottom))+168px)] flex flex-col gap-2"><Lift dir={1} /><Lift dir={-1} /></div>
+      </>}
+      {!compact && !flying && <div className="absolute left-1/2 -translate-x-1/2 bottom-[150px] text-[12.5px] text-zinc-200 bg-black/45 rounded-xl px-3.5 py-1.5 whitespace-nowrap" data-testid="cam-hint"><Key k="W" /><Key k="A" /><Key k="S" /><Key k="D" /> move · <Key k="E" /> up · <Key k="Q" /> down · <Key k="Shift" /> faster · drag to look · scroll to change field of view</div>}
+      {bar}
     </div>
   );
 }
+
+/** A key, as the hint shows it. */
+const Key = ({ k }: { k: string }) => <b className="inline-block min-w-[20px] px-1.5 mx-px rounded-md bg-white/[0.16] text-center font-bold text-white">{k}</b>;
+

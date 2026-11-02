@@ -18,7 +18,6 @@ import { updateHole, updateItem, useCourse, useEditor } from "../../state/course
 import type { AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseItem, FieldKind, Hole, LabelItem, LineItem, LineKind, MandoItem, PathSurface, StructureItem, StructureKind, TeeItem, TeeSurface, TreeItem } from "../../types";
 import { BRUSH_LEVELS, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions } from "../Inspector";
 import { HoleChips } from "../ApplyToHoles";
-import { HoleFlight } from "../FlyoverSettings";
 import { OnSiteButton } from "../OnSite";
 import { useTouch } from "../useLayout";
 import { canShowLocation, useGps } from "../../state/gps";
@@ -87,7 +86,7 @@ const HolePart = ({ hole, part }: { hole: Hole; part: string }) => (
 const cap = (s: string) => `${s[0].toUpperCase()}${s.slice(1)}`;
 
 /** Every setting a hole has, for the bar's row, the everyday ones first. */
-export function useHoleSettings(hole: Hole): BarSetting[] {
+export function useHoleSettings(hole: Hole, { onFlyover }: { onFlyover?: () => void } = {}): BarSetting[] {
   const doc = useCourse(s => s.doc);
   const s = holeStats(doc, hole);
   const u = doc.units;
@@ -157,7 +156,7 @@ export function useHoleSettings(hole: Hole): BarSetting[] {
   );
   if (s.complete) out.push(
     { id: "inplay", name: "In play", value: `${"●".repeat(s.difficulty)}`, wide: true, control: <HolePart hole={hole} part="sec-inplay" /> },
-    { id: "flyover", name: "Flyover", value: "Settings", wide: true, control: <div className="p-1.5"><HoleFlight hole={hole} /></div> }
+    { id: "flyover", name: "Flyover", value: (hole.flyKeys?.length ?? 0) >= 2 ? "Custom path" : "Automatic", run: onFlyover, testid: "strip-flyover" }
   );
   return out;
 }

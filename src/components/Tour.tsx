@@ -41,7 +41,7 @@ const STOPS: Stop[] = [
   },
   {
     title: "From the tee",
-    say: () => "Each hole can be seen from its tee, the way a player sees it. Fly over plays the whole hole from tee to basket.",
+    say: () => "Each hole can be seen from its tee, the way a player sees it. Play flyover plays the whole hole from tee to basket.",
     go: () => { const id = firstHole(); if (id) editor({ step: "design", view: "3d", teeView: id }); }
   },
   {

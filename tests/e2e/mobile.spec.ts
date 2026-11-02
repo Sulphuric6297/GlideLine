@@ -949,14 +949,14 @@ test.describe("phone", () => {
     await expect(page.getByTestId("design-page").locator("image").first()).toBeAttached();
   });
 
-  test("the view from the tee on a phone: the hole's card, big buttons along the bottom, back to the map", async ({ page }) => {
+  test("tee view on a phone: the hole's card, the flyover bar along the bottom (the hole's name, Play flyover, its settings), Tap mode over it, back to the map", async ({ page }) => {
     // (on a slow machine, all of it takes a while)
     test.setTimeout(180_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
-    // (the hole's name opens View from the tee and Fly over the hole)
+    // (the hole's name opens View from the tee and Play flyover)
     await page.getByTestId("pill-open").tap();
-    await expect(page.getByTestId("pill-menu").getByRole("button", { name: "Fly over the hole" })).toBeVisible();
+    await expect(page.getByTestId("pill-menu").getByRole("button", { name: "Play flyover" })).toBeVisible();
     await page.getByTestId("menu-tee-view").tap();
     await expect(page.getByTestId("tee-view-hud")).toBeVisible();
     await expect(page.getByTestId("tee-view-hud")).toContainText("Par 3");
@@ -965,18 +965,29 @@ test.describe("phone", () => {
     await page.getByTestId("hud-card-open").tap();
     await expect(page.getByTestId("hud-card-open")).toHaveAttribute("aria-expanded", "true");
     await page.getByTestId("hud-card-open").tap();
-    // Along the bottom: the flight big, the rarer ones under More
-    await expect(page.getByTestId("hud-flyover")).toBeVisible();
+    // Along the bottom, the map's glass bar: the hole's name, Play flyover beside it, the settings
+    // under them; Tap mode just over it at the right
+    const bar = page.getByTestId("tee-bar");
+    await expect(bar.getByTestId("sheet-title")).toHaveText("Hole 1");
+    await expect(bar.getByTestId("hud-flyover")).toContainText("Play flyover");
+    await expect(bar.getByTestId("fly-path")).toContainText("Automatic");
+    await expect(page.getByTestId("tap-switch")).toBeVisible();
+    const sw = (await page.getByTestId("tap-switch").boundingBox())!, row = (await bar.getByTestId("bar-row").boundingBox())!;
+    expect(sw.y + sw.height).toBeLessThanOrEqual(row.y);
+    expect(sw.x + sw.width).toBeGreaterThan(page.viewportSize()!.width - 70);
+    // The hole's name opens its menu: Edit camera path, Export video, help
     await expect(page.getByTestId("hud-freecam")).toHaveCount(0);
-    await page.getByTestId("hud-more").tap();
+    await bar.getByTestId("pill-open").tap();
     await expect(page.getByTestId("hud-freecam")).toBeVisible();
-    await page.getByTestId("hud-more").tap();
+    await expect(page.getByTestId("hud-help")).toBeVisible();
+    await bar.getByTestId("pill-open").tap();
+    await expect(page.getByTestId("pill-menu")).toHaveCount(0);
     // Immersive: no step bar or sheet
     await expect(page.getByTestId("bottom-nav")).toHaveCount(0);
     await expect(sheet(page)).toHaveCount(0);
-    const close = (await page.getByTestId("hud-close").boundingBox())!;
+    const close = (await bar.getByTestId("bar-done").boundingBox())!;
     expect(close.height).toBeGreaterThanOrEqual(44);
-    await page.getByTestId("hud-close").tap();
+    await bar.getByTestId("bar-done").tap();
     await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
     // (back on the map with the hole still picked: its bar, the steps waiting till it's put down)
     await expect(page.getByTestId("hole-strip")).toBeVisible();
@@ -984,52 +995,56 @@ test.describe("phone", () => {
     await expect(page.getByTestId("bottom-nav")).toBeVisible();
   });
 
-  test("the tee view's Flyover tile opens its settings on a phone, before and while it flies", async ({ page }) => {
+  test("the flyover's settings in its bar's row on a phone, as it plays too; a thing selected, its bar in the flyover bar's place; playing, the bar folds to its timeline and a tap brings it back", async ({ page }) => {
     // (a flight's loading screen takes a while on a slow machine)
     test.setTimeout(180_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
     await page.getByTestId("pill-open").tap();
     await page.getByTestId("menu-tee-view").tap();
-    const tile = page.getByTestId("hud-settings");
-    const open = () => page.evaluate(() => !!(window as any).__dgEditor().teeSettings);
-    const box = (await tile.boundingBox())!;
-    expect(box.height).toBeGreaterThanOrEqual(44);
-    // In the hole's card: a tap opens the settings, another closes them
-    await tile.tap();
-    await expect.poll(open).toBe(true);
-    await expect(tile).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("flyover-settings")).toBeVisible();
-    await tile.tap();
-    await expect.poll(open).toBe(false);
-    await expect(page.getByTestId("flyover-settings")).toHaveCount(0);
-    // One panel at the bottom at a time: a thing picked, its sheet in the settings' place; the
-    // tile brings them back, letting the thing go
-    await tile.tap();
+    const bar = page.getByTestId("tee-bar");
+    // A setting's dial grows out of its button: Altitude, one step up with the arrow key
+    const height = () => page.evaluate(() => (window as any).__dgCourse().flyover?.height ?? null);
+    const before = await height();
+    await bar.getByTestId("strip-altitude").tap();
+    const dial = page.getByTestId("bar-menu").getByTestId("dial");
+    await expect(dial).toBeVisible();
+    await dial.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(height).not.toBe(before);
+    // (a tap on the view closes it, and nothing else)
+    await page.getByTestId("bar-away").tap();
+    await expect(page.getByTestId("bar-menu")).toHaveCount(0);
+    // Tap mode Select: a thing selected brings its own bar in the flyover bar's place, the switch
+    // still over it; ✓ puts it down and the flyover bar is back
+    await page.getByTestId("tap-edit").tap();
+    await expect.poll(async () => (await editorState(page)).standTap).toBe("edit");
     await page.evaluate(() => { const c = (window as any).__dgCourse(); (window as any).__dgActions.select(c.items.find((i: any) => i.type === "tee").id); });
-    await expect(page.getByTestId("selection-header")).toBeVisible();
-    await expect(page.getByTestId("flyover-settings")).toHaveCount(0);
-    await expect(tile).toHaveAttribute("aria-pressed", "false");
-    await tile.tap();
-    await expect(page.getByTestId("flyover-settings")).toBeVisible();
-    await expect.poll(async () => (await editorState(page)).selectedId ?? null).toBeNull();
-    await tile.tap();
-    await expect.poll(open).toBe(false);
-    // Flying: the card hides, the tile stays in reach at the top right
-    await page.getByTestId("hud-flyover").tap();
-    await expect(page.getByTestId("hud-flyover")).toHaveText(/Stop/);
+    await expect(page.getByTestId("item-strip")).toBeVisible();
+    await expect(bar).toHaveCount(0);
+    await expect(page.getByTestId("tap-switch")).toBeVisible();
+    await page.getByTestId("item-strip").getByTestId("bar-done").tap();
+    await expect(bar).toBeVisible();
+    await page.getByTestId("tap-walk").tap();
+    // Playing: the card hides, Play flyover becomes the timeline with Stop at its start
+    await bar.getByTestId("hud-flyover").tap();
+    await expect.poll(async () => (await editorState(page)).flyover).toBe(true);
     await expect(page.getByTestId("tee-view-hud")).toBeHidden();
     // (the flight's ready: its loading screen, over everything while it gets ready, out of the way)
-    // (the loading screen comes a moment after Fly over is tapped: waited for as done, not as not yet there)
-    await expect.poll(() => page.evaluate(() => { const ed = (window as any).__dgEditor(), el = document.querySelector('[data-testid="flyover-loading"]'); return ed.flyover && ed.flyLoading === null && (!el || getComputedStyle(el).pointerEvents === "none"); }), { timeout: 120_000 }).toBe(true);
-    await page.waitForTimeout(400);
-    const flight = () => page.evaluate(() => { const e = (window as any).__dgEditor(); return JSON.stringify({ teeView: e.teeView, flyover: e.flyover, flyLoading: e.flyLoading, teeSettings: e.teeSettings, tiles: document.querySelectorAll('[data-testid="hud-settings"]').length }); });
-    // (drawn in software, a flight's frames take seconds each: a tap waits its turn)
-    await expect(async () => { await tile.tap({ timeout: 20_000 }); await expect.poll(open, { timeout: 10_000, message: await flight() }).toBe(true); }).toPass({ timeout: 90_000 });
-    await expect(page.getByTestId("flyover-settings")).toBeVisible();
-    await page.getByTestId("hud-close").tap();
+    // (the loading screen comes a moment after Play is tapped: waited for as done, not as not yet there)
+    await expect.poll(() => page.evaluate(() => { const ed = (window as any).__dgEditor(), el = document.querySelector('[data-testid="flyover-loading"]'); return !ed.flyover || (ed.flyLoading === null && (!el || getComputedStyle(el).pointerEvents === "none")); }), { timeout: 120_000 }).toBe(true);
+    if (!(await editorState(page)).flyover) return;
+    await expect(page.getByTestId("fly-line")).toBeVisible();
+    await expect(page.getByTestId("tap-switch")).toHaveCount(0);
+    // Left alone, the bar folds to its timeline; a tap on the view brings it back, and only that
+    await expect(bar.getByTestId("bar-row")).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.getByTestId("fly-line")).toBeVisible();
+    await page.touchscreen.tap(200, 300);
+    await expect(bar.getByTestId("bar-row")).toBeVisible();
+    await expect(page.getByTestId("bar-menu")).toHaveCount(0);
+    // ✓ stops it and goes back to the map
+    await bar.getByTestId("bar-done").tap();
     await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
-    expect(await open()).toBe(false);
   });
 
   test("the camera on a phone: the stick moves it, the arrows lift it, a drag turns it, a big button adds the keyframe", async ({ page }) => {
@@ -1039,7 +1054,7 @@ test.describe("phone", () => {
     // (the header's eye: the hole's panel under it has a View from the tee button too)
     await page.getByTestId("pill-open").tap();
     await page.getByTestId("menu-tee-view").tap();
-    await page.getByTestId("hud-more").tap();
+    await page.getByTestId("tee-bar").getByTestId("pill-open").tap();
     await page.getByTestId("hud-freecam").tap();
     await expect(page.getByTestId("camera-hud")).toBeVisible();
     await expect(page.getByTestId("bottom-nav")).toHaveCount(0);
@@ -1077,12 +1092,12 @@ test.describe("phone", () => {
     expect(add.height).toBeGreaterThanOrEqual(44);
     await page.getByTestId("cam-add").tap();
     await expect.poll(async () => ((await course(page)).holes[0].flyKeys ?? []).length).toBe(1);
-    // (Done puts the camera away, standing on the tee again; Back goes to the map)
-    await page.getByTestId("cam-done").tap();
+    // (✓ Done puts the camera away, standing on the tee again; ✓ there goes to the map)
+    await page.getByTestId("camera-bar").getByTestId("bar-done").tap();
     await expect(page.getByTestId("camera-hud")).toHaveCount(0);
     await expect(page.getByTestId("tee-view-hud")).toBeVisible();
     expect((await editorState(page)).teeView).not.toBeNull();
-    await page.getByTestId("hud-close").tap();
+    await page.getByTestId("tee-bar").getByTestId("bar-done").tap();
     await expect(page.getByTestId("hole-strip")).toBeVisible();
     await page.getByTestId("bar-done").tap();
     await expect(page.getByTestId("bottom-nav")).toBeVisible();

@@ -150,14 +150,14 @@ const STYLE = `
 .dg-h[data-handle=dogleg]{border-color:#f59e0b}
 .dg-h[data-handle=extend]{width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid #f97316;cursor:copy;display:flex;align-items:center;justify-content:center;font:700 12px/1 Inter,sans-serif;color:#f97316}.dg-h[data-handle=extend]::after{content:"+"}
 .dg-h[data-handle=walkout],.dg-h[data-handle=walkin]{width:13px;height:13px;border-radius:3px;background:#e2e8f0;border:2px dashed #475569;cursor:grab;box-shadow:0 1px 3px rgba(0,0,0,.5)}
-.dg-h[data-handle=flykey]{width:20px;height:20px;border-radius:6px;background:#0284c7;border:2px solid #fff;color:#fff;font:800 11px/16px Inter,system-ui,sans-serif;text-align:center;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.dg-h[data-handle=flykey]{width:22px;height:22px;border-radius:50%;background:#f2f2ee;border:0;color:#1a1a1a;font:800 11.5px/22px Inter,system-ui,sans-serif;text-align:center;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 .dg-h[data-handle=flykey]::after{content:attr(data-n)}
 /* (a keyframe's camera over the + between two, when they're close: it's the one to take hold of) */
 .dg-h[data-handle=flykey]{z-index:2}
-.dg-h[data-handle=flyfoot]{width:12px;height:12px;border-radius:50%;background:#e0f2fe;border:2px solid #0284c7;cursor:move;box-shadow:0 1px 3px rgba(0,0,0,.5)}
-.dg-h[data-handle=flylook]{width:12px;height:12px;border-radius:50%;border:2.5px solid #38bdf8;background:rgba(15,23,42,.35);cursor:grab}
-.dg-h[data-handle=flykey][data-on]{background:#f97316;width:24px;height:24px;font-size:12.5px;line-height:20px;box-shadow:0 0 0 3px rgba(249,115,22,.35),0 1px 4px rgba(0,0,0,.5)}
-.dg-h[data-handle=flylook][data-on]{border-color:#f97316}
+.dg-h[data-handle=flyfoot]{width:12px;height:12px;border-radius:50%;background:#f2f2ee;border:2px solid #52525b;cursor:move;box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.dg-h[data-handle=flylook]{width:12px;height:12px;border-radius:50%;border:2.5px solid #f2f2ee;background:rgba(15,23,42,.35);cursor:grab}
+.dg-h[data-handle=flykey][data-on]{background:#a2cf6a;color:#1f2c12;width:26px;height:26px;font-size:12.5px;line-height:26px;box-shadow:0 0 0 3px rgba(162,207,106,.35),0 1px 4px rgba(0,0,0,.5)}
+.dg-h[data-handle=flylook][data-on]{border-color:#a2cf6a}
 .dg-h[data-handle=flyadd]{width:16px;height:16px;border-radius:50%;background:rgba(2,132,199,.85);border:2px solid #fff;cursor:copy;display:flex;align-items:center;justify-content:center;font:800 13px/1 Inter,sans-serif;color:#fff;opacity:.8;box-shadow:0 1px 3px rgba(0,0,0,.5)}.dg-h[data-handle=flyadd]::after{content:"+"}.dg-h[data-handle=flyadd]:hover{opacity:1}
 .dg-h[data-handle=mid]{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.6);border:2px solid #0891b2;cursor:copy}
 .dg-h[data-handle=mid][data-kind=line]{border-color:#f59e0b}
@@ -2023,6 +2023,24 @@ export class CourseView {
     return this.fly ? clamp(this.fly.t / this.fly.play, 0, 1) : null;
   }
 
+  /** A flyover's clock as it plays: seconds in (0 while its title holds) and how long it plays. */
+  flyClock(): { t: number; play: number } | null {
+    return this.fly ? { t: clamp(this.fly.t, 0, this.fly.play), play: this.fly.play } : null;
+  }
+
+  /** The flyover playing jumped to `t` seconds in (its timeline's playhead dragged). */
+  flySeek(t: number) {
+    if (!this.fly) return;
+    this.fly.t = clamp(t, 0, this.fly.play);
+    if (this.flyWait) { this.flyWait = null; this.cb.onFlyWait(null); }
+    this.invalidate();
+  }
+
+  /** How long a hole's flyover plays (s), or null if it can't fly yet. */
+  flyLength(holeId: string): number | null {
+    return this.flightPath(holeId)?.play ?? null;
+  }
+
   // ------------------------------------------------------------------ flyover videos
 
   /** Records flyovers of the holes, one after another, to a video file: rendered offline, frame by
@@ -3591,13 +3609,13 @@ export class CourseView {
         // (the flight where it flies, at its own heights; its shadow on the ground; and each
         // keyframe's camera on a stem from the ground, looking where it looks)
         if (f) {
-          g.add(this.fatLine(f.cam.map(c => new THREE.Vector3(c.x, c.z, c.y)), "#38bdf8", 3, { order: 9 }));
-          g.add(this.fatLine(this.drapeLine(f.cam.map(c => ({ x: c.x, y: c.y })), 0.6), "#38bdf8", 1.5, { order: 8, dashed: 8, opacity: 0.55 }));
+          g.add(this.fatLine(f.cam.map(c => new THREE.Vector3(c.x, c.z, c.y)), "#f2f2ee", 3, { order: 9 }));
+          g.add(this.fatLine(this.drapeLine(f.cam.map(c => ({ x: c.x, y: c.y })), 0.6), "#f2f2ee", 1.5, { order: 8, dashed: 8, opacity: 0.55 }));
         }
         for (const k of keys) {
           const ground = this.h(k.x, k.y), air = new THREE.Vector3(k.x, ground + k.alt, k.y);
-          g.add(this.fatLine([new THREE.Vector3(k.x, ground + 0.3, k.y), air], "#e0f2fe", 1.5, { opacity: 0.85, order: 9, dashed: 4 }));
-          g.add(this.fatLine([air, new THREE.Vector3(k.lookX, this.h(k.lookX, k.lookY) + 3, k.lookY)], "#38bdf8", 1.2, { opacity: 0.6, order: 8 }));
+          g.add(this.fatLine([new THREE.Vector3(k.x, ground + 0.3, k.y), air], "#d4d4d8", 1.5, { opacity: 0.85, order: 9, dashed: 4 }));
+          g.add(this.fatLine([air, new THREE.Vector3(k.lookX, this.h(k.lookX, k.lookY) + 3, k.lookY)], "#f2f2ee", 1.2, { opacity: 0.6, order: 8 }));
         }
         return g;
       });

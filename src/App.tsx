@@ -383,6 +383,8 @@ export default function App() {
         // other holes, and Esc back to the map)
         const picked = (!!s.selectedId && !getDoc().holes.some(h => h.id === s.selectedId)) || s.group.length > 0;
         const mapKey = e.key === "Escape" ? picked || s.tool !== "select" : !e.key.startsWith("Arrow") || picked;
+        // (Space plays the flyover, and stops it, as a video player's does)
+        if (e.key === " " && s.teeView !== STAND_HERE && !s.flyCam && !picked && !e.repeat) { e.preventDefault(); s.set({ flyover: !s.flyover }); return; }
         if (!(editing && mapKey)) {
         // (Esc stops a flight first, back at the tee; then leaves the tee view)
         if (e.key === "Escape") s.set(s.flyover ? { flyover: false } : { teeView: null, flyover: false });
@@ -525,7 +527,9 @@ export default function App() {
           {(ed.step === "map" || ed.step === "export") && !ed.teeView && <MapDesigner preview={ed.step === "export"} />}
           {ed.step === "design" && !readOnly && !ed.teeView && <HolesColumn />}
           {ed.step === "design" && !readOnly && <ProblemsPanel />}
-          {ed.step === "design" || ed.step === "site" ? !readOnly && <Toolbar /> : null}
+          {/* (from a tee, only in Tap mode Select: walking, playing a flyover and editing its camera path
+              draw nothing) */}
+          {(ed.step === "design" || ed.step === "site") && !(ed.teeView && (ed.flyCam || ed.flyover || ed.standTap !== "edit")) ? !readOnly && <Toolbar /> : null}
           {ed.step === "design" && !readOnly && <Inspector />}
           {ed.teeView && (ed.flyCam && !readOnly ? <CameraHud /> : <TeeViewHud />)}
           <ExportProgressPill />

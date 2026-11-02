@@ -57,7 +57,7 @@ test("record a hole's flyover from the Export step: progress, then a real video 
   await page.getByRole("button", { name: "4 Export" }).click();
   const section = page.getByTestId("video-export");
   await section.getByTestId("video-holes").selectOption({ label: "Hole 1" });
-  await expect(section.getByTestId("video-record")).toHaveText(/Record hole 1/);
+  await expect(section.getByTestId("video-record")).toHaveText(/Export video of hole 1/);
   const downloading = page.waitForEvent("download", { timeout: 380_000 });
   await section.getByTestId("video-record").click();
   // The progress bar (in the banner at the top of the step) moves while the frames are made, and
@@ -112,7 +112,7 @@ test("cancel stops a recording, and leaving the Export step doesn't", async ({ p
   let downloads = 0;
   page.on("download", () => downloads++);
   await page.getByRole("button", { name: "4 Export" }).click();
-  await expect(page.getByTestId("video-record")).toHaveText(/Record the course/);
+  await expect(page.getByTestId("video-record")).toHaveText(/Export video of the course/);
   await page.getByTestId("video-record").click();
   await expect.poll(async () => Number(await page.getByTestId("video-progress").getAttribute("aria-valuenow")), { timeout: 60_000 }).toBeGreaterThan(1);
   // Off to another step: the recording goes on, shown over the map

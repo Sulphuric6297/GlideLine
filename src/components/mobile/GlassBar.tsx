@@ -7,6 +7,8 @@
 // what's open without drawing on it; the row slides sideways when it holds more than fits, with +N
 // saying how many are past the edge, and opens where it was last left. While a finger works on the
 // map the bar fades almost away (`faded`). Held sideways (`side`), it stands up the right edge.
+// Beside the pill it can carry a `line` (a flyover's timeline); `tucked`, only that line shows. On a
+// computer it's `center`ed along the bottom of its box, its menus over their buttons there too.
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react";
 import { MenuRows } from "../ui";
@@ -26,6 +28,10 @@ export type BarSetting = {
   on?: boolean;
   /** An action's icon, in its lit disc (an action reads as one: it does something at once). */
   icon?: ReactNode;
+  /** Can't be used just now (dimmed). */
+  disabled?: boolean;
+  /** Its tooltip (a computer: what it does, its key). */
+  title?: string;
   testid?: string;
 };
 
@@ -35,6 +41,8 @@ export type BarPill = {
   icon?: ReactNode;
   /** A hole's arrows to the holes either side. */
   prev?: () => void;
+  /** ‹ back to what came before (a hole's flyover: the hole's own settings). */
+  back?: () => void;
   next?: () => void;
   testid?: string;
 };
@@ -107,9 +115,16 @@ type Props = {
   /** Where the bar came from: the button tapped in the step's row, its pill rising out of it and
    * its settings sliding in, as one motion. */
   from?: DOMRect | null;
+  /** Beside the pill, the rest of its line: a flyover's timeline. */
+  line?: ReactNode;
+  /** Only the line, the pill and the row put away (a flyover playing, left alone). */
+  tucked?: boolean;
+  /** Centred along the bottom, at most this wide (a computer), `inset` from the left (a panel there). */
+  center?: number;
+  inset?: number;
 };
 
-export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want, from }: Props) {
+export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want, from, line, tucked = false, center, inset = 0 }: Props) {
   const [open, setOpen] = useState<Open>(null);
   const [stack, setStack] = useState<{ title: string; node: ReactNode }[]>([]);
   const [closing, setClosing] = useState(false);
@@ -205,21 +220,30 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   const deep = stack[stack.length - 1];
 
   // Where what's open sits: grown out of its button, just above the bar (the pill's above the pill)
-  const W = typeof window !== "undefined" ? window.innerWidth : 400;
+  const host = boxRef.current?.parentElement?.getBoundingClientRect();
+  const W = host?.width ?? (typeof window !== "undefined" ? window.innerWidth : 400);
+  const hostLeft = host?.left ?? 0;
+  // (centred: a wide one as wide as the bar, from its left edge; the pill's from there too)
+  const barBox = center && boxRef.current ? boxRef.current.getBoundingClientRect() : null;
+  const barLeft = barBox ? barBox.left - hostLeft : 10, barW = barBox ? barBox.width : W - 20;
   const wide = !!open && open.wide;
-  const width = side ? 300 : wide ? W - 20 : Math.min(W - 20, 300);
-  // (a menu over its button; the pill's from the left edge, over the pill)
-  const left = !open ? 10 : side ? undefined : wide || open.pill ? 10 : Math.max(10, Math.min(W - 10 - width, open.from.left + open.from.width / 2 - width / 2));
-  const origin = open ? (side ? "right center" : `${Math.round(open.from.left + open.from.width / 2 - (left ?? 0))}px bottom`) : undefined;
+  const width = side ? 300 : wide ? barW : Math.min(barW, 300);
+  // (a menu over its button; the pill's from the bar's left edge, over the pill)
+  const fromX = open ? open.from.left - hostLeft : 0;
+  const left = !open ? barLeft : side ? undefined : wide || open.pill ? barLeft : Math.max(10, Math.min(W - 10 - width, fromX + open.from.width / 2 - width / 2));
+  const origin = open ? (side ? "right center" : `${Math.round(fromX + open.from.width / 2 - (left ?? 0))}px bottom`) : undefined;
   const rowH = 64, gap = 8, pillH = 44;
-  const panelBottom = side ? undefined : bottom + kb + 18 + rowH + gap + (open?.pill ? pillH + gap : 0);
+  // (no settings, only the line: the pill, the line and ✓ along the foot)
+  const noRow = !side && !replace && !settings.length && !!line;
+  const panelBottom = side ? undefined : noRow ? bottom + kb + 18 + pillH + gap : bottom + kb + 18 + rowH + gap + (open?.pill ? pillH + gap : 0);
 
   const pillEl = (
     <div ref={pillRef} className={`flex items-center h-11 rounded-full border shadow-xl transition-opacity duration-200 ${open && !open.pill ? "opacity-0 pointer-events-none" : ""} ${open?.pill ? "bg-zinc-100 border-transparent text-zinc-900" : "glass border-white/10 text-zinc-50"}`} data-testid={pill.testid ?? "bar-pill"}>
       {pill.prev && <button className="w-10 h-11 flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole before" onClick={pill.prev} data-testid="hole-prev"><ChevronLeft size={19} /></button>}
-      <button className={`h-11 ${pill.prev ? "px-1" : "pl-3.5"} pr-3 flex items-center gap-2 rounded-full min-w-0 ${side ? "flex-1 justify-center !px-2 gap-1" : "max-w-[calc(100vw-120px)]"} focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`}
-        aria-haspopup={pillMenu ? "menu" : undefined} aria-expanded={!!open?.pill} disabled={!pillMenu}
-        onClick={e => pillMenu && toggle("pill", e.currentTarget, pillWide, true)} data-testid="pill-open">
+      {pill.back && <button className="w-10 h-11 -mr-1 flex items-center justify-center text-orange-300 rounded-full active:bg-white/10" aria-label="Back" onClick={pill.back} data-testid="pill-back"><ChevronLeft size={20} /></button>}
+      <button className={`h-11 ${pill.prev || pill.back ? "px-1" : "pl-3.5"} pr-3 flex items-center gap-2 rounded-full min-w-0 ${side ? "flex-1 justify-center !px-2 gap-1" : "max-w-[calc(100vw-120px)]"} focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`}
+        aria-haspopup={pillMenu ? "menu" : undefined} aria-expanded={!!open?.pill} disabled={!pillMenu && !pill.back}
+        onClick={e => (pillMenu ? toggle("pill", e.currentTarget, pillWide, true) : pill.back?.())} data-testid="pill-open">
         {pill.icon && !side && <span className={`shrink-0 flex ${open?.pill ? "" : "text-orange-300"}`}>{pill.icon}</span>}
         <span className="text-[15px] font-bold truncate" data-testid="sheet-title">{pill.name}</span>
         {pill.small && !side && <span className={`text-[12.5px] truncate ${open?.pill ? "text-zinc-600" : "text-zinc-400"}`}>· {pill.small}</span>}
@@ -245,10 +269,10 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
           // (an action: lit, its icon in a disc; a menu or dial: ⌄ after what it's set to)
           const act = !!s.run && !sw;
           return (
-            <button key={s.id} data-setting={s.id} data-testid={s.testid ?? `strip-${s.id}`}
+            <button key={s.id} data-setting={s.id} data-testid={s.testid ?? `strip-${s.id}`} disabled={s.disabled} title={s.title}
               aria-expanded={s.control ? on : undefined} aria-pressed={sw ? s.on : undefined}
               onClick={e => (s.run ? (close(), s.run()) : s.control ? toggle(s.id, e.currentTarget, !!s.wide) : undefined)}
-              className={`group shrink-0 h-[50px] ${side ? "w-full justify-center text-center" : "text-left"} ${act && s.icon && !side ? "pl-1.5 pr-3" : "px-3"} rounded-[18px] flex items-center gap-2 transition-[background-color,transform] duration-100 active:scale-[0.97] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "bg-zinc-100 text-zinc-900" : act ? "text-orange-300 active:bg-orange-300/10" : "text-zinc-50 active:bg-white/[0.1]"}`}>
+              className={`group shrink-0 h-[50px] ${side ? "w-full justify-center text-center" : "text-left"} ${act && s.icon && !side ? "pl-1.5 pr-3" : "px-3"} rounded-[18px] flex items-center gap-2 transition-[background-color,transform,opacity] duration-100 active:scale-[0.97] disabled:opacity-40 disabled:active:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "bg-zinc-100 text-zinc-900" : act ? "text-orange-300 active:bg-orange-300/10" : "text-zinc-50 active:bg-white/[0.1]"}`}>
               {act && s.icon && !side && <Disc tint>{s.icon}</Disc>}
               <span className={`flex flex-col justify-center ${side ? "items-center" : "items-start"}`}>
                 <span className={`text-[11px] font-semibold leading-none whitespace-nowrap ${on ? "text-zinc-600" : act ? "text-orange-300/80" : "text-zinc-400"}`}>{s.name}</span>
@@ -289,10 +313,16 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
         </div>
       )}
       {/* (only the pill and the row take a touch: the room kept for the drawing's buttons doesn't) */}
-      <div ref={boxRef} className={`absolute z-[35] pointer-events-none [&>*]:pointer-events-auto transition-opacity duration-200 ${faded ? "opacity-[0.14]" : ""} ${side ? "right-3 top-3 bottom-3 flex flex-col gap-2 items-stretch w-[98px]" : "left-2.5 right-2.5 flex flex-col gap-2 items-start"}`}
-        style={side ? undefined : { bottom: bottom + kb + 18 }} data-testid={testid}>
-        {pillEl}
-        <div className={`${side ? "flex-1 min-h-0" : "w-full"} ${replace !== undefined ? "!pointer-events-none" : ""}`}>{row}</div>
+      <div ref={boxRef} className={`absolute z-[35] pointer-events-none [&>*]:pointer-events-auto transition-opacity duration-200 ${faded ? "opacity-[0.14]" : ""} ${side ? "right-3 top-3 bottom-3 flex flex-col gap-2 items-stretch w-[98px]" : `${center ? "" : "left-2.5 right-2.5"} flex flex-col gap-2 items-start`}`}
+        style={side ? undefined : center ? { bottom: bottom + kb + 18, left: `calc(50% + ${inset / 2}px)`, width: `min(${center}px, calc(100% - ${20 + inset}px))`, transform: "translateX(-50%)" } : { bottom: bottom + kb + 18 }} data-testid={testid}>
+        {tucked && line ? (
+          <div className="w-full flex justify-center dg-fade-in"><div className="w-[min(360px,100%)]">{line}</div></div>
+        ) : (
+          <>
+            {line && !side ? <div className="w-full flex items-center gap-2"><div className="shrink-0">{pillEl}</div><div className="flex-1 min-w-0">{line}</div>{noRow && doneEl}</div> : pillEl}
+            {!noRow && <div className={`${side ? "flex-1 min-h-0" : "w-full"} ${replace !== undefined ? "!pointer-events-none" : ""}`}>{row}</div>}
+          </>
+        )}
       </div>
     </BarNav.Provider>
   );

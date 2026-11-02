@@ -1,24 +1,29 @@
-// What shows over the view from the tee or a flyover: the hole's numbers and the controls.
+// What shows over tee view and a flyover: the hole's card, View, Tap mode, and the flyover's bar (the
+// map's glass bar, mobile/GlassBar): the hole's name with the holes either side and its menu, the
+// flyover's timeline beside it, and every flyover setting in its row; ✓ back to the map. The same on
+// a phone and a computer (centred along the bottom there, its keys in the tips). While a flyover
+// plays the card goes, and left alone for a few seconds the bar folds to just its timeline.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clapperboard, Footprints, Home, Maximize2, Minimize2, MoreHorizontal, Pencil, Plane, Settings2, Square, Video, X } from "lucide-react";
+import { ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Video, X, ChevronDown } from "lucide-react";
 import { useAllowed } from "../auth/perms";
 import { STAND_HERE, TEE_LEVELS } from "../constants";
-import { activeLayout, holeLabel } from "../lib/course";
+import { activeLayout } from "../lib/course";
 import { courseStats, holeStats } from "../lib/holeStats";
 import { fmtDist, fmtElev } from "../lib/units";
-import { useCourse, useEditor } from "../state/course";
-import { select } from "../state/actions";
+import { updateHole, useCourse, useEditor } from "../state/course";
 import { useExportJob } from "../state/exportJob";
 import { recordVideo, useVideoSettings } from "../state/video";
 import { VIDEO_SIZES } from "../lib/video";
 import type { Hole, TeeItem } from "../types";
 import { ElevationProfile } from "./ElevationProfile";
 import { SceneButton } from "./ScenePanel";
-import { cameraFrom, HoleFlight } from "./FlyoverSettings";
-import { HelpLink } from "./ui";
+import { cameraFrom } from "./FlyoverSettings";
+import { FlightLine, TapModes, retimeKeys, useFlight, useFlyoverSettings } from "./FlyoverBar";
+import { askHelp } from "./ui";
 import { getView } from "../state/view";
 import { useSelection } from "./Inspector";
 import { useToolbarRoom } from "./Toolbar";
+import { ActRow, GlassBar } from "./mobile/GlassBar";
 
 /** While a flyover waits for its pictures: the hole's name and numbers and a thin moving bar,
  * over the view (shown at once; it fades as the flight begins), and Cancel (it covers the bar
@@ -29,7 +34,7 @@ function FlyoverLoading({ title, facts, on, stage, onCancel }: { title: string; 
   const [secs, setSecs] = useState(0);
   useEffect(() => { setSecs(0); const t0 = performance.now(); const t = window.setInterval(() => setSecs(Math.round((performance.now() - t0) / 1000)), 1000); return () => window.clearInterval(t); }, [stage]);
   return (
-    <div className={`absolute inset-0 z-30 flex flex-col items-center justify-center bg-zinc-950 transition-opacity duration-300 ${on ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`} data-testid="flyover-loading" role="status" aria-live="polite">
+    <div className={`absolute inset-0 z-[40] flex flex-col items-center justify-center bg-zinc-950 transition-opacity duration-300 ${on ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`} data-testid="flyover-loading" role="status" aria-live="polite">
       <div className="text-xl font-semibold text-zinc-50 tracking-tight">{title}</div>
       <div className="mt-1 text-sm text-zinc-400">{facts}</div>
       <div className="mt-6 w-40 h-0.5 rounded-full bg-white/[0.07] overflow-hidden">
@@ -41,35 +46,30 @@ function FlyoverLoading({ title, facts, on, stage, onCancel }: { title: string; 
   );
 }
 
-/** The hole's Flyover panel over the view, as in the hole's panel. (The ground is in View, beside it.) */
-function SettingsBox({ hole }: { hole: Hole }) {
-  const doc = useCourse(s => s.doc);
-  return (
-    <>
-      <div className="flex items-center gap-1.5 text-sm font-semibold text-zinc-100 mb-2">Flyover · Hole {holeLabel(doc, hole.id)} <HelpLink topic="flyover" label="Flyover" /></div>
-      <HoleFlight hole={hole} />
-    </>
-  );
-}
-
-// (the settings closed again once the tee view is left; kept in the editor so the Export step can
-// open the view with them up)
-useEditor.subscribe((s, p) => { if (!s.teeView && p.teeView && s.teeSettings) s.set({ teeSettings: false }); });
+/** The bar's height as it rests (the pill's line over the row), for what sits above it. */
+const BAR_H = 44 + 8 + 64 + 18;
 
 export function TeeViewHud({ compact = false }: { compact?: boolean }) {
+  const doc = useCourse(s => s.doc);
+  const teeView = useEditor(e => e.teeView);
+  if (teeView === STAND_HERE) return <StandHere compact={compact} />;
+  const hole = doc.holes.find(h => h.id === teeView);
+  if (!hole) return null;
+  return <HoleHud key={hole.id} hole={hole} compact={compact} />;
+}
+
+function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const doc = useCourse(s => s.doc);
   const ed = useEditor();
   const job = useExportJob(s => s.job);
   const video = useVideoSettings();
-  const hole = doc.holes.find(h => h.id === ed.teeView);
   // (from another tee of the hole: its own numbers, as the layout with that tee would play it)
-  const viewed = ed.teeViewTee ? doc.items.find((i): i is TeeItem => i.id === ed.teeViewTee && i.type === "tee" && i.holeId === hole?.id) : undefined;
-  const s = useMemo(() => (hole ? holeStats(doc, hole, viewed ? { ...activeLayout(doc), tee: viewed.level } : undefined) : null), [doc, hole, viewed]);
-  const camera = !!ed.teeSettings;
-  const setCamera = (f: (c: boolean) => boolean) => ed.set({ teeSettings: f(camera) });
-  // (view only: no camera settings to change; a video only for those who may have downloads)
+  const viewed = ed.teeViewTee ? doc.items.find((i): i is TeeItem => i.id === ed.teeViewTee && i.type === "tee" && i.holeId === hole.id) : undefined;
+  const s = useMemo(() => holeStats(doc, hole, viewed ? { ...activeLayout(doc), tee: viewed.level } : undefined), [doc, hole, viewed]);
+  // (view only: nothing to change; a video only for those who may have downloads)
   const readOnly = useCourse(c => c.readOnly);
   const mayRecord = useAllowed("downloads");
+  const playing = ed.flyover;
   // The loading screen while the view says the flight is waiting, and from the very moment a
   // flyover is asked for until the view has said anything (two seconds at most)
   const [bridge, setBridge] = useState(false);
@@ -88,17 +88,61 @@ export function TeeViewHud({ compact = false }: { compact?: boolean }) {
     const t = window.setTimeout(() => setShowLoading(false), 320);
     return () => window.clearTimeout(t);
   }, [waiting]);
-  const editing = !ed.flyover && !readOnly && !compact;
+  // (a computer: the side panel beside the view when something is picked, the drawing tools under
+  // it in Tap mode Select)
+  const editing = !playing && !readOnly && !compact;
   const panel = useSelection().open;
   const toolbar = useToolbarRoom(r => r.height);
-  // (a phone: the card slim until tapped, its profile and notes then; the rarer buttons under More)
+  const select = useEditor(e => e.standTap === "edit");
+  const toolsUp = editing && select;
+  // (a phone, a thing picked: its own bar in the flyover bar's place)
+  const sheetUp = compact && !readOnly && !playing && !!ed.selectedId && doc.items.some(i => i.id === ed.selectedId);
   const [cardOpen, setCardOpen] = useState(false);
-  const [more, setMore] = useState(false);
-  if (ed.teeView === STAND_HERE) return <StandHere compact={compact} editing={editing} toolbar={toolbar} />;
-  if (!hole || !s) return null;
-  const loading = (showLoading || waiting) && ed.flyover ? <FlyoverLoading on={waiting} stage={ed.flyLoading} onCancel={() => ed.set({ flyover: false })} title={`Hole ${s.label}${hole.name ? ` · ${hole.name}` : ""}`} facts={`${fmtDist(s.length, doc.units)} · Par ${s.par}${s.elevationChange ? ` · ${fmtElev(s.elevationChange, doc.units)}` : ""}`} /> : null;
-  // (a video's progress: none while the map is painted or a hole sharpened)
+  // The flyover's timeline: its keyframes (a custom camera path), the playhead as it plays
+  const flight = useFlight(hole);
+  const picked = flight.keys ? Math.min(ed.flyKey ?? 0, flight.keys.length - 1) : null;
+  const [at, setAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (!playing) { setAt(null); return; }
+    let raf = 0, last = 0;
+    const tick = (now: number) => {
+      if (now - last > 90) { last = now; setAt(getView()?.flyClock()?.t ?? 0); }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
+  // Left alone while it plays, the bar folds to its timeline; a touch, a move of the mouse or a key
+  // brings it back (not while a menu or dial is open). The touch that brings it back does only that:
+  // it doesn't also press what comes up under the finger (the timeline, still there, works at once)
+  const [idle, setIdle] = useState(false);
+  const idleNow = useRef(false);
+  idleNow.current = idle;
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!playing) { setIdle(false); return; }
+    let t = window.setTimeout(() => setIdle(true), 3000);
+    const wake = (e: Event) => {
+      if (idleNow.current && e.type === "pointerdown" && !(e.target as HTMLElement | null)?.closest?.('[data-testid="fly-line"]')) {
+        const swallow = (c: Event) => { c.preventDefault(); c.stopPropagation(); };
+        window.addEventListener("click", swallow, { capture: true, once: true });
+        window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 600);
+      }
+      setIdle(false); window.clearTimeout(t); t = window.setTimeout(() => setIdle(true), 3000);
+    };
+    window.addEventListener("pointerdown", wake, true);
+    window.addEventListener("pointermove", wake, true);
+    window.addEventListener("keydown", wake, true);
+    return () => { window.clearTimeout(t); window.removeEventListener("pointerdown", wake, true); window.removeEventListener("pointermove", wake, true); window.removeEventListener("keydown", wake, true); };
+  }, [playing]);
+  const tucked = playing && idle && !menuOpen;
+  // (a few seconds' hint on what a tap does, as tool hints have, as tee view or Tap mode starts)
+  const [hint, setHint] = useState(true);
+  useEffect(() => { setHint(true); const t = window.setTimeout(() => setHint(false), 4500); return () => window.clearTimeout(t); }, [select]);
+  const record = () => void recordVideo([hole.id]);
   const recPct = job?.kind === "video" && job.progress !== null ? `${Math.round(job.progress * 100)}%` : null;
+  const all = useFlyoverSettings(hole, { exportVideo: mayRecord ? record : undefined });
+  const settings = (readOnly ? all.filter(x => x.id === "export") : all).map(x => (x.id === "export" ? { ...x, disabled: !!job, value: job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : x.value } : x));
   const stats = courseStats(doc);
   const done = doc.holes.filter((_, k) => stats[k].complete);
   const i = done.findIndex(h => h.id === hole.id);
@@ -107,29 +151,47 @@ export function TeeViewHud({ compact = false }: { compact?: boolean }) {
     if (next) ed.set({ teeView: next.id, teeViewTee: null, flyover: ed.flyover });
   };
   const lvl = TEE_LEVELS[s.level];
-  // (beside the big number: the hole's name, or the tee it's seen from)
-  // (standing away from the tee: how far the basket is from there)
+  // (beside the big number: the hole's name, or the tee it's seen from; standing away from the tee,
+  // how far the basket is from there)
   const basket = ed.teeStand && s.basketId ? doc.items.find(i => i.id === s.basketId) : undefined;
   const sub = basket && ed.teeStand ? `${fmtDist(Math.hypot(basket.x - ed.teeStand.x, basket.y - ed.teeStand.y), doc.units)} to the basket` : hole.name || `${lvl.label} tee`;
-  const hint = !ed.flyover && !camera && !job;
+  const loading = (showLoading || waiting) && ed.flyover ? <FlyoverLoading on={waiting} stage={ed.flyLoading} onCancel={() => ed.set({ flyover: false })} title={`Hole ${s.label}${hole.name ? ` · ${hole.name}` : ""}`} facts={`${fmtDist(s.length, doc.units)} · Par ${s.par}${s.elevationChange ? ` · ${fmtElev(s.elevationChange, doc.units)}` : ""}`} /> : null;
+
+  const pillMenu = (
+    <div className="flex flex-col gap-0.5">
+      {ed.teeStand && !playing && <ActRow icon={<Home size={18} />} label="Return to tee" hint="Back where the hole starts" onClick={() => ed.set({ teeStand: null })} testid="hud-to-tee" />}
+      {mayRecord && !job && <ActRow icon={<Clapperboard size={18} />} label="Export video" hint={`${VIDEO_SIZES[video.resolution].label} · ${video.fps} fps`} onClick={record} testid="hud-record" />}
+      {!readOnly && <ActRow icon={<Video size={18} />} label="Edit camera path" hint="Move the camera yourself and set keyframes" onClick={() => cameraFrom(hole.id, null)} testid="hud-freecam" />}
+      <ActRow icon={<HelpCircle size={18} />} label="Flyover help" hint="How flyovers and camera paths work" onClick={() => askHelp("flyover")} testid="hud-help" />
+    </div>
+  );
+  const retime = (k: number, t: number, end: boolean) => {
+    if (!flight.keys) return;
+    updateHole(hole.id, { flyKeys: retimeKeys(flight.keys, flight.times, k, t) }, false);
+    if (end) useCourse.getState().commit();
+  };
+  const line = (
+    <FlightLine playing={playing} onPlay={() => ed.set({ flyover: true })} onStop={() => ed.set({ flyover: false })} length={flight.length} at={playing ? at : null}
+      keys={flight.keys ? flight.times : undefined} picked={picked} onPick={k => ed.set({ flyKey: k })} onRetime={readOnly ? undefined : retime} onScrub={playing ? t => { setAt(t); getView()?.flySeek(t); } : undefined} />
+  );
+  const many = done.length > 1;
+  // (a computer: along the foot of the view, over the drawing tools when they're up)
+  const base = compact ? 0 : toolsUp ? toolbar + 6 : 0;
+  const bar = !sheetUp && (
+    <GlassBar remember="flyover" pill={{ name: `Hole ${s.label}`, prev: many ? () => go(-1) : undefined, next: many ? () => go(1) : undefined, testid: "flyover-pill" }}
+      pillMenu={pillMenu} settings={settings} line={line} tucked={tucked} onDone={() => ed.set({ teeView: null, flyover: false })} doneLabel="Done: back to the map"
+      center={compact ? undefined : 1010} inset={!compact && editing && panel ? 376 : 0} bottom={base} onOpen={id => setMenuOpen(!!id)} testid="tee-bar" />
+  );
+  const wide = typeof window !== "undefined" && window.innerWidth >= 1290;
+  const taps = !readOnly && !playing && !menuOpen && (compact ? <TapModes bottom={BAR_H + 12} /> : <TapModes bottom={base + (wide ? 18 : BAR_H + 12)} right={16} />);
+  const hintText = select ? (compact ? "Tap to select · drag to look" : "Click something to select it · drag to look around · Esc back to the map") : compact ? "Tap to walk · drag to look" : `Click the ground to walk · drag to look around${many ? " · ← → other holes" : ""} · Space plays the flyover`;
+
   if (compact) {
-    // A phone: the hole's card across the top, big buttons along the bottom (thumb's reach)
-    // (a thing picked: its sheet is up in the bar's place)
-    const sheetUp = !readOnly && !ed.flyover && !!ed.selectedId && doc.items.some(i => i.id === ed.selectedId);
-    const bar = "flex-1 min-w-0 h-14 rounded-2xl flex flex-col items-center justify-center gap-1 whitespace-nowrap " + (ed.teeStand ? "text-[11px]" : "text-[12px]") + " font-semibold text-white active:bg-white/15 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400";
-    // (the flyover's settings and the View panel: icon over label, as along the bottom; in the
-    // card, or by themselves at the top right while it flies, the card hidden)
-    const tiles = (
-      <div className="flex items-center gap-1.5 shrink-0">
-        {!readOnly && <button className={`w-14 h-11 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[12px] font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${camera && !sheetUp ? "bg-white/15" : "bg-white/[0.07] active:bg-white/15"}`} onClick={() => { if (sheetUp) { select(null); setCamera(() => true); } else setCamera(c => !c); }} aria-pressed={camera && !sheetUp} data-testid="hud-settings"><Settings2 size={17} /><span className="leading-none">Flyover</span></button>}
-        <SceneButton label="View" />
-      </div>
-    );
     return (
       <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui>
         {loading}
-        {ed.teeCardHidden && !ed.flyover && <CardChip label={s.label} color={lvl.color} ink={lvl.ink} big />}
-        <div className={`absolute left-2 right-2 top-[max(8px,env(safe-area-inset-top))] pointer-events-auto glass rounded-2xl px-3 py-2.5 text-white shadow-2xl border border-white/10 max-w-[420px] ${ed.flyover || ed.teeCardHidden ? "hidden" : ""}`} data-testid="tee-view-hud">
+        {ed.teeCardHidden && !playing && <CardChip label={s.label} color={lvl.color} ink={lvl.ink} big />}
+        <div className={`absolute left-2 right-[66px] top-[max(8px,env(safe-area-inset-top))] pointer-events-auto glass rounded-[24px] px-3 py-2.5 text-white shadow-2xl border border-white/10 max-w-[420px] ${playing || ed.teeCardHidden ? "hidden" : ""}`} data-testid="tee-view-hud">
           <div className="flex items-center gap-3">
             {/* (a tap on the hole's number and numbers opens its profile and notes; again, closes them) */}
             <button className="flex-1 min-w-0 flex items-center gap-3 text-left focus:outline-none" onClick={() => setCardOpen(o => !o)} aria-expanded={cardOpen} data-testid="hud-card-open">
@@ -140,37 +202,15 @@ export function TeeViewHud({ compact = false }: { compact?: boolean }) {
                 <div className="text-[13px] text-zinc-300 flex items-center gap-1">{fmtElev(s.elevationChange, doc.units)} · plays like {fmtDist(s.playsLike, doc.units)} <ChevronDown size={14} className={`transition-transform ${cardOpen ? "rotate-180" : ""}`} /></div>
               </div>
             </button>
-            {!ed.flyover && tiles}
             <HideCard big />
           </div>
           {cardOpen && <div className="mt-1.5"><ElevationProfile doc={doc} line={s.line} height={56} teeColor={lvl.color} /></div>}
           {cardOpen && hole.notes && <p className="text-[13px] text-zinc-200 mt-1 line-clamp-3">{hole.notes}</p>}
         </div>
-        {ed.flyover && <div className="absolute right-2 top-[max(8px,env(safe-area-inset-top))] pointer-events-auto glass rounded-2xl p-1.5 border border-white/10 shadow-2xl">{tiles}</div>}
-        {!sheetUp && !ed.flyover && <PhoneTapRow hint={hint} canEdit={!readOnly} />}
-        {/* Along the bottom, in thumb's reach: the holes either side, the flight (the big one), More
-        and Back; the rarer ones (back to the tee, a video, the camera) under More */}
-        {!sheetUp && <div className="absolute left-2 right-2 bottom-[max(8px,env(safe-area-inset-bottom))] pointer-events-auto flex items-center gap-1 glass rounded-[22px] p-1.5 border border-white/10 shadow-2xl">
-          <button className={`${bar} !flex-none w-12`} onClick={() => go(-1)} aria-label="Previous hole" data-testid="hud-prev"><ChevronLeft size={24} /></button>
-          <button className={`${bar} !flex-[1.6] !flex-row !gap-2 !text-[15px] ${ed.flyover ? "bg-orange-500" : "bg-white/[0.12]"}`} onClick={() => { setMore(false); ed.set({ flyover: !ed.flyover }); }} data-testid="hud-flyover">{ed.flyover ? <Square size={18} /> : <Plane size={20} />}<span>{ed.flyover ? "Stop" : "Fly over"}</span></button>
-          <button className={`${bar} !flex-none w-12`} onClick={() => go(1)} aria-label="Next hole" data-testid="hud-next"><ChevronRight size={24} /></button>
-          {(mayRecord || !readOnly || (ed.teeStand && !ed.flyover)) && <button className={`${bar} ${more ? "bg-white/15" : ""}`} onClick={() => setMore(m => !m)} aria-expanded={more} data-testid="hud-more"><MoreHorizontal size={22} /><span>{recPct ?? "More"}</span></button>}
-          <button className={bar} onClick={() => ed.set({ teeView: null, flyover: false })} data-testid="hud-close"><X size={20} /><span>Back</span></button>
-        </div>}
-        {more && !sheetUp && (
-          <div className="absolute right-2 bottom-[calc(max(8px,env(safe-area-inset-bottom))+80px)] pointer-events-auto glass rounded-2xl p-1.5 border border-white/10 shadow-2xl flex flex-col min-w-[200px]" data-testid="hud-more-menu">
-            {ed.teeStand && !ed.flyover && <button className={MENU_ITEM} onClick={() => { setMore(false); ed.set({ teeStand: null }); }} data-testid="hud-to-tee"><Home size={18} /> Back to the tee</button>}
-            {mayRecord && <button className={MENU_ITEM} onClick={() => { setMore(false); void recordVideo([hole.id]); }} disabled={!!job} data-testid="hud-record"><Clapperboard size={18} /> {job?.kind === "video" ? `Recording ${recPct ?? "…"}` : "Record a video"}</button>}
-            {!readOnly && <button className={MENU_ITEM} onClick={() => { setMore(false); cameraFrom(hole.id, null); }} data-testid="hud-freecam"><Video size={18} /> Camera: set its flight</button>}
-          </div>
-        )}
-        {/* (one panel at the bottom at a time: a thing picked, its sheet in the flyover's place; the
-            flyover's back when it's closed, or with the Flyover button, which lets the thing go) */}
-        {camera && !sheetUp && (
-          <div className="absolute left-2 right-2 bottom-[calc(max(8px,env(safe-area-inset-bottom))+80px)] pointer-events-auto glass rounded-2xl p-3 border border-white/10 shadow-2xl max-h-[45vh] overflow-y-auto dg-scroll">
-            <SettingsBox key={hole.id} hole={hole} />
-          </div>
-        )}
+        <div className="absolute right-2 top-[max(8px,env(safe-area-inset-top))] pointer-events-auto glass rounded-[20px] p-1 border border-white/10 shadow-2xl"><SceneButton label="View" /></div>
+        {hint && !playing && !sheetUp && !menuOpen && <div className="absolute z-[33] max-w-[calc(100%-96px)] px-3.5 py-1.5 rounded-full bg-black/45 text-[13px] font-semibold text-white/90 text-center whitespace-nowrap truncate pointer-events-none dg-fade-in" style={{ bottom: BAR_H + 12, left: "calc(50% - 28px)", transform: "translateX(-50%)" }} data-testid="tee-hint">{hintText}</div>}
+        {taps}
+        {bar}
       </div>
     );
   }
@@ -178,8 +218,8 @@ export function TeeViewHud({ compact = false }: { compact?: boolean }) {
     <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui>
       {loading}
       {/* (beside the side panel when something is picked there) */}
-      {ed.teeCardHidden && !ed.flyover && <div className={`absolute top-4 ${editing && panel ? "left-[388px]" : "left-4"}`}><CardChip label={s.label} color={lvl.color} ink={lvl.ink} /></div>}
-      <div className={`absolute top-4 pointer-events-auto glass backdrop-blur rounded-2xl px-4 py-3 text-white shadow-2xl border border-white/10 w-[280px] ${ed.flyover || ed.teeCardHidden ? "hidden" : ""} ${editing && panel ? "left-[388px]" : "left-4"}`} data-testid="tee-view-hud">
+      {ed.teeCardHidden && !playing && <div className={`absolute top-4 ${editing && panel ? "left-[388px]" : "left-4"}`}><CardChip label={s.label} color={lvl.color} ink={lvl.ink} /></div>}
+      <div className={`absolute top-4 pointer-events-auto glass backdrop-blur rounded-[24px] px-4 py-3 text-white shadow-2xl border border-white/10 w-[300px] ${playing || ed.teeCardHidden ? "hidden" : ""} ${editing && panel ? "left-[388px]" : "left-4"}`} data-testid="tee-view-hud">
         <div className="relative flex items-center gap-3">
           <div className="absolute -right-2 -top-1"><HideCard /></div>
           <div className="w-12 h-12 rounded-full flex items-center justify-center text-2xl font-bold" style={{ background: lvl.color, color: lvl.ink, fontFamily: "Oswald, Inter" }}>{s.label}</div>
@@ -193,40 +233,13 @@ export function TeeViewHud({ compact = false }: { compact?: boolean }) {
         {hole.notes && <p className="text-xs text-zinc-200 mt-1">{hole.notes}</p>}
       </div>
       {editing && <TeeMap big={ed.teeMap === "big"} off={ed.teeMap === "off"} />}
-      {/* (editing: above the toolbar) */}
-      <div className="absolute left-1/2 -translate-x-1/2 pointer-events-auto flex items-center gap-2 whitespace-nowrap glass backdrop-blur rounded-full px-2 py-1.5 border border-white/10 shadow-2xl" style={{ bottom: editing ? toolbar + 24 : 24 }}>
-        {ed.teeStand && !ed.flyover && <button className="px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5 text-white hover:bg-white/10" onClick={() => ed.set({ teeStand: null })} title="Back to the tee" data-testid="hud-to-tee"><Home size={15} /> Tee</button>}
-        <button className="p-2 rounded-full hover:bg-white/10 text-white" aria-label="Previous hole" title="Previous hole (←)" onClick={() => go(-1)}><ChevronLeft size={18} /></button>
-        <button className={`px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5 ${ed.flyover ? "bg-orange-500 text-zinc-950" : "text-white hover:bg-white/10"}`} onClick={() => ed.set({ flyover: !ed.flyover })} data-testid="hud-flyover">{ed.flyover ? <><Square size={14} /> Stop</> : <><Plane size={15} /> Fly over</>}</button>
-        <button className="p-2 rounded-full hover:bg-white/10 text-white" aria-label="Next hole" title="Next hole (→)" onClick={() => go(1)}><ChevronRight size={18} /></button>
-        {mayRecord && <button
-          className="px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5 text-white hover:bg-white/10 disabled:opacity-60 disabled:hover:bg-transparent"
-          onClick={() => void recordVideo([hole.id])}
-          disabled={!!job}
-          title={`Record (${VIDEO_SIZES[video.resolution].label}, ${video.fps} fps)`}
-          data-testid="hud-record"
-        >
-          <Clapperboard size={15} /> {job?.kind === "video" ? (recPct ? `Recording ${recPct}` : "Recording…") : "Record"}
-        </button>}
-        {!readOnly && <button className="px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5 text-white hover:bg-white/10" onClick={() => cameraFrom(hole.id, null)} title="Fly the camera yourself and add keyframes" data-testid="hud-freecam"><Video size={15} /> Camera</button>}
-        {!readOnly && <button className={`px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5 text-white ${camera ? "bg-white/15" : "hover:bg-white/10"}`} onClick={() => setCamera(c => !c)} aria-pressed={camera} title="The hole's Flyover panel" data-testid="hud-settings"><Settings2 size={15} /> Settings</button>}
-        <button className="px-3 py-1.5 rounded-full text-sm font-semibold text-white hover:bg-white/10 flex items-center gap-1.5" onClick={() => ed.set({ teeView: null, flyover: false })} data-testid="hud-close"><X size={15} /> Back to map</button>
-      </div>
-      {camera && (
-        // (above the bar, wherever it is: over the toolbar while editing; never over its own button)
-        <div className="absolute left-1/2 -translate-x-1/2 w-[320px] overflow-y-auto dg-scroll pointer-events-auto glass backdrop-blur rounded-2xl p-4 border border-white/10 shadow-2xl" style={{ bottom: (editing ? toolbar + 24 : 24) + 60, maxHeight: `calc(100% - ${(editing ? toolbar + 24 : 24) + 100}px)` }}>
-          <SettingsBox key={hole.id} hole={hole} />
-        </div>
-      )}
       <div className="absolute top-4 right-4 pointer-events-auto"><SceneButton /></div>
-      {/* (whatever is painting in the background: the switch stays, so a tap always does what it says) */}
-      {!ed.flyover && !camera && (!editing || ed.tool === "select") && <DeskTapRow editing={editing} bottom={(editing ? toolbar + 24 : 24) + 56} holes />}
+      {!playing && !menuOpen && <div className="absolute text-xs text-white/80 bg-black/40 rounded-lg px-2.5 py-1 whitespace-nowrap" style={{ bottom: base + BAR_H + 10, left: `calc(50% + ${editing && panel ? 188 : 0}px)`, transform: "translateX(-50%)" }} data-testid="tee-hint">{hintText}</div>}
+      {taps}
+      {bar}
     </div>
   );
 }
-
-/** A row of a phone's More menu. */
-const MENU_ITEM = "h-12 px-3 rounded-xl flex items-center gap-2.5 text-[15px] font-semibold text-white text-left active:bg-white/15 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400";
 
 /** Puts the hole's card away (standing, so it doesn't cover the view). */
 function HideCard({ big = false }: { big?: boolean }) {
@@ -251,72 +264,31 @@ function CardChip({ label, color, ink, big = false }: { label: string; color: st
   );
 }
 
-/** Standing, for an editor: what a tap does, walk there or pick the thing tapped. Never both, so a
- * tap meant to change something doesn't walk, and a step doesn't pick what's in the way. */
-function TapSwitch({ big = false }: { big?: boolean }) {
-  const set = useEditor(e => e.set);
-  const mode = useEditor(e => e.standTap ?? "walk");
-  const b = (on: boolean) => `${big ? "h-11 px-4 text-[14px]" : "h-8 px-3 text-sm"} rounded-full font-semibold flex items-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "bg-white text-zinc-950" : "text-white hover:bg-white/10 active:bg-white/15"}`;
-  return (
-    <div className="pointer-events-auto flex items-center gap-1 glass rounded-full p-1 border border-white/10 shadow-2xl" role="radiogroup" aria-label="What a tap does" data-testid="tap-switch">
-      <button role="radio" aria-checked={mode === "walk"} className={b(mode === "walk")} onClick={() => set({ standTap: "walk" })} title="A tap walks there" data-testid="tap-walk"><Footprints size={big ? 18 : 15} /> Walk</button>
-      <button role="radio" aria-checked={mode === "edit"} className={b(mode === "edit")} onClick={() => set({ standTap: "edit" })} title="A tap picks what's there, to change it" data-testid="tap-edit"><Pencil size={big ? 17 : 14} /> Edit</button>
-    </div>
-  );
-}
-
-/** A phone, standing: what a tap does (an editor's switch) and a line on how to move, above the bar. */
-function PhoneTapRow({ hint, canEdit }: { hint: boolean; canEdit: boolean }) {
-  const edits = useEditor(e => e.standTap === "edit") && canEdit;
-  return (
-    <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+80px)] left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5">
-      {hint && <div className="text-[13px] text-white/90 bg-black/45 rounded-full px-3 py-1 whitespace-nowrap">{edits ? "Tap a thing to change it · drag to look · pinch to zoom" : "Tap the ground to walk · drag to look · pinch to zoom"}</div>}
-      {canEdit && <TapSwitch big />}
-    </div>
-  );
-}
-
-/** A computer, standing: the editor's switch and a line on how to move. */
-function DeskTapRow({ editing, bottom, holes = false }: { editing: boolean; bottom: number; holes?: boolean }) {
-  const edits = useEditor(e => e.standTap === "edit") && editing;
-  const line = edits ? "Click a thing to pick it · drag to look around · Esc back to the map" : `Click the ground to walk · drag to look around${holes ? " · ← → other holes" : ""} · Esc back to the map`;
-  return (
-    <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 whitespace-nowrap" style={{ bottom }}>
-      {editing && <TapSwitch />}
-      <div className="text-xs text-white/80 bg-black/40 rounded px-2 py-1">{line}</div>
-    </div>
-  );
-}
-
-/** Standing somewhere away from every hole (the person dropped there): the View panel, back to the
- * map, and the map from above while editing; no hole's card, flyover or other holes. */
-function StandHere({ compact, editing, toolbar }: { compact: boolean; editing: boolean; toolbar: number }) {
+/** Standing somewhere away from every hole (the person dropped there): View, Tap mode, and back to
+ * the map; no hole's card, flyover or other holes. */
+function StandHere({ compact }: { compact: boolean }) {
   const ed = useEditor();
   const doc = useCourse(c => c.doc);
   const readOnly = useCourse(c => c.readOnly);
+  const toolbar = useToolbarRoom(r => r.height);
+  const editing = !readOnly && !compact;
+  const select = ed.standTap === "edit";
   const back = () => ed.set({ teeView: null, teeStand: null, flyover: false });
-  if (compact) {
-    // (a thing picked: its sheet is up in the bar's place)
-    const sheetUp = !readOnly && !!ed.selectedId && doc.items.some(i => i.id === ed.selectedId);
-    return (
-      <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui>
-        <div className="absolute right-2 top-[max(8px,env(safe-area-inset-top))] pointer-events-auto glass rounded-2xl p-1.5 border border-white/10 shadow-2xl"><SceneButton label="View" /></div>
-        {!sheetUp && <PhoneTapRow hint canEdit={!readOnly} />}
-        {!sheetUp && <div className="absolute left-2 right-2 bottom-[max(8px,env(safe-area-inset-bottom))] pointer-events-auto flex items-center gap-1 glass rounded-[22px] p-1.5 border border-white/10 shadow-2xl" data-testid="stand-here-bar">
-          <button className="flex-1 min-w-0 h-14 rounded-2xl flex items-center justify-center gap-2 text-[14px] font-semibold text-white active:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400" onClick={back} data-testid="hud-close"><X size={20} /> Back to the map</button>
-        </div>}
-      </div>
-    );
-  }
+  const base = editing && select ? toolbar + 6 : 0;
+  // (a thing picked on a phone: its own bar in this one's place)
+  const sheetUp = compact && !readOnly && !!ed.selectedId && doc.items.some(i => i.id === ed.selectedId);
+  const backBtn = (
+    <div className="absolute pointer-events-auto flex items-center gap-1 glass rounded-full p-1.5 pl-4 border border-white/10 shadow-2xl left-1/2 -translate-x-1/2" style={{ bottom: base + 18 }} data-testid="stand-here-bar">
+      <span className="text-[14px] font-semibold text-zinc-300 mr-1.5">Standing here</span>
+      <button className="h-11 px-4 rounded-full bg-orange-300 text-zinc-950 text-[14px] font-bold flex items-center gap-1.5 active:bg-orange-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400" onClick={back} data-testid="hud-close"><X size={17} /> Back to the map</button>
+    </div>
+  );
   return (
     <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui>
       {editing && <TeeMap big={ed.teeMap === "big"} off={ed.teeMap === "off"} />}
-      <div className="absolute left-1/2 -translate-x-1/2 pointer-events-auto flex items-center gap-2 whitespace-nowrap glass backdrop-blur rounded-full px-2 py-1.5 border border-white/10 shadow-2xl" style={{ bottom: editing ? toolbar + 24 : 24 }} data-testid="stand-here-bar">
-        <span className="pl-2 text-sm text-zinc-300">Standing here</span>
-        <button className="px-3 py-1.5 rounded-full text-sm font-semibold text-white hover:bg-white/10 flex items-center gap-1.5" onClick={back} data-testid="hud-close"><X size={15} /> Back to map</button>
-      </div>
-      <div className="absolute top-4 right-4 pointer-events-auto"><SceneButton /></div>
-      {(!editing || ed.tool === "select") && <DeskTapRow editing={editing} bottom={(editing ? toolbar + 24 : 24) + 56} />}
+      <div className={`absolute ${compact ? "right-2 top-[max(8px,env(safe-area-inset-top))] glass rounded-[20px] p-1 border border-white/10 shadow-2xl" : "top-4 right-4"} pointer-events-auto`}><SceneButton label={compact ? "View" : undefined} /></div>
+      {!readOnly && <TapModes bottom={base + 84} right={compact ? 10 : 16} />}
+      {!sheetUp && backBtn}
     </div>
   );
 }

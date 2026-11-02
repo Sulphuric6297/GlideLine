@@ -219,7 +219,7 @@ export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem })
         )}
         <div className="grid grid-cols-3 gap-1.5 mt-2">
           {s.complete && <Button small full onClick={() => useEditor.getState().set({ teeView: hole.id, flyover: false })} testid="tee-view"><Eye size={14} /> Tee view</Button>}
-          {s.complete && <Button small full onClick={() => useEditor.getState().set({ teeView: hole.id, flyover: true })} testid="flyover"><Plane size={14} /> Fly over</Button>}
+          {s.complete && <Button small full onClick={() => useEditor.getState().set({ teeView: hole.id, flyover: true })} testid="flyover"><Plane size={14} /> Play flyover</Button>}
           <Button small full onClick={() => getView()?.fitHole(hole.id)} testid="zoom-hole"><Maximize2 size={14} /> Zoom to it</Button>
           <OnSiteButton holeId={hole.id} className="col-span-3 w-full" />
         </div>
