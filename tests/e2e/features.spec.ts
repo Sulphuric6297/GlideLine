@@ -31,7 +31,7 @@ test("drawing an OB area: click corners, double-click to finish; Backspace and E
   expect((await course(page)).items.filter((i: any) => i.type === "area")).toHaveLength(1);
 });
 
-test("an area's corners can be dragged, a mid dot adds one, and the area moves once selected", async ({ page }) => {
+test("an area's corners can be dragged, a mid dot adds one, and the picked area moves by its edge (a drag from inside moves the map)", async ({ page }) => {
   await blankCourse(page);
   await page.keyboard.press("w");
   await page.getByTestId("area-kind-water").click();
@@ -44,10 +44,15 @@ test("an area's corners can be dragged, a mid dot adds one, and the area moves o
   const mid = await handleCenter(page, "mid", 0);
   await drag(page, mid, await screenOf(page, 450, 200));
   await expect.poll(async () => (await course(page)).items[0].points.length).toBe(4);
-  // Drag the inside: the whole area moves
+  // Drag the inside: the map moves, the area stays where it is
   const before = (await course(page)).items[0].points[1].x;
   const inside = await screenOf(page, 500, 380);
   await drag(page, inside, { x: inside.x + 60, y: inside.y });
+  await page.waitForTimeout(300);
+  expect((await course(page)).items[0].points[1].x).toBe(before);
+  // Drag its edge (a quarter of the way along the closing side, clear of the dots): the whole area moves
+  const edge = await screenOf(page, 512.5, 437.5);
+  await drag(page, edge, { x: edge.x + 60, y: edge.y });
   await expect.poll(async () => (await course(page)).items[0].points[1].x).toBeGreaterThan(before + 20);
 });
 

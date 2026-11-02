@@ -221,10 +221,11 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const c = Math.cos(-rot), sn = Math.sin(-rot), dx = v0.cx - view.cx, dy = v0.cy - view.cy;
       at = { x: view.width / 2 + (dx * c - dy * sn) * k - (v0.width / 2) * r, y: view.height / 2 + (dx * sn + dy * c) * k - (v0.height / 2) * r, w: v0.width * r, h: v0.height * r };
     }
-    // (live, a new painting fading in over the one it takes over from)
+    // (live, the painting it takes over from fading out over a new one: the new one first, as the
+    // page's painting)
     before = painted && paintLive ? fadeFrom(JSON.stringify([doc.id, view.cx, view.cy, view.scale, view.rotation, view.width, view.height]), painted.url, at) : null;
-    const picture = (url: string, p: Placed, fade: boolean) => `<image href="${url}" x="${n(p.x)}" y="${n(p.y)}" width="${n(p.w)}" height="${n(p.h)}" preserveAspectRatio="none"${fade ? ` class="dg-paintfade"` : ""}/>`;
-    out.push(painted ? `</g>${before ? picture(before.url, before.at, false) : ""}${picture(painted.url, at, !!before)}<g transform="${g}">` : `</g><rect width="${n(view.width)}" height="${n(view.height)}" fill="${shade(s.rough, -0.25)}"/><g transform="${g}">`);
+    const picture = (url: string, p: Placed, fade: boolean) => `<image href="${url}" x="${n(p.x)}" y="${n(p.y)}" width="${n(p.w)}" height="${n(p.h)}" preserveAspectRatio="none"${fade ? ` class="dg-paintgone"` : ""}/>`;
+    out.push(painted ? `</g>${picture(painted.url, at, false)}${before ? picture(before.url, before.at, true) : ""}<g transform="${g}">` : `</g><rect width="${n(view.width)}" height="${n(view.height)}" fill="${shade(s.rough, -0.25)}"/><g transform="${g}">`);
   } else if (photo) {
     out.push(`<image href="${doc.background}" x="0" y="0" width="${doc.canvas.width}" height="${doc.canvas.height}" preserveAspectRatio="none" opacity="${n(s.photo)}"/>`);
   } else {

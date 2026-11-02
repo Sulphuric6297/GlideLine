@@ -248,9 +248,9 @@ export function MapDesigner({ compact = false, topInset = 0, bottomInset = 0, pr
     if (preview === "scorecard") return renderScorecard(doc);
     return renderPoster(doc, relief);
   }), [doc, relief, preview, holeId, signSize, pageSize, painted]);
-  // (a new painting fading in over the last: drawn again once it has, the last one gone)
+  // (the last painting fading out over a new one: drawn again once it has, the last one gone)
   useEffect(() => {
-    if (!page?.svg.includes("dg-paintfade")) return;
+    if (!page?.svg.includes("dg-paintgone")) return;
     const t = window.setTimeout(() => setPainted(v => v + 1), 450);
     return () => window.clearTimeout(t);
   }, [page]);
