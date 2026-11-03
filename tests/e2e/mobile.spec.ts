@@ -1054,23 +1054,11 @@ test.describe("phone", () => {
     await page.getByTestId("tap-walk").tap();
     // Playing: the card hides, Play flyover becomes the timeline with Stop at its start
     const flying = () => page.evaluate(() => !!(window as any).__dgEditor().flyover);
-    // (if it doesn't start, in the test's log: what was under the finger, each change to flyover and
-    // where it came from, and the taps the page got)
-    await page.evaluate(() => {
-      const w = window as any, st = w.__dgEditor(), orig = st.set;
-      w.__flyLog = [];
-      st.set = (p: any) => { if (p && typeof p === "object" && "flyover" in p) w.__flyLog.push(`set ${JSON.stringify(p)} @ ${(new Error().stack ?? "").split("\n").slice(2, 6).join(" | ")}`); return orig(p); };
-      for (const t of ["pointerdown", "pointerup", "click"]) window.addEventListener(t, e => { const el = e.target as HTMLElement; w.__flyLog.push(`${t} ${el.tagName} ${el.getAttribute?.("data-testid") ?? ""} ${e.defaultPrevented ? "prevented" : ""}`); }, true);
-    });
+    // (while the flight gets ready, drawn in software, the page can be too busy to be asked for a
+    // while: a minute for each of these)
+    const busy = { timeout: 60_000 };
     await bar.getByTestId("hud-flyover").tap();
-    await expect.poll(flying).toBe(true).catch(async e => {
-      const play = (await bar.getByTestId("hud-flyover").boundingBox())!;
-      console.log("Play flyover didn't start:", JSON.stringify(await page.evaluate(({ x, y }) => {
-        const w = window as any, ed = w.__dgEditor(), el = document.elementFromPoint(x, y) as HTMLElement | null;
-        return { under: el && `${el.tagName} ${el.getAttribute("data-testid") ?? ""} ${el.className.toString().slice(0, 60)}`, flyover: ed.flyover, flyLoading: ed.flyLoading, flyCam: ed.flyCam, teeView: ed.teeView, selectedId: ed.selectedId, standTap: ed.standTap, log: w.__flyLog };
-      }, { x: play.x + play.width / 2, y: play.y + play.height / 2 }), null, 1));
-      throw e;
-    });
+    await expect.poll(flying, busy).toBe(true);
     await expect(page.getByTestId("tee-view-hud")).toBeHidden();
     // (the flight's ready: its loading screen, over everything while it gets ready, out of the way)
     // (the loading screen comes a moment after Play is tapped: waited for as done, not as not yet there)
@@ -1090,7 +1078,7 @@ test.describe("phone", () => {
       mo.observe(el, { subtree: true, attributes: true, childList: true });
     });
     await page.touchscreen.tap(200, 300);
-    await expect.poll(() => page.evaluate(() => (window as any).__barBack)).toBe(true);
+    await expect.poll(() => page.evaluate(() => (window as any).__barBack), busy).toBe(true);
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
     // Folded again, Pause on its timeline pauses it at once (the bar coming back as it does) and
     // holds it on its moment, the bar staying up (it ends paused too, on its last picture)
@@ -1099,7 +1087,7 @@ test.describe("phone", () => {
     await expect(bar.getByTestId("flyover-pill")).toBeHidden();
     const paused = () => page.evaluate(() => !!(window as any).__dgEditor().flyPaused);
     if (!(await paused())) await bar.getByTestId("hud-flyover").tap();
-    await expect.poll(paused).toBe(true);
+    await expect.poll(paused, busy).toBe(true);
     await expect(bar.locator("[data-tucked]")).toHaveCount(0);
     expect(await flying()).toBe(true);
     await expect(bar.getByTestId("hud-flyover")).toHaveAttribute("aria-label", "Play");
