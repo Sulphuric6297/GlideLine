@@ -23,8 +23,8 @@ export type GrassQuality = 0 | 1 | 2 | 3;
 /** Blades per square foot (inner patch, outer patch) and the patches' half-widths, per quality. */
 const LEVELS: Record<Exclude<GrassQuality, 0>, { inner: number; outer: number; innerR: number; outerR: number }> = {
   1: { inner: 6, outer: 0.6, innerR: 28, outerR: 90 },
-  2: { inner: 13, outer: 1.2, innerR: 36, outerR: 120 },
-  3: { inner: 24, outer: 2, innerR: 44, outerR: 150 }
+  2: { inner: 13, outer: 1.2, innerR: 36, outerR: 170 },
+  3: { inner: 24, outer: 2, innerR: 44, outerR: 210 }
 };
 /** Size of the repeating pattern of blade spots, ft (the patches move by this much). */
 const TILE = 8;

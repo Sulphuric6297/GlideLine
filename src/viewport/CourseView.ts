@@ -2340,8 +2340,9 @@ export class CourseView {
     // phone when nothing else moves: the battery matters more than the breeze; and still while a
     // video records, whose frames would otherwise wait on the screen's)
     const breeze = !!this.povHole && this.wind && this.recordings === 0;
-    // (standing on the course, not flying: always the full render, whatever the device)
-    const street = !!this.povHole && !this.fly && !this.software;
+    // (on the course, standing or flying: always the full render, whatever the device, now that
+    // only what can be seen is drawn)
+    const street = !!this.povHole && !this.software;
     if (street !== this.streetDetail) this.setStreetDetail(street);
     if (breeze && !(this.mobile && !this.dirty && performance.now() - this.lastRender < 33)) this.dirty = true;
     // (While a video records, the screen at most 8 times a second: on a slow device its pictures
@@ -2402,10 +2403,11 @@ export class CourseView {
   }
 
   /**
-   * Standing on the course (street view, from a tee or anywhere): always the full render, as a
-   * computer draws it, on a phone too: the sharpest picture, a computer's grass, shadows and trees
-   * in full detail, and nothing stepped down when frames run slow (standing, the view is drawn
-   * only when it moves). Back to what keeps this device smooth once it's left.
+   * On the course (street view, from a tee or anywhere, and flying down a hole): always the full
+   * render, as a computer draws it, on a phone too: the sharpest picture, a computer's grass out
+   * to 170 ft, shadows, and trees in full detail out to 360 ft, stepped down only when frames truly
+   * run slow (a flight picks its quality in its first seconds and keeps it). Back to what keeps
+   * this device smooth once it's left.
    */
   private streetDetail = false;
   private setStreetDetail(on: boolean) {
@@ -2436,7 +2438,7 @@ export class CourseView {
       this.sun.shadow.map = null;
       this.shadowsDirty = true;
     }
-    forestDetail.nearFt = this.streetDetail ? 260 : (this.software ? 70 : this.mobile ? 150 : 260) * (this.tier >= 3 ? 0.6 : 1);
+    forestDetail.nearFt = this.streetDetail ? (this.tier >= 2 ? 260 : 360) : (this.software ? 70 : this.mobile ? 150 : 260) * (this.tier >= 3 ? 0.6 : 1);
     forestDetail.all = false;
     forestDetail.version++;
     retuneTrees(this.itemsGroup);
@@ -2895,7 +2897,8 @@ export class CourseView {
       }
       this.forestsOf = { children: kids.length, first: kids[0], last: kids[kids.length - 1], list };
     }
-    for (const f of this.forestsOf.list) f.update(eye, cam, sun);
+    const doc = this.doc, ground = doc && cam ? (x: number, z: number) => this.h(clamp(x, 0, doc.canvas.width), clamp(z, 0, doc.canvas.height)) : undefined;
+    for (const f of this.forestsOf.list) f.update(eye, cam, sun, ground);
   }
   private forestsOf: { children: number; first?: THREE.Object3D; last?: THREE.Object3D; list: Forest[] } = { children: -1, list: [] };
 

@@ -543,6 +543,24 @@ export const TREES_SEEN = 1, TREES_SHADOW = 2;
 /** How far the camera turns before the trees it sees are worked out again (6 degrees). */
 const TURN_COS = Math.cos((6 * Math.PI) / 180);
 export const midOf = (nearFt: number) => nearFt * 3;
+/** Past this far (ft), a tree the ground hides from the eye is left out of the picture. */
+const HILL_FT = 400;
+/** Whether a rise in the ground stands between the eye and the top of tree `s`, `d` ft off: the
+ * line from the eye to a little above its top runs under the ground somewhere along the way (well
+ * under: a tree just showing over a ridge, or showing a few steps on, is kept). */
+const behindHill = (eye: THREE.Vector3, s: TreeSpot, d: number, ground: (x: number, z: number) => number) => {
+  const topY = s.ground + s.height * 1.1 + 8;
+  const steps = Math.min(16, Math.max(6, Math.round(d / 60)));
+  for (let k = 1; k < steps; k++) {
+    const t = k / steps;
+    const x = eye.x + (s.x - eye.x) * t, z = eye.z + (s.y - eye.z) * t;
+    const lineY = eye.y + (topY - eye.y) * t;
+    // (6 ft of slack, and more farther along: the camera moves on a way before the trees are
+    // sorted again)
+    if (ground(x, z) > lineY + 6 + d * t * 0.03) return true;
+  }
+  return false;
+};
 
 /**
  * Many trees, drawn instanced by shape: close ones in full detail, the rest in a lighter
@@ -635,7 +653,7 @@ export class Forest {
    * just out of sight still fall into view. Redone when the camera moved a fair way or turned a
    * little, or the shadow picture moved on. Without the camera (the map), every tree, for both.
    */
-  update(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera, sun?: THREE.OrthographicCamera) {
+  update(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera, sun?: THREE.OrthographicCamera, ground?: (x: number, z: number) => number) {
     // (and again when the reach of full detail changed)
     const dir = cam ? cam.getWorldDirection(seeDir) : null;
     const turned = !!dir && (this.lastDir.dot(dir) < TURN_COS || Math.abs(cam!.fov - this.lastFov) > 1);
@@ -694,6 +712,8 @@ export class Forest {
           seeBall.center.set(s.x, s.ground + s.height * 0.5, s.y);
           seeBall.radius = s.height + 30 + Math.sqrt(d2) * 0.12;
           if (!see.intersectsSphere(seeBall)) return;
+          // (far off, behind a rise: the ground stands between the eye and the tree's top)
+          if (ground && d2 > HILL_FT * HILL_FT && behindHill(eye, s, Math.sqrt(d2), ground)) return;
         }
         drawn[i] = 1;
         levels[l][0].setMatrixAt(n[l], mat);
