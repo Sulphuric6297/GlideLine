@@ -347,7 +347,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
         {line && !side && lineAbove ? (
           <>
             <div className={`w-full flex ${tucked && low ? "justify-center" : ""}`}><div className={tucked && low ? "w-[min(360px,100%)] dg-fade-in" : "w-full"}>{line}</div></div>
-            <div className={`w-full flex items-center gap-2 transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""} ${tucked && low ? "hidden" : ""}`}>
+            <div className={`w-full flex items-center gap-2 transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""} ${tucked && low ? "hidden" : ""}`} data-tucked={noRow && tucked ? "" : undefined}>
               <div className="shrink-0 min-w-0">{pillEl}</div>
               {(beside || noRow) && <div className="ml-auto shrink-0 flex items-center gap-2">{beside}{noRow && doneEl}</div>}
             </div>

@@ -69,8 +69,9 @@ test("flyover runs from the tee to the basket and stops", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => (window as any).__dgView.flyProgress()), { timeout: 30_000 }).toBeGreaterThan(0.05);
   // It lands by itself (a short hole flies for 6 seconds and slows to a stop; a slow frame
   // doesn't skip it, so drawn in software here it takes longer)
-  // (it holds on its last picture, paused)
-  await expect(flyButton(page)).toHaveAttribute("aria-label", "Play", { timeout: 90_000 });
+  // (it holds on its last picture, paused: Play again, and Edit flyover beside it)
+  await expect(flyButton(page)).toHaveAttribute("aria-label", "Play again", { timeout: 90_000 });
+  await expect(teeBar(page).getByTestId("fly-edit")).toBeVisible();
   expect((await page.evaluate(() => (window as any).__dgEditor().flyPaused))).toBe(true);
   await backToMap(page);
   await expect(teeBar(page)).toHaveCount(0);
@@ -329,7 +330,7 @@ test("flyover settings: height, speed and lens change the flight, one undo step 
   await page.getByTestId("cam-done").click();
   await flyButton(page).click();
   await expect.poll(() => page.evaluate(() => (window as any).__dgView.povCam.fov)).toBe(15);
-  await expect(flyButton(page)).toHaveAttribute("aria-label", "Play", { timeout: 120_000 });
+  await expect(flyButton(page)).toHaveAttribute("aria-label", "Play again", { timeout: 120_000 });
   await teeBar(page).getByTestId("hud-stop").click();
   await expect.poll(() => page.evaluate(() => (window as any).__dgView.povCam.fov)).toBe(62);
   // Each setting is one undo step
