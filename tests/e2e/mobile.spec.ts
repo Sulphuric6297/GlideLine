@@ -1055,7 +1055,15 @@ test.describe("phone", () => {
     // Playing: the card hides, Play flyover becomes the timeline with Stop at its start
     const flying = () => page.evaluate(() => !!(window as any).__dgEditor().flyover);
     await bar.getByTestId("hud-flyover").tap();
-    await expect.poll(flying).toBe(true);
+    // (if it doesn't start, what was under the finger and where things stood, in the test's log)
+    await expect.poll(flying).toBe(true).catch(async e => {
+      const play = (await bar.getByTestId("hud-flyover").boundingBox())!;
+      console.log("Play flyover didn't start:", JSON.stringify(await page.evaluate(({ x, y }) => {
+        const ed = (window as any).__dgEditor(), el = document.elementFromPoint(x, y) as HTMLElement | null;
+        return { under: el && `${el.tagName} ${el.getAttribute("data-testid") ?? ""} ${el.className.toString().slice(0, 60)}`, flyover: ed.flyover, flyLoading: ed.flyLoading, flyCam: ed.flyCam, teeView: ed.teeView, selectedId: ed.selectedId, standTap: ed.standTap, said: (window as any).__dgSaid?.() };
+      }, { x: play.x + play.width / 2, y: play.y + play.height / 2 })));
+      throw e;
+    });
     await expect(page.getByTestId("tee-view-hud")).toBeHidden();
     // (the flight's ready: its loading screen, over everything while it gets ready, out of the way)
     // (the loading screen comes a moment after Play is tapped: waited for as done, not as not yet there)
