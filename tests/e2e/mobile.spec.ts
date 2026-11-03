@@ -1006,9 +1006,9 @@ test.describe("phone", () => {
     await expect(page.getByTestId("bottom-nav")).toBeVisible();
   });
 
-  test("the flyover's settings in the Flyover editor's bar on a phone; a thing selected in tee view, its bar in the flyover bar's place; playing, the bar folds to its timeline and a tap brings it back", async ({ page }) => {
-    // (a flight's loading screen takes a while on a slow machine, and the flight is at its slowest)
-    test.setTimeout(600_000);
+  test("the flyover's settings in the Flyover editor's bar on a phone; a thing selected in tee view, its bar in the flyover bar's place", async ({ page }) => {
+    // (a flight's loading screen takes a while on a slow machine)
+    test.setTimeout(360_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
     await page.getByTestId("pill-open").tap();
@@ -1031,12 +1031,6 @@ test.describe("phone", () => {
     // (a tap on the view closes it, and nothing else)
     await page.getByTestId("bar-away").tap();
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
-    // (Speed at its slowest, so the flyover is still under way when it's paused below)
-    await ed.getByTestId("strip-speed").tap();
-    await page.getByTestId("bar-menu").getByTestId("dial").focus();
-    for (let i = 0; i < 16; i++) await page.keyboard.press("ArrowLeft");
-    await expect.poll(() => page.evaluate(() => (window as any).__dgCourse().flyover?.speed)).toBe(0.25);
-    await page.getByTestId("bar-away").tap();
     // ✓: out of the editor, back in tee view
     await ed.getByTestId("bar-done").tap();
     await expect(page.getByTestId("camera-hud")).toHaveCount(0);
@@ -1051,7 +1045,22 @@ test.describe("phone", () => {
     await expect(page.getByTestId("tap-switch")).toBeVisible();
     await page.getByTestId("item-strip").getByTestId("bar-done").tap();
     await expect(bar).toBeVisible();
-    await page.getByTestId("tap-walk").tap();
+    // ✓ goes back to the map
+    await bar.getByTestId("bar-done").tap();
+    await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
+  });
+
+  test("playing on a phone: tee view's bar folds to its timeline, a tap brings it back, Pause on the folded timeline pauses it", async ({ page }) => {
+    // (a flight's loading screen takes a while on a slow machine, and the flight is at its slowest)
+    test.setTimeout(600_000);
+    await oneHole(page);
+    // (Speed at its slowest, so the flyover is still under way when it's paused below)
+    await page.evaluate(() => (window as any).__dgActions.flyover({ speed: 0.25 }));
+    await tapPlan(page, 450, 500);
+    await page.getByTestId("pill-open").tap();
+    await page.getByTestId("menu-tee-view").tap();
+    const bar = page.getByTestId("tee-bar");
+    await expect(bar).toBeVisible();
     // Playing: the card hides, Play flyover becomes the timeline with Stop at its start
     const flying = () => page.evaluate(() => !!(window as any).__dgEditor().flyover);
     // (while the flight gets ready, drawn in software, the page can be too busy to be asked for a

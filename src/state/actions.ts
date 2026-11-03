@@ -695,7 +695,7 @@ export const layoutTee = (holeId: string) => {
 export const withCentroid = <T extends { points: P[] }>(item: T): T & P => ({ ...item, ...centroid(item.points) });
 
 // For the automated tests and screenshots: build a course quickly without clicking every spot.
-if (typeof window !== "undefined") (window as any).__dgActions = { addHole, addDrawn, placeAt, select, pickGroup, updateItem, style: (patch: Partial<CourseDoc["style"]>) => changeDoc(d => ({ style: { ...d.style, ...patch } })), site: (patch: Partial<CourseDoc["site"]>) => changeDoc(d => ({ site: { ...d.site, ...patch } })), lidar: (patch: Partial<NonNullable<CourseDoc["lidar"]>>) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {})) };
+if (typeof window !== "undefined") (window as any).__dgActions = { addHole, addDrawn, placeAt, select, pickGroup, updateItem, style: (patch: Partial<CourseDoc["style"]>) => changeDoc(d => ({ style: { ...d.style, ...patch } })), site: (patch: Partial<CourseDoc["site"]>) => changeDoc(d => ({ site: { ...d.site, ...patch } })), lidar: (patch: Partial<NonNullable<CourseDoc["lidar"]>>) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {})), flyover: (patch: Partial<NonNullable<CourseDoc["flyover"]>>) => changeDoc(d => ({ flyover: { ...d.flyover, ...patch } as CourseDoc["flyover"] })) };
 
 /**
  * An OB line for a hole, ready to fine-tune with its handles: along the left or right of the
