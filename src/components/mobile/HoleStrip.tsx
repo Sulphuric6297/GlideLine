@@ -5,7 +5,8 @@
 // everyday ones come first and the rarer ones further along, so nothing is left to a long panel
 // over the map.
 import { useRef, type ReactNode } from "react";
-import { Brush, Navigation, Plus, RotateCw, Scissors } from "lucide-react";
+import { Brush, Navigation, Plus, RotateCw, Scissors, Video } from "lucide-react";
+import { editFlyover } from "../FlyoverSettings";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint } from "../../constants";
 import { holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
 import { holeStats } from "../../lib/holeStats";
@@ -86,7 +87,7 @@ const HolePart = ({ hole, part }: { hole: Hole; part: string }) => (
 const cap = (s: string) => `${s[0].toUpperCase()}${s.slice(1)}`;
 
 /** Every setting a hole has, for the bar's row, the everyday ones first. */
-export function useHoleSettings(hole: Hole, { onFlyover }: { onFlyover?: () => void } = {}): BarSetting[] {
+export function useHoleSettings(hole: Hole): BarSetting[] {
   const doc = useCourse(s => s.doc);
   const s = holeStats(doc, hole);
   const u = doc.units;
@@ -156,7 +157,8 @@ export function useHoleSettings(hole: Hole, { onFlyover }: { onFlyover?: () => v
   );
   if (s.complete) out.push(
     { id: "inplay", name: "In play", value: `${"●".repeat(s.difficulty)}`, wide: true, control: <HolePart hole={hole} part="sec-inplay" /> },
-    { id: "flyover", name: "Flyover", value: (hole.flyKeys?.length ?? 0) >= 2 ? "Custom path" : "Automatic", run: onFlyover, testid: "strip-flyover" }
+    // (the flyover's one editor: its camera, keyframes and settings)
+    { id: "flyover", name: (hole.flyKeys?.length ?? 0) >= 2 ? "Custom camera path" : "Automatic camera path", value: "Edit flyover", icon: <Video size={16} />, run: () => editFlyover(hole.id), testid: "strip-flyover" }
   );
   return out;
 }

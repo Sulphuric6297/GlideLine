@@ -88,18 +88,19 @@ test("record a hole's flyover from the Export step: progress, then a real video 
   expect((await editorState(page)).teeView).toBeNull();
 });
 
-test("from the Export step's video: Fly over flies the hole picked, the camera's settings open in its view from the tee", async ({ page }) => {
+test("from the Export step's video: Play flyover flies the hole picked, Edit flyover opens the Flyover editor on it", async ({ page }) => {
   test.setTimeout(180_000);
   await twoHoles(page, [160, 90]);
   const second = (await course(page)).holes[1].id;
-  const tee = () => page.evaluate(() => { const e = (window as any).__dgEditor(); return [e.teeView, e.flyover, !!e.teeSettings]; });
+  const tee = () => page.evaluate(() => { const e = (window as any).__dgEditor(); return [e.teeView, e.flyover, !!e.flyCam]; });
   await page.getByRole("button", { name: "4 Export" }).click();
   const section = page.getByTestId("video-export");
   await section.getByTestId("video-holes").selectOption({ label: "Hole 2" });
   await section.getByTestId("video-camera-settings").click();
   await expect.poll(tee).toEqual([second, false, true]);
-  await expect(page.getByTestId("flyover-settings")).toBeVisible();
-  await page.evaluate(() => (window as any).__dgEditor().set({ teeView: null }));
+  await expect(page.getByTestId("cam-panel").getByTestId("flyover-settings")).toBeVisible();
+  // (Done: back where it was opened, off the tee)
+  await page.getByTestId("cam-done").click();
   await expect.poll(tee).toEqual([null, false, false]);
   await page.getByTestId("video-export").getByTestId("video-fly").click();
   await expect.poll(tee).toEqual([second, true, false]);
@@ -147,8 +148,8 @@ test("the Record button over a flyover records that hole", async ({ page }) => {
   await page.getByTestId("flyover").click();
   await expect(flyButton(page)).toHaveAttribute("aria-label", "Pause");
   const downloading = page.waitForEvent("download", { timeout: 150_000 });
-  // (Export video, in the Flyover panel)
-  const record = page.getByTestId("fly-panel").getByTestId("fly-export");
+  // (Export video, on the bar)
+  const record = page.getByTestId("tee-bar").getByTestId("fly-export");
   await record.click();
   // (Exporting… until the frames start coming, then how far along it is)
   await expect(record).toHaveText(/Exporting( \d+%|…)/);
@@ -175,7 +176,7 @@ test("while a video records, the view from the tee holds still (the recording's 
   expect(await page.evaluate(() => (window as any).__dgEditor().wind)).toBe(true);
   const info = () => page.evaluate(() => (window as any).__dgView.drawInfo() as { frames: number; recording: boolean });
   const downloading = page.waitForEvent("download", { timeout: 150_000 });
-  await page.getByTestId("fly-panel").getByTestId("fly-export").click();
+  await page.getByTestId("tee-bar").getByTestId("fly-export").click();
   await expect.poll(async () => (await info()).recording).toBe(true);
   await page.waitForTimeout(300);
   // Nothing moves on screen but the breeze: it waits (it once kept redrawing the screen and took

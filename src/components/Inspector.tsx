@@ -3,7 +3,7 @@
 import { PlaceByGps } from "./PlaceByGps";
 import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, Plane, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
+import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES } from "../constants";
 import { areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
@@ -25,7 +25,7 @@ import type { AmenityKind, AreaItem, CourseDoc, CourseItem, FenceStyle, FieldKin
 import { fieldInks, fieldPlan, LEAGUE_ORDER, LEAGUES } from "../lib/fieldPlan";
 import { ElevationProfile } from "./ElevationProfile";
 import { TreeSettings } from "./TreeSettings";
-import { HoleFlight } from "./FlyoverSettings";
+import { FlyoverRow } from "./FlyoverSettings";
 import { HoleChips } from "./ApplyToHoles";
 import { HoleSteps } from "./HoleSteps";
 import { getView } from "../state/view";
@@ -217,11 +217,11 @@ export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem })
             <Stat label="Plays like" value={fmtDist(s.playsLike, u)} />
           </div>
         )}
-        <div className="grid grid-cols-3 gap-1.5 mt-2">
+        {/* (Play flyover is in its Flyover row, with Edit flyover) */}
+        <div className="grid grid-cols-2 gap-1.5 mt-2">
           {s.complete && <Button small full onClick={() => useEditor.getState().set({ teeView: hole.id, flyover: false })} testid="tee-view"><Eye size={14} /> Tee view</Button>}
-          {s.complete && <Button small full onClick={() => useEditor.getState().set({ teeView: hole.id, flyover: true })} testid="flyover"><Plane size={14} /> Play flyover</Button>}
           <Button small full onClick={() => getView()?.fitHole(hole.id)} testid="zoom-hole"><Maximize2 size={14} /> Zoom to it</Button>
-          <OnSiteButton holeId={hole.id} className="col-span-3 w-full" />
+          <OnSiteButton holeId={hole.id} className="col-span-2 w-full" />
         </div>
         {doc.lidar && s.complete && <HoleTrees hole={hole} line={s.line} />}
       </Section>
@@ -325,7 +325,7 @@ export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem })
       </Section>
       {s.complete && (
         <Section title="Flyover" help="flyover" testid="sec-flyover">
-          <HoleFlight hole={hole} />
+          <FlyoverRow hole={hole} />
         </Section>
       )}
     </>
@@ -1012,8 +1012,8 @@ export function useSelection() {
   const selectedId = useEditor(e => e.selectedId);
   const teeView = useEditor(e => e.teeView);
   // (tee view, editing: what's picked there has its panel too; not the hole, which has its card
-  // and its Flyover settings in the view already)
-  const teeEditing = useEditor(e => !e.flyover);
+  // in the view already; none in the Flyover editor, whose panel is its own)
+  const teeEditing = useEditor(e => !e.flyover && !e.flyCam);
   const tool = useEditor(e => e.tool);
   const ids = useEditor(e => e.group);
   const hole = doc.holes.find(h => h.id === selectedId);

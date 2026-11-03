@@ -221,6 +221,9 @@ THREE.DefaultLoadingManager.onStart = () => { loadingTextures++; };
 THREE.DefaultLoadingManager.onLoad = () => { loadingTextures = 0; };
 const texturesLoading = () => loadingTextures > 0;
 
+/** Whether a hole's keyframes have handles on the map (they're the Flyover editor's now). */
+const FLY_KEYS_ON_MAP = false;
+
 export class CourseView {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -1257,6 +1260,8 @@ export class CourseView {
   /** Look from a hole's tee down the hole (null: back to the map); `teeId`: from that tee of it
    * (another skill level's), not the one the layout plays. */
   setTeeView(holeId: string | null, teeId: string | null = null, at: { x: number; y: number; face?: number } | null = null) {
+    // (a flyover stopped, held or not: the tee view's own lens again)
+    if (this.fly) this.povCam.fov = this.povFov;
     this.fly = null;
     // (never past the map's edge)
     const stand = at ? { ...at, ...this.inMap(at) } : null;
@@ -1492,6 +1497,24 @@ export class CourseView {
       const ahead = this.project(far.setY(this.h(far.x, far.z)));
       return { rect: { ...m }, tee, ahead, fov: this.povCam.fov * this.povCam.aspect };
     } finally { this.eye = was; }
+  }
+
+  /** Ground spots on the corner map, in the container's pixels (null: none there, or no map). */
+  miniProject(pts: P[]): ({ x: number; y: number } | null)[] {
+    const m = this.miniRect;
+    if (!m) return pts.map(() => null);
+    const was = this.eye;
+    this.eye = { cam: this.miniCam, rect: m };
+    try { return pts.map(q => this.project(new THREE.Vector3(q.x, this.h(q.x, q.y), q.y))); } finally { this.eye = was; }
+  }
+
+  /** The ground under a client point on the corner map (null: not on it). */
+  miniGround(clientX: number, clientY: number): P | null {
+    const m = this.miniRect;
+    if (!m) return null;
+    const was = this.eye;
+    this.eye = { cam: this.miniCam, rect: m };
+    try { const g = this.groundAt(clientX, clientY); return g ? { x: g.x, y: g.z } : null; } finally { this.eye = was; }
   }
 
   /** The corner map's place in the view (the container's pixels). */
@@ -2063,6 +2086,28 @@ export class CourseView {
     this.fly.t = clamp(t, 0, this.fly.play);
     if (this.flyWait) { this.flyWait = null; this.cb.onFlyWait(null); }
     this.invalidate();
+  }
+
+  /** Where a hole's flyover puts the camera `t` seconds in, as the timeline plays it (automatic or
+   * through keyframes), as a keyframe: to put the camera there, the timeline dragged. */
+  flightKeyAt(holeId: string, t: number): FlyKey | null {
+    const f = this.flightPath(holeId);
+    if (!f || f.pts.length < 2) return null;
+    const e = f.dur > 0 ? clamp(f.at(clamp(t, 0, f.play)) / f.dur, 0, 1) : 0;
+    const idx = e * (f.pts.length - 1), i0 = Math.floor(idx), u = idx - i0;
+    const c = curveBetween(f.pts, i0, u, new THREE.Vector3()), l = curveBetween(f.look, i0, u, new THREE.Vector3());
+    const i1 = Math.min(f.fov.length - 1, i0 + 1);
+    const r1 = (v: number) => Math.round(v * 10) / 10;
+    return { x: r1(c.x), y: r1(c.z), alt: r1(c.y - this.h(c.x, c.z)), lookX: r1(l.x), lookY: r1(l.z), lookAlt: r1(Math.max(0, l.y - this.h(l.x, l.z))), fov: Math.round(f.fov[i0] + (f.fov[i1] - f.fov[i0]) * u) };
+  }
+
+  /** The camera path a hole's flyover flies, sampled along it (for drawing it from above). */
+  flightPoints(holeId: string, n = 60): P[] {
+    const f = this.flightPath(holeId);
+    if (!f || f.pts.length < 2) return [];
+    const out: P[] = [];
+    for (let i = 0; i < n; i++) { const q = f.pts[Math.round((i / (n - 1)) * (f.pts.length - 1))]; out.push({ x: q.x, y: q.z }); }
+    return out;
   }
 
   /** How long a hole's flyover plays (s), or null if it can't fly yet. */
@@ -5019,8 +5064,10 @@ export class CourseView {
     }
     // A hand-made flyover (while the hole is selected): each keyframe's camera spot (numbered) and
     // what it looks at, to drag
+    // (a custom camera path's keyframes are moved in the Flyover editor, on its map from above; on
+    // the map, the path only shows)
     const keys = h0.flyKeys;
-    if (keys && keys.length >= 2 && this.selectedId === holeId) {
+    if (keys && keys.length >= 2 && this.selectedId === holeId && FLY_KEYS_ON_MAP) {
       const dragKey = (index: number, look: boolean): Drag | null => {
         const list = hole()?.flyKeys?.map(k => ({ ...k }));
         const k0 = list?.[index];

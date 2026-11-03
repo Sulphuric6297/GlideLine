@@ -201,8 +201,8 @@ test.describe("phone", () => {
     await page.waitForTimeout(300);
     await page.evaluate(() => (window as any).__dgView.fitCourse(false));
     await page.waitForTimeout(300);
-    await page.getByRole("navigation", { name: "Steps" }).getByRole("button", { name: /Design/ }).tap();
-    await page.locator('[data-tool="park"]').tap();
+    // (on the Design step already: its tools along the foot, Park among them)
+    await page.getByTestId("tool-strip").locator('[data-tool="park"]').tap();
     await page.getByTestId("field-kind-basketball").tap();
     await expect(page.getByTestId("tool-hint")).toHaveText("Tap where the basketball court goes");
     await tapPlan(page, 450, 380);

@@ -257,7 +257,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   useEffect(() => { view?.setStandTap(ed.standTap ?? "walk"); }, [view, ed.standTap]);
   // (on site: looking round only, the map from above in its corner)
   const onSite = useOnSite(s => !!s.on);
-  useEffect(() => { view?.setTeeEdit(!!ed.teeView && !ed.flyover && !readOnlyView && !onSite, onSite ? "corner" : ed.teeMap === "off" ? null : ed.teeMap ?? "small"); }, [view, ed.teeView, ed.teeMap, ed.flyover, readOnlyView, onSite]);
+  // (the Flyover editor: its map from above, in the corner on a phone too)
+  useEffect(() => { view?.setTeeEdit(!!ed.teeView && !ed.flyover && !readOnlyView && !onSite, onSite || (ed.flyCam && !!compact) ? "corner" : ed.flyCam ? "small" : ed.teeMap === "off" ? null : ed.teeMap ?? "small"); }, [view, ed.teeView, ed.teeMap, ed.flyover, ed.flyCam, readOnlyView, onSite, compact]);
   // (the picked field's part outlined; redrawn as the field changes)
   const partItem = useCourse(s => (ed.fieldPart && ed.selectedId ? s.doc.items.find(i => i.id === ed.selectedId) : undefined));
   useEffect(() => { view?.setFieldPart(partItem ? partItem.id : null, ed.fieldPart ?? null); }, [view, partItem, ed.fieldPart]);

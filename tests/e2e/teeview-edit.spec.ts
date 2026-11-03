@@ -277,10 +277,7 @@ test("standing: walking near another hole puts you on it; the hole's card hides 
   await page.mouse.move(820, 400, { steps: 4 });
   await page.mouse.up({ button: "right" });
   await expect.poll(() => page.evaluate(() => (window as any).__heard)).toBeGreaterThan(heard + 1);
-  // The card put away: a chip with the hole's number; back again (the Flyover panel closed
-  // first: the card floats over the view then)
-  await page.getByTestId("fly-panel-close").click();
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  // The card put away: a chip with the hole's number; back again
   await page.getByTestId("hud-card-hide").click();
   await expect(page.getByTestId("tee-view-hud")).toBeHidden();
   await page.getByTestId("hud-card-show").click();

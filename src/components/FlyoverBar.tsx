@@ -1,10 +1,10 @@
-// The flyover's parts for the glass bar (mobile/GlassBar), the same in tee view, while it plays, in
-// Edit camera path and from a hole's bar on the map, on a phone and a computer: the timeline beside
-// the hole's name (Play flyover; playing, the playhead and Stop; a custom camera path's keyframes on
-// it), every flyover setting for the bar's row, and Tap mode (Walk or Select) over the bar.
+// The flyover's parts: its timeline (Play flyover; playing, the playhead and Pause; in the Flyover
+// editor, a custom camera path's keyframes on it), Add keyframe, every flyover setting for the
+// phone's glass bar (mobile/GlassBar) in the editor, and Tap mode (Walk or Select) over tee view's
+// bar.
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { Clapperboard, Footprints, Map as MapIcon, MousePointer2, Pause, Play, Plus, Trash2, Video } from "lucide-react";
-import { LENS, flightAt, flyoverOf, insertKey, insertKeyAt, keyFlight, keyTimes } from "../lib/flight";
+import { Clapperboard, Footprints, MousePointer2, Pause, Play, Plus } from "lucide-react";
+import { LENS, flyoverOf, keyTimes } from "../lib/flight";
 import { fmtDist } from "../lib/units";
 import { changeDoc, updateHole, useCourse, useEditor } from "../state/course";
 import { getView } from "../state/view";
@@ -13,7 +13,7 @@ import { VIDEO_SIZES } from "../lib/video";
 import { useVideoSettings } from "../state/video";
 import type { FlyKey, FlyShow, FlyoverSettings, Hole } from "../types";
 import { ApplyToHoles } from "./ApplyToHoles";
-import { cameraFrom, FLY_SHOW, keysIn3D } from "./FlyoverSettings";
+import { FLY_SHOW } from "./FlyoverSettings";
 import { Rows, Dial } from "./mobile/HoleStrip";
 import type { BarSetting } from "./mobile/GlassBar";
 import { Button, Toggle } from "./ui";
@@ -63,8 +63,8 @@ export function FlightLine({ playing, paused = false, canPlay = true, onPlay, on
   // (held on a moment with keyframes about: to the tenth, as a keyframe's own time reads)
   const tenths = !!keys?.length && !running;
   const time = <span className="shrink-0 text-[12.5px] font-semibold text-zinc-300 tabular-nums whitespace-nowrap" data-testid="fly-time">{playing || at !== null ? (short ? clock(at ?? 0, tenths) : <><span className="text-zinc-50">{clock(at ?? 0, tenths)}</span> / {clock(dur)}</>) : clock(dur)}</span>;
-  // (standing, flying by itself: just Play flyover; the whole of it plays)
-  if (!playing && !keys?.length) return (
+  // (standing, flying by itself, no playhead: just Play flyover; the whole of it plays)
+  if (!playing && !keys?.length && at === null) return (
     <button type="button" className={`${box} w-full text-left active:bg-white/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`} onClick={onPlay} title="Play flyover (Space)" data-testid={playId}>
       <span className="shrink-0 w-8 h-8 rounded-full bg-orange-300 text-zinc-950 flex items-center justify-center"><Play size={14} fill="currentColor" className="ml-0.5" /></span>
       <span className="flex-1 min-w-0 text-[15px] font-bold text-zinc-50 truncate">Play flyover</span>
@@ -173,11 +173,10 @@ export function setCameraPath(hole: Hole, custom: boolean) {
   toast("Keyframes deleted. The camera path is Automatic again.", "info", true);
 }
 
-/** Every setting of a hole's flyover as a whole, for the glass bar's row, the everyday ones first:
- * the camera path, then (Automatic) its altitude, speed and field of view, who they apply to and
- * where it starts; or (Custom) Edit camera path, who they apply to and Edit on map (a keyframe's own
- * are its bar's, useKeyframeSettings); then Overlays. `exportVideo` (tee view) adds Export video at
- * the end. */
+/** Every setting of a hole's flyover as a whole, for the Flyover editor's glass bar with nothing
+ * selected, the everyday ones first: the camera path, then (Automatic) its altitude, speed and field
+ * of view, who they apply to and where it starts; or (Custom) who they apply to (a keyframe's own
+ * are its bar's); then Overlays, and Export video (`exportVideo`). */
 export function useFlyoverSettings(hole: Hole, { exportVideo }: { exportVideo?: () => void } = {}): BarSetting[] {
   const doc = useCourse(s => s.doc);
   const video = useVideoSettings();
@@ -216,45 +215,9 @@ export function useFlyoverSettings(hole: Hole, { exportVideo }: { exportVideo?: 
       dial("side", "Side offset", f.side === 0 ? "Centered" : `${ft(Math.abs(f.side))} ${f.side > 0 ? "right" : "left"}`, { label: "Side offset", value: f.side, min: -200, max: 200, step: 5, format: v => (v === 0 ? "Centered" : `${ft(Math.abs(v))} ${v > 0 ? "right" : "left"}`), onChange: v => set({ side: v }), onDone: done }),
       dial("look", "Look ahead", ft(f.lookAhead), { label: "Look ahead", value: f.lookAhead, min: 30, max: 500, step: 10, format: ft, onChange: v => set({ lookAhead: v }), onDone: done })
     );
-  } else {
-    out.push(
-      { id: "edit", name: "", value: "Edit camera path", icon: <Video size={16} />, run: () => cameraFrom(hole.id, null), testid: "fly-camera", title: "Move the camera yourself and set keyframes" },
-      // (no Speed: a custom path's timeline seconds are the flyover's own; Apply to for its overlays)
-      applyTo,
-      { id: "onmap", name: "", value: "Edit on map", icon: <MapIcon size={16} />, run: () => keysIn3D(hole.id), testid: "fly-in-3d", title: "On the map, tilted: drag each camera up, down or along" }
-    );
-  }
+  } else out.push(applyTo);
   out.push({ id: "overlays", name: "Overlays", value: `${FLY_SHOW.filter(([s]) => f[s]).length} of ${FLY_SHOW.length}`, testid: "fly-overlays", control: <Overlays hole={hole} forHole={forHole} /> });
-  if (!keys) out.push({ id: "edit", name: "", value: "Edit camera path", icon: <Video size={16} />, run: () => cameraFrom(hole.id, (hole.flyKeys?.length ?? 0) ? hole.flyKeys!.length - 1 : null), testid: "fly-camera", title: "Move the camera yourself and set keyframes" });
   if (exportVideo) out.push({ id: "export", name: `${VIDEO_SIZES[video.resolution].label} · ${video.fps} fps`, value: "Export video", icon: <Clapperboard size={16} />, run: exportVideo, testid: "fly-export" });
-  return out;
-}
-
-/** A selected keyframe's settings, for its own bar's row (as a selected thing has): Move camera
- * (move its camera yourself), its Altitude, Field of view and Time, then Delete. */
-export function useKeyframeSettings(hole: Hole, p: number): BarSetting[] {
-  const doc = useCourse(s => s.doc);
-  const setEd = useEditor(e => e.set);
-  const ft = (v: number) => fmtDist(v, doc.units);
-  const { keys, times, fs } = useFlight(hole);
-  if (!keys) return [];
-  const i = Math.min(Math.max(0, p), keys.length - 1);
-  const k = keys[i];
-  // (live while a dial turns; one undo step when it's let go)
-  const setKeys = (next: FlyKey[], history = true) => updateHole(hole.id, { flyKeys: next }, history);
-  const edit = (patch: Partial<FlyKey>) => setKeys(keys.map((x, j) => (j === i ? { ...x, ...patch } : x)), false);
-  const done = () => useCourse.getState().commit();
-  const dial = (id: string, name: string, value: string, d: Parameters<typeof Dial>[0]): BarSetting => ({ id, name, value, wide: true, control: <Dial {...d} /> });
-  const out: BarSetting[] = [
-    { id: "move", name: "", value: "Move camera", icon: <Video size={16} />, run: () => cameraFrom(hole.id, i), testid: "fly-move-camera", title: `Move keyframe ${i + 1}'s camera yourself` },
-    dial("altitude", "Altitude", ft(Math.round(k.alt)), { label: "Altitude", value: Math.round(k.alt), min: 2, max: Math.max(400, Math.round(k.alt)), step: 1, format: ft, onChange: v => edit({ alt: v }), onDone: done }),
-    dial("fov", "Field of view", `${Math.round(k.fov ?? fs.fov)}°`, { label: "Field of view", value: Math.round(k.fov ?? fs.fov), min: LENS.min, max: LENS.max, step: 1, format: v => `${Math.round(v)}°`, onChange: v => edit({ fov: v }), onDone: done })
-  ];
-  if (i > 0) {
-    const lo = times[i - 1] + 0.5, hi = i + 1 < keys.length ? times[i + 1] - 0.5 : times[i] + 30;
-    out.push(dial("time", "Time", clock(times[i], true), { label: "Time", value: Math.round(times[i] * 10) / 10, min: Math.round(lo * 10) / 10, max: Math.round(hi * 10) / 10, step: 0.1, format: v => clock(v, true), onChange: v => setKeys(retimeKeys(keys, times, i, v), false), onDone: done }));
-  }
-  out.push({ id: "delete", name: "", value: "Delete", icon: <Trash2 size={16} />, disabled: keys.length <= 2, title: keys.length <= 2 ? "A custom camera path needs two keyframes" : `Delete keyframe ${i + 1}`, run: () => { setKeys(keys.filter((_, j) => j !== i)); setEd({ flyKey: Math.max(0, i - 1) }); }, testid: "fly-key-delete" });
   return out;
 }
 
@@ -268,41 +231,20 @@ export const addWhere = (times: number[], picked: number | null, t: number | nul
   return on >= 0 ? { after: on, t: times[on] ?? 0 } : { after: null, t: t ?? 0 };
 };
 
-/** Adds a keyframe to a custom camera path: after keyframe `after` (halfway to the next; past the
- * last, on beyond it), or else `t` seconds in, where the camera is then. The new one is selected. */
-export function addKeyframe(holeId: string, where: { after: number | null; t: number }) {
-  const doc = useCourse.getState().doc;
-  const hole = doc.holes.find(h => h.id === holeId);
-  const keys = hole?.flyKeys;
-  if (!hole || !keys || keys.length < 2) return;
-  const fs = flyoverOf(doc, hole);
-  const ground = (x: number, y: number) => getView()?.groundHeight(x, y) ?? 0;
-  let r: { keys: FlyKey[]; at: number };
-  if (where.after !== null) r = insertKey(keys, where.after, fs, ground);
-  else {
-    const f = keyFlight(keys, fs, ground);
-    if (!f) return;
-    r = insertKeyAt(keys, where.t, flightAt(f, where.t, ground), fs, ground);
-  }
-  if (r.at < 0) return;
-  updateHole(hole.id, { flyKeys: r.keys });
-  useEditor.getState().set({ flyKey: r.at });
-}
-
 /** Add keyframe beside the pill (a phone) or in the bar (a computer), saying where it goes: after
  * the keyframe selected, or at the playhead. `compact`: the phone's glass. */
-export function AddKeyframe({ times, picked, at, onAdd, compact = true }: { times: number[]; picked: number | null; at: number | null; onAdd: () => void; compact?: boolean }) {
+export function AddKeyframe({ times, picked, at, onAdd, compact = true, testid = "fly-key-add" }: { times: number[]; picked: number | null; at: number | null; onAdd: () => void; compact?: boolean; testid?: string }) {
   const w = addWhere(times, picked, at);
   const where = w.after !== null ? `after ${w.after + 1}` : `at ${clock(w.t, true)}`;
   return compact ? (
     <button type="button" className="h-11 pl-1.5 pr-4 rounded-full glass border border-white/10 shadow-xl flex items-center gap-2 text-left active:bg-white/[0.1] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-      onClick={onAdd} title={`Add keyframe ${where} (K)`} data-testid="fly-key-add">
+      onClick={onAdd} title={`Add keyframe ${where} (K)`} data-testid={testid}>
       <span className="w-8 h-8 rounded-full bg-orange-300 text-zinc-950 flex items-center justify-center"><Plus size={17} strokeWidth={2.6} /></span>
       <span className="flex flex-col leading-tight"><span className="text-[14.5px] font-bold text-zinc-50 whitespace-nowrap">Add keyframe</span><span className="text-[11px] font-semibold text-zinc-400 whitespace-nowrap">{where}</span></span>
     </button>
   ) : (
     <button type="button" className="h-10 pl-1.5 pr-3.5 rounded-full bg-white/[0.07] hover:bg-white/[0.12] flex items-center gap-1.5 text-[13.5px] font-bold text-zinc-50 whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-      onClick={onAdd} title={`Add keyframe ${w.after !== null ? `after keyframe ${w.after + 1}` : where} (K)`} data-testid="fly-key-add">
+      onClick={onAdd} title={`Add keyframe ${w.after !== null ? `after keyframe ${w.after + 1}` : where} (K)`} data-testid={testid}>
       <span className="w-7 h-7 rounded-full bg-orange-300 text-zinc-950 flex items-center justify-center"><Plus size={15} strokeWidth={2.6} /></span>
       Add keyframe <span className="font-semibold text-zinc-400">{where}</span>
     </button>

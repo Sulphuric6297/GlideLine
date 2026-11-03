@@ -1,34 +1,31 @@
 // What shows over tee view and a flyover: the hole's card, View, Tap mode, and the flyover's bar (the
-// map's glass bar, mobile/GlassBar): the flyover's timeline (across the bar, over the pill, once it
-// has keyframes or plays), the hole's name with the holes either side and its menu, and every
-// flyover setting in its row; ✓ back to the map. A keyframe selected (on the timeline, or the
-// playhead dragged onto it), the flyover holds on its moment and the bar is the keyframe's, as a
-// selected thing's is: Keyframe 2 with ‹ ›, its settings, ✓ done with it. Add keyframe beside the
-// pill. On a computer the settings are in the side panel and the bar over the view keeps the hole,
-// the timeline, Add keyframe and Back to map. While a flyover plays the card goes, and left alone
-// for a few seconds the bar folds to just its timeline. Someone viewing sees no keyframes: just
-// the flyover, and a scrub bar.
+// map's glass bar, mobile/GlassBar on a phone; on a computer a bar along the foot of the view): the
+// hole's name with the holes either side, Play flyover (playing, the timeline: Pause and a scrub
+// bar, across the bar on a phone), Edit flyover (the Flyover editor, CameraHud: the one place a
+// flyover is changed), Export video, and back to the map. Tee view is for standing, walking and
+// watching; it has none of the flyover's settings. While a flyover plays the card goes, and left
+// alone for a few seconds the bar folds to just its timeline.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Settings2, Square, Trash2, Video, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Square, Video, X } from "lucide-react";
 import { useAllowed } from "../auth/perms";
 import { STAND_HERE, TEE_LEVELS } from "../constants";
 import { activeLayout } from "../lib/course";
 import { courseStats, holeStats } from "../lib/holeStats";
 import { fmtDist, fmtElev } from "../lib/units";
-import { updateHole, useCourse, useEditor } from "../state/course";
+import { useCourse, useEditor } from "../state/course";
 import { useExportJob } from "../state/exportJob";
 import { recordVideo, useVideoSettings } from "../state/video";
 import { VIDEO_SIZES } from "../lib/video";
 import type { Hole, TeeItem } from "../types";
 import { ElevationProfile } from "./ElevationProfile";
 import { SceneButton } from "./ScenePanel";
-import { HoleFlight, cameraFrom } from "./FlyoverSettings";
-import { AddKeyframe, FlightLine, TapModes, addKeyframe, addWhere, retimeKeys, useFlight, useFlyoverSettings, useKeyframeSettings } from "./FlyoverBar";
+import { editFlyover } from "./FlyoverSettings";
+import { FlightLine, TapModes, useFlight } from "./FlyoverBar";
 import { askHelp } from "./ui";
 import { getView } from "../state/view";
 import { useSelection } from "./Inspector";
 import { useToolbarRoom } from "./Toolbar";
-import { ActRow, GlassBar } from "./mobile/GlassBar";
+import { ActRow, GlassBar, type BarSetting } from "./mobile/GlassBar";
 
 /** While a flyover waits for its pictures: the hole's name and numbers and a thin moving bar,
  * over the view (shown at once; it fades as the flight begins), and Cancel (it covers the bar
@@ -101,19 +98,14 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const selection = useSelection();
   const picked3 = selection.item;
   const pickedGroup = selection.group.length > 0;
-  const [panelOn, setPanelOn] = useState(true);
   const toolbar = useToolbarRoom(r => r.height);
   const select = useEditor(e => e.standTap === "edit");
   const toolsUp = editing && select;
   // (a phone, a thing picked: its own bar in the flyover bar's place)
   const sheetUp = compact && !readOnly && !playing && !!ed.selectedId && doc.items.some(i => i.id === ed.selectedId);
   const [cardOpen, setCardOpen] = useState(false);
-  // The flyover's timeline: its keyframes (a custom camera path; someone viewing sees none), the one
-  // selected, the playhead as it plays
+  // The flyover's timeline: the playhead as it plays (its keyframes are the Flyover editor's)
   const flight = useFlight(hole);
-  const keys = readOnly ? null : flight.keys;
-  const picked = keys && ed.flyKey !== null ? Math.min(ed.flyKey, keys.length - 1) : null;
-  const pickedT = picked !== null ? flight.times[picked] ?? null : null;
   const [at, setAt] = useState<number | null>(null);
   useEffect(() => {
     if (!playing) { setAt(null); return; }
@@ -130,50 +122,8 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const sig = JSON.stringify([hole.flyKeys, hole.flyover, doc.flyover]);
   const firstSig = useRef(sig);
   useEffect(() => { if (sig !== firstSig.current) { firstSig.current = sig; if (useEditor.getState().flyover) getView()?.flyRefresh(); } }, [sig]);
-  // A keyframe selected: the flyover held on its moment, the playhead there (standing, it starts,
-  // held there; held already, it goes there; its time changed, with it)
-  useEffect(() => {
-    if (pickedT === null || running) return;
-    if (!playing) { useEditor.getState().set({ flyover: true, flyPaused: true, flyFrom: pickedT }); return; }
-    const now = getView()?.flyClock()?.t ?? null;
-    if (now !== null && Math.abs(now - pickedT) > 0.05) getView()?.flySeek(pickedT);
-    setAt(pickedT);
-  }, [pickedT, playing, running]);
-  const pick = (k: number) => {
-    if (!keys) return;
-    const i = Math.max(0, Math.min(keys.length - 1, k));
-    ed.set(running ? { flyKey: i, flyPaused: true } : { flyKey: i });
-  };
-  // (the playhead dragged: onto a keyframe, it's selected and the playhead is on it; off them, none
-  // is; standing, the flyover starts held there)
-  const scrub = (t: number) => {
-    const near = Math.max(0.15, (flight.length ?? 10) / 60);
-    const k = keys && !running ? flight.times.findIndex(x => Math.abs(x - t) < near) : -1;
-    const to = k >= 0 ? flight.times[k] : t;
-    setAt(to);
-    if (playing) { getView()?.flySeek(to); if (keys && !running) ed.set({ flyKey: k >= 0 ? k : null }); }
-    else if (keys) ed.set({ flyover: true, flyPaused: true, flyFrom: to, flyKey: k >= 0 ? k : null });
-  };
-  // (the playhead: as it plays; standing with keyframes, at the start)
-  const playhead = playing ? at : keys ? 0 : null;
-  const addNow = () => { if (keys) addKeyframe(hole.id, addWhere(flight.times, picked, playhead)); };
-  // (a computer: K adds a keyframe, [ and ] go to the keyframe before or after; before the map's
-  // own keys, which would go to other holes)
-  const keyRef = useRef({ addNow, pick, picked, n: keys?.length ?? 0 });
-  keyRef.current = { addNow, pick, picked, n: keys?.length ?? 0 };
-  useEffect(() => {
-    if (compact || !keys) return;
-    const on = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (el && ((el.tagName === "INPUT" && !["range", "checkbox", "radio"].includes((el as HTMLInputElement).type)) || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
-      if (e.ctrlKey || e.metaKey || e.altKey || useEditor.getState().flyCam) return;
-      const r = keyRef.current;
-      if (e.key === "k" || e.key === "K") { e.preventDefault(); e.stopPropagation(); r.addNow(); }
-      else if (e.key === "[" || e.key === "]") { e.preventDefault(); e.stopPropagation(); r.pick(r.picked === null ? (e.key === "]" ? 0 : r.n - 1) : r.picked + (e.key === "]" ? 1 : -1)); }
-    };
-    window.addEventListener("keydown", on, true);
-    return () => window.removeEventListener("keydown", on, true);
-  }, [compact, !!keys]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (the playhead dragged while it plays: the flyover goes to that moment)
+  const scrub = (t: number) => { setAt(t); getView()?.flySeek(t); };
   // Left alone while it plays, the bar folds to its timeline; a touch, a move of the mouse or a key
   // brings it back (not while a menu or dial is open). The touch that brings it back does only that:
   // it doesn't also press what comes up under the finger (the timeline, still there, works at once)
@@ -225,14 +175,16 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   useEffect(() => { setHint(true); const t = window.setTimeout(() => setHint(false), 4500); return () => window.clearTimeout(t); }, [select]);
   const record = () => void recordVideo([hole.id]);
   const recPct = job?.kind === "video" && job.progress !== null ? `${Math.round(job.progress * 100)}%` : null;
-  const all = useFlyoverSettings(hole, { exportVideo: mayRecord ? record : undefined });
-  const settings = (readOnly ? all.filter(x => x.id === "export") : all).map(x => (x.id === "export" ? { ...x, disabled: !!job, value: job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : x.value } : x));
+  // (a phone's row: Edit flyover, and Export video for those who may have downloads)
+  const settings: BarSetting[] = [];
+  if (!readOnly) settings.push({ id: "edit", name: "", value: "Edit flyover", icon: <Video size={16} />, run: () => editFlyover(hole.id), testid: "fly-edit", title: "The flyover's one editor: its camera, keyframes and settings" });
+  if (mayRecord) settings.push({ id: "export", name: `${VIDEO_SIZES[video.resolution].label} · ${video.fps} fps`, value: job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : "Export video", icon: <Clapperboard size={16} />, run: record, disabled: !!job, testid: "fly-export" });
   const stats = courseStats(doc);
   const done = doc.holes.filter((_, k) => stats[k].complete);
   const i = done.findIndex(h => h.id === hole.id);
   const go = (d: number) => {
     const next = done[(i + d + done.length) % done.length];
-    if (next) ed.set({ teeView: next.id, teeViewTee: null, flyover: ed.flyover, flyKey: null });
+    if (next) ed.set({ teeView: next.id, teeViewTee: null, flyover: ed.flyover });
   };
   const lvl = TEE_LEVELS[s.level];
   // (beside the big number: the hole's name, or the tee it's seen from; standing away from the tee,
@@ -246,44 +198,25 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
       {playing && <ActRow icon={<Square size={17} />} label="Stop flyover" hint="Back to the tee" onClick={() => ed.set({ flyover: false })} testid="hud-stop" />}
       {ed.teeStand && !playing && <ActRow icon={<Home size={18} />} label="Return to tee" hint="Back where the hole starts" onClick={() => ed.set({ teeStand: null })} testid="hud-to-tee" />}
       {mayRecord && !job && <ActRow icon={<Clapperboard size={18} />} label="Export video" hint={`${VIDEO_SIZES[video.resolution].label} · ${video.fps} fps`} onClick={record} testid="hud-record" />}
-      {!readOnly && <ActRow icon={<Video size={18} />} label="Edit camera path" hint="Move the camera yourself and set keyframes" onClick={() => cameraFrom(hole.id, null)} testid="hud-freecam" />}
+      {!readOnly && <ActRow icon={<Video size={18} />} label="Edit flyover" hint="Its camera, keyframes and settings" onClick={() => editFlyover(hole.id)} testid="hud-edit" />}
       <ActRow icon={<HelpCircle size={18} />} label="Flyover help" hint="How flyovers and camera paths work" onClick={() => askHelp("flyover")} testid="hud-help" />
     </div>
   );
-  const retime = (k: number, t: number, end: boolean) => {
-    if (!flight.keys) return;
-    updateHole(hole.id, { flyKeys: retimeKeys(flight.keys, flight.times, k, t) }, false);
-    if (end) useCourse.getState().commit();
-  };
   const lineProps = {
-    playing, paused: ed.flyPaused, onPlay: () => ed.set(playing ? { flyPaused: false } : { flyover: true }), onPause: () => ed.set({ flyPaused: true }), length: flight.length, at: playhead,
-    keys: keys ? flight.times : undefined, picked, onRetime: keys ? retime : undefined, onPick: pick, onScrub: playing || keys ? scrub : undefined
+    playing, paused: ed.flyPaused, onPlay: () => ed.set(playing ? { flyPaused: false } : { flyover: true }), onPause: () => ed.set({ flyPaused: true }), length: flight.length, at: playing ? at : null,
+    onScrub: playing ? scrub : undefined
   };
   const line = <FlightLine {...lineProps} />;
   const lineBare = <FlightLine bare {...lineProps} />;
-  // (a keyframe selected: the bar is the keyframe's, with ‹ › to the ones either side)
-  const keySettings = useKeyframeSettings(hole, picked ?? 0);
-  const keyBar = picked !== null && !!keys;
-  const keyMenu = keys && picked !== null && (
-    <div className="flex flex-col gap-0.5">
-      <ActRow icon={<Video size={18} />} label="Move camera" hint={`Move keyframe ${picked + 1}'s camera yourself`} onClick={() => cameraFrom(hole.id, picked)} testid="key-move" />
-      {keys.length > 2 && <ActRow icon={<Trash2 size={18} />} label={`Delete keyframe ${picked + 1}`} danger onClick={() => { updateHole(hole.id, { flyKeys: keys.filter((_, j) => j !== picked) }); ed.set({ flyKey: Math.max(0, picked - 1) }); }} testid="key-delete" />}
-      <ActRow icon={<HelpCircle size={18} />} label="Flyover help" hint="How flyovers and camera paths work" onClick={() => askHelp("flyover")} testid="hud-help" />
-    </div>
-  );
   const many = done.length > 1;
   // (a computer: along the foot of the view, over the drawing tools when they're up)
   const base = compact ? 0 : toolsUp ? toolbar + 6 : 0;
-  // (a phone: the timeline across the bar once there's one to use, keyframes or a flyover under way)
-  const fullLine = !!keys || playing;
-  const barH = BAR_H + (fullLine ? 46 + 8 : 0);
+  // (a phone: the timeline across the bar while it plays, to drag through it)
+  const barH = BAR_H + (playing ? 46 + 8 : 0);
   const bar = !sheetUp && (
-    <GlassBar remember={keyBar ? "flyover-key" : "flyover"}
-      pill={keyBar ? { name: `Keyframe ${picked! + 1}`, prev: () => pick(picked! - 1), next: () => pick(picked! + 1), prevOff: picked === 0, nextOff: picked === keys!.length - 1, prevLabel: "The keyframe before", nextLabel: "The keyframe after", testid: "flyover-pill" }
-        : { name: `Hole ${s.label}`, prev: many ? () => go(-1) : undefined, next: many ? () => go(1) : undefined, testid: "flyover-pill" }}
-      pillMenu={keyBar ? keyMenu : pillMenu} settings={keyBar ? keySettings : settings} line={line} lineAbove={fullLine} tucked={tucked}
-      beside={keys ? <AddKeyframe times={flight.times} picked={picked} at={playhead} onAdd={addNow} /> : undefined}
-      onDone={keyBar ? () => ed.set({ flyKey: null }) : () => ed.set({ teeView: null, flyover: false })} doneLabel={keyBar ? "Done with the keyframe" : "Done: back to the map"}
+    <GlassBar remember="flyover" pill={{ name: `Hole ${s.label}`, prev: many ? () => go(-1) : undefined, next: many ? () => go(1) : undefined, testid: "flyover-pill" }}
+      pillMenu={pillMenu} settings={settings} line={line} lineAbove={playing} tucked={tucked}
+      onDone={() => ed.set({ teeView: null, flyover: false })} doneLabel="Done: back to the map"
       bottom={base} onOpen={id => setMenuOpen(!!id)} testid="tee-bar" />
   );
   const wide = typeof window !== "undefined" && window.innerWidth >= 1200;
@@ -327,8 +260,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   // hole, Play or Pause and the timeline, Back to map. Something selected (Select): its own panel in
   // that place, the hole's card floating beside it, as on the map
   const thing = !!picked3 || pickedGroup;
-  const flyPanel = !readOnly && panelOn && !thing;
-  const offset = flyPanel || (editing && thing) ? 162 : 0;
+  const offset = editing && thing ? 162 : 0;
   const card = (
     <div className="relative flex items-center gap-3">
       <div className="w-12 h-12 rounded-full flex items-center justify-center text-2xl font-bold shrink-0" style={{ background: lvl.color, color: lvl.ink, fontFamily: "Oswald, Inter" }}>{s.label}</div>
@@ -339,32 +271,15 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
       </div>
     </div>
   );
-  const head = "w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-50 hover:bg-white/[0.09] disabled:opacity-30";
   const pill = "h-10 px-3 rounded-full text-[13.5px] font-semibold flex items-center gap-1.5 text-zinc-50 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400";
   return (
     <div className="absolute inset-0 pointer-events-none z-20" data-pov-ui>
       {loading}
-      {flyPanel && (
-        <aside className="absolute top-3 left-3 w-[300px] max-h-[calc(100%-24px)] flex flex-col glass rounded-[22px] shadow-xl shadow-black/40 z-20 pointer-events-auto" data-testid="fly-panel" aria-label="Flyover">
-          <div className="flex items-center gap-0.5 px-2 pt-2">
-            <button className={head} aria-label="Previous hole" title="Previous hole (←)" disabled={!many} onClick={() => go(-1)}><ChevronLeft size={16} /></button>
-            <button className={head} aria-label="Next hole" title="Next hole (→)" disabled={!many} onClick={() => go(1)}><ChevronRight size={16} /></button>
-            <span className="flex-1 pl-1.5 text-[14px] font-bold text-zinc-50">Flyover</span>
-            <button className={head} aria-label="Close the Flyover panel" title="Close" onClick={() => setPanelOn(false)} data-testid="fly-panel-close"><X size={15} /></button>
-          </div>
-          <div className="overflow-y-auto min-h-0 dg-scroll px-4 pb-4 pt-1">
-            <div className="text-white">{card}</div>
-            <div className="mt-2 mb-4"><ElevationProfile doc={doc} line={s.line} height={56} teeColor={lvl.color} /></div>
-            <HoleFlight key={hole.id} hole={hole} inTee exportVideo={mayRecord ? { label: `${VIDEO_SIZES[video.resolution].label}, ${video.fps} fps`, run: record, busy: job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : job ? "Exporting…" : null } : undefined} />
-          </div>
-        </aside>
-      )}
-      {/* (no Flyover panel: the hole's card floating, beside a selected thing's panel) */}
-      {!flyPanel && ed.teeCardHidden && !playing && <div className={`absolute top-4 ${editing && thing ? "left-[324px]" : "left-4"}`}><CardChip label={s.label} color={lvl.color} ink={lvl.ink} /></div>}
-      {!flyPanel && (
+      {/* (the hole's card floating, beside a selected thing's panel) */}
+      {ed.teeCardHidden && !playing && <div className={`absolute top-4 ${editing && thing ? "left-[324px]" : "left-4"}`}><CardChip label={s.label} color={lvl.color} ink={lvl.ink} /></div>}
+      {(
         <div className={`absolute top-4 pointer-events-auto glass backdrop-blur rounded-[24px] px-4 py-3 text-white shadow-2xl border border-white/10 w-[300px] ${playing || ed.teeCardHidden ? "hidden" : ""} ${editing && thing ? "left-[324px]" : "left-4"}`} data-testid="tee-view-hud">
           <div className="absolute right-2 top-2 flex items-center gap-0.5">
-            {!readOnly && !thing && <button className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-300 hover:text-white hover:bg-white/10" aria-label="Flyover settings" title="Flyover settings" onClick={() => setPanelOn(true)} data-testid="fly-panel-open"><Settings2 size={15} /></button>}
             <HideCard />
           </div>
           {card}
@@ -382,8 +297,9 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
         <span className="text-[14px] font-bold text-zinc-50 px-0.5" data-testid="sheet-title">Hole {s.label}</span>
         <button className={`${pill} !px-0 w-9 justify-center text-zinc-300`} aria-label="Next hole" title="Next hole (→)" disabled={!many} onClick={() => go(1)} data-testid="hole-next"><ChevronRight size={18} /></button>
         <span className="w-px h-6 bg-white/[0.12] mx-1" />
-        <div className="w-[min(480px,34vw)]">{lineBare}</div>
-        {keys && <AddKeyframe compact={false} times={flight.times} picked={picked} at={playhead} onAdd={addNow} />}
+        <div className="w-[min(420px,30vw)]">{lineBare}</div>
+        {!readOnly && !playing && <button className={pill} onClick={() => editFlyover(hole.id)} title="The flyover's one editor: its camera, keyframes and settings" data-testid="fly-edit"><Video size={15} /> Edit flyover</button>}
+        {mayRecord && !playing && <button className={pill} onClick={record} disabled={!!job} title={`Export video · ${VIDEO_SIZES[video.resolution].label}, ${video.fps} fps`} data-testid="fly-export"><Clapperboard size={15} /> {job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : "Export video"}</button>}
         <span className="w-px h-6 bg-white/[0.12] mx-1" />
         {playing && <button className={pill} onClick={() => ed.set({ flyover: false })} title="Stop and go back to the tee (Esc)" data-testid="hud-stop"><Square size={13} /> Stop</button>}
         <button className={`${pill} bg-white/[0.07]`} onClick={() => ed.set({ teeView: null, flyover: false })} title="Back to the map (Esc)" data-testid="bar-done"><X size={15} /> Back to map</button>

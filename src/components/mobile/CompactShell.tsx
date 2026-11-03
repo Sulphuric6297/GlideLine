@@ -37,7 +37,6 @@ import { ActionSheet, type SheetAction } from "./ActionSheet";
 import { BottomSheet, type Detent } from "./BottomSheet";
 import { PageTools } from "./PageTools";
 import { useHoleSettings, useItemSettings } from "./HoleStrip";
-import { AddKeyframe, FlightLine, addKeyframe, addWhere, useFlight, useFlyoverSettings, useKeyframeSettings } from "../FlyoverBar";
 import { Disc } from "./SheetFold";
 import { ActRow, EdgeSlider, GlassBar, useBarNav, type BarSetting } from "./GlassBar";
 import { MoveCornerHere } from "../PlaceByGps";
@@ -635,41 +634,14 @@ function PhoneToolBar({ faded, side, onHeight, mainH, from }: BarProps) {
 }
 
 /** A hole picked: its pill (with the holes either side), every setting it has, and ✓. Its Flyover
- * opens the flyover's bar in place: the timeline and every flyover setting, ‹ back to the hole's. */
+ * opens the Flyover editor. */
 function PhoneHoleBar({ hole, faded, side, onHeight }: BarProps & { hole: Hole }) {
   const doc = useCourse(s => s.doc);
   const s = holeStats(doc, hole);
-  const [fly, setFly] = useState(false);
-  const settings = useHoleSettings(hole, { onFlyover: () => setFly(true) });
+  const settings = useHoleSettings(hole);
   const many = doc.holes.length > 1;
-  if (fly) return <HoleFlyoverBar hole={hole} back={() => setFly(false)} faded={faded} side={side} onHeight={onHeight} />;
   const pill = { name: `Hole ${holeLabel(doc, hole.id)}`, small: s.complete ? `${fmtDist(s.length, doc.units)} · Par ${s.par}` : s.teeId ? "Needs a basket" : "Needs a tee", prev: many ? () => stepHole(-1) : undefined, next: many ? () => stepHole(1) : undefined, testid: "selection-header" };
   return <GlassBar remember="hole" pill={pill} pillMenu={<PillActions id={hole.id} />} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
-}
-
-/** A hole's flyover, from its bar on the map: Play flyover (to the tee, playing), every flyover
- * setting, as tee view has them. */
-function HoleFlyoverBar({ hole, back, faded, side, onHeight }: { hole: Hole; back: () => void; faded: boolean; side?: boolean; onHeight: (px: number) => void }) {
-  const doc = useCourse(s => s.doc);
-  const settings = useFlyoverSettings(hole);
-  const flight = useFlight(hole);
-  const s = holeStats(doc, hole);
-  // (a keyframe selected on the timeline: the bar is the keyframe's, as in tee view)
-  const flyKey = useEditor(e => e.flyKey);
-  const set = useEditor(e => e.set);
-  const keys = flight.keys;
-  const picked = keys && flyKey !== null ? Math.min(flyKey, keys.length - 1) : null;
-  const keySettings = useKeyframeSettings(hole, picked ?? 0);
-  const pick = (k: number) => keys && set({ flyKey: Math.max(0, Math.min(keys.length - 1, k)) });
-  const play = () => set({ teeView: hole.id, teeViewTee: null, flyover: true });
-  const line = s.complete ? <FlightLine playing={false} onPlay={play} onPause={() => {}} length={flight.length} at={keys ? (picked !== null ? flight.times[picked] : 0) : null} keys={keys ? flight.times : undefined} picked={picked} onPick={pick} /> : undefined;
-  const keyBar = picked !== null && !!keys;
-  const pill = keyBar
-    ? { name: `Keyframe ${picked! + 1}`, prev: () => pick(picked! - 1), next: () => pick(picked! + 1), prevOff: picked === 0, nextOff: picked === keys!.length - 1, prevLabel: "The keyframe before", nextLabel: "The keyframe after", testid: "selection-header" }
-    : { name: `Hole ${holeLabel(doc, hole.id)}`, small: "Flyover", back, testid: "selection-header" };
-  return <GlassBar remember={keyBar ? "hole-flyover-key" : "hole-flyover"} pill={pill} settings={keyBar ? keySettings : settings} line={side ? undefined : line} lineAbove={!!keys}
-    beside={keys && !side ? <AddKeyframe times={flight.times} picked={picked} at={picked !== null ? flight.times[picked] : 0} onAdd={() => addKeyframe(hole.id, addWhere(flight.times, picked, 0))} /> : undefined}
-    onDone={keyBar ? () => set({ flyKey: null }) : () => select(null)} doneLabel={keyBar ? "Done with the keyframe" : "Done: put it down"} faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
 }
 
 /** Anything else picked: its pill (its hole, and what can be done with it), every setting it has. */
