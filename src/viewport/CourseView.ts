@@ -4208,7 +4208,7 @@ export class CourseView {
   clickTarget(clientX: number, clientY: number, dom: string | null = null): { id: string | null; tree: ReturnType<CourseView["treeAt"]> } {
     const hit = dom ?? this.pick(clientX, clientY);
     const it = hit ? this.item(hit) : null;
-    const big = (!hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit))) && !(hit && !dom && this.pickedEdge);
+    const big = (!hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit))) && !this.edgeFirst(hit, dom);
     const tree = big && !this.readOnly ? this.treeAtScreen(clientX, clientY) : null;
     return tree ? { id: null, tree } : { id: hit, tree: null };
   }
@@ -5749,8 +5749,13 @@ export class CourseView {
     try { return this.pickIn(clientX, clientY); } finally { this.eye = was; }
   }
 
-  /** Whether the last pick was an area's edge (a click there picks the area, not a tree on it). */
+  /** Whether the last pick was an area's edge. */
   private pickedEdge = false;
+  /** Whether a press there goes to the area's edge before a tree drawn there: only when that area
+   * is the one picked (to move it by its edge); otherwise the tree, as it's what's seen there. */
+  private edgeFirst(hit: string | null, dom: string | null) {
+    return !!hit && !dom && this.pickedEdge && hit === this.selectedId;
+  }
 
   private pickIn(clientX: number, clientY: number): string | null {
     this.pickedEdge = false;
@@ -6352,7 +6357,7 @@ export class CourseView {
   private menuFor(x: number, y: number, domItem: string | null): { itemId: string | null; under: string | null } {
     const hit = domItem ?? this.pick(x, y);
     const it = hit ? this.item(hit) : null;
-    const big = !!hit && !domItem && !this.pickedEdge && (it ? it.type === "area" || it.type === "line" || it.type === "structure" : !!this.hole(hit));
+    const big = !!hit && !domItem && !this.edgeFirst(hit, domItem) && (it ? it.type === "area" || it.type === "line" || it.type === "structure" : !!this.hole(hit));
     return big && !this.readOnly && this.treeAtScreen(x, y) ? { itemId: null, under: hit } : { itemId: hit, under: null };
   }
 
@@ -6688,14 +6693,14 @@ export class CourseView {
     const hitItem = hit ? this.item(hit) : null;
     // (over a hole's line or fairway too: a tree stands above it; tees, baskets, signs and the
     // course's own trees still come first; on an area's edge, the area)
-    const overBig = (!hit || (!!hitItem && (hitItem.type === "area" || hitItem.type === "line" || hitItem.type === "structure")) || (!hitItem && !!this.hole(hit))) && !(hit && !domItem && this.pickedEdge);
+    const overBig = (!hit || (!!hitItem && (hitItem.type === "area" || hitItem.type === "line" || hitItem.type === "structure")) || (!hitItem && !!this.hole(hit))) && !this.edgeFirst(hit, domItem);
     if (overBig && !e.shiftKey && !tool.dragSelect && !this.readOnly) {
       const tree = this.treeAtScreen(e.clientX, e.clientY);
       if (tree) {
-        // (a press on a tree or bush never moves the area it stands in, picked or not: a drag from
-        // it moves the map, and a picked area moves from its edge; a picked house or line under
-        // the leaves moves, as it's what's picked there)
-        const moves = !!hitItem && hit === this.selectedId && !hitItem.locked && hitItem.type !== "area";
+        // (a press on a tree or bush never moves the area or line it stands on, picked or not: a
+        // drag from it moves the map, and a picked area or line moves from where no leaves are, or
+        // its handles; a picked house under the leaves moves, as its roof is what's picked there)
+        const moves = !!hitItem && hit === this.selectedId && !hitItem.locked && hitItem.type === "structure";
         if (moves) e.stopPropagation(); else stop();
         this.gesture(e, {
           // (picked like any tree: the same panel, moved once picked, deleted with Del)
@@ -7691,7 +7696,7 @@ export class CourseView {
   private povTapPick(ev: PointerEvent) {
     const hit = this.pick(ev.clientX, ev.clientY);
     const it = hit ? this.item(hit) : null;
-    const big = (!hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit))) && !(hit && this.pickedEdge);
+    const big = (!hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit))) && !this.edgeFirst(hit, null);
     const tree = big && !this.readOnly ? this.treeAtScreen(ev.clientX, ev.clientY) : null;
     if (tree) this.cb.onAdoptTree(tree, this.lookOf(tree));
     else this.cb.onSelect(hit);
