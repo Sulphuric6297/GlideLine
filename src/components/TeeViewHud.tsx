@@ -132,7 +132,8 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   idleNow.current = idle;
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
-    if (!running) { setIdle(false); return; }
+    // (a phone's bar only: a computer's never folds, so a click on it is always meant)
+    if (!running || !compact) { setIdle(false); return; }
     let t = window.setTimeout(() => setIdle(true), 3000);
     const wakeNow = () => { setIdle(false); window.clearTimeout(t); t = window.setTimeout(() => setIdle(true), 3000); };
     const wake = (e: Event) => {
@@ -168,7 +169,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
     window.addEventListener("pointermove", wake, true);
     window.addEventListener("keydown", wake, true);
     return () => { window.clearTimeout(t); window.removeEventListener("pointerdown", wake, true); window.removeEventListener("pointermove", wake, true); window.removeEventListener("keydown", wake, true); };
-  }, [running]);
+  }, [running, compact]);
   const tucked = running && idle && !menuOpen;
   // (a few seconds' hint on what a tap does, as tool hints have, as tee view or Tap mode starts)
   const [hint, setHint] = useState(true);

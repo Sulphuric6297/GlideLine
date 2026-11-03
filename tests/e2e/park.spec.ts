@@ -203,6 +203,8 @@ test.describe("phone", () => {
     await page.waitForTimeout(300);
     // (on the Design step already: its tools along the foot, Park among them)
     await page.getByTestId("tool-strip").locator('[data-tool="park"]').tap();
+    // (the tool's bar: Kind opens the kinds just over it)
+    await page.getByTestId("tool-options").tap();
     await page.getByTestId("field-kind-basketball").tap();
     await expect(page.getByTestId("tool-hint")).toHaveText("Tap where the basketball court goes");
     await tapPlan(page, 450, 380);
