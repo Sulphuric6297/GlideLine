@@ -1054,14 +1054,21 @@ test.describe("phone", () => {
     await page.getByTestId("tap-walk").tap();
     // Playing: the card hides, Play flyover becomes the timeline with Stop at its start
     const flying = () => page.evaluate(() => !!(window as any).__dgEditor().flyover);
+    // (if it doesn't start, in the test's log: what was under the finger, each change to flyover and
+    // where it came from, and the taps the page got)
+    await page.evaluate(() => {
+      const w = window as any, st = w.__dgEditor(), orig = st.set;
+      w.__flyLog = [];
+      st.set = (p: any) => { if (p && typeof p === "object" && "flyover" in p) w.__flyLog.push(`set ${JSON.stringify(p)} @ ${(new Error().stack ?? "").split("\n").slice(2, 6).join(" | ")}`); return orig(p); };
+      for (const t of ["pointerdown", "pointerup", "click"]) window.addEventListener(t, e => { const el = e.target as HTMLElement; w.__flyLog.push(`${t} ${el.tagName} ${el.getAttribute?.("data-testid") ?? ""} ${e.defaultPrevented ? "prevented" : ""}`); }, true);
+    });
     await bar.getByTestId("hud-flyover").tap();
-    // (if it doesn't start, what was under the finger and where things stood, in the test's log)
     await expect.poll(flying).toBe(true).catch(async e => {
       const play = (await bar.getByTestId("hud-flyover").boundingBox())!;
       console.log("Play flyover didn't start:", JSON.stringify(await page.evaluate(({ x, y }) => {
-        const ed = (window as any).__dgEditor(), el = document.elementFromPoint(x, y) as HTMLElement | null;
-        return { under: el && `${el.tagName} ${el.getAttribute("data-testid") ?? ""} ${el.className.toString().slice(0, 60)}`, flyover: ed.flyover, flyLoading: ed.flyLoading, flyCam: ed.flyCam, teeView: ed.teeView, selectedId: ed.selectedId, standTap: ed.standTap, said: (window as any).__dgSaid?.() };
-      }, { x: play.x + play.width / 2, y: play.y + play.height / 2 })));
+        const w = window as any, ed = w.__dgEditor(), el = document.elementFromPoint(x, y) as HTMLElement | null;
+        return { under: el && `${el.tagName} ${el.getAttribute("data-testid") ?? ""} ${el.className.toString().slice(0, 60)}`, flyover: ed.flyover, flyLoading: ed.flyLoading, flyCam: ed.flyCam, teeView: ed.teeView, selectedId: ed.selectedId, standTap: ed.standTap, log: w.__flyLog };
+      }, { x: play.x + play.width / 2, y: play.y + play.height / 2 }), null, 1));
       throw e;
     });
     await expect(page.getByTestId("tee-view-hud")).toBeHidden();
