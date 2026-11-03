@@ -294,7 +294,7 @@ test("flyover settings: height, speed and lens change the flight, one undo step 
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("tee-view").click();
   // (the Flyover editor, from tee view's bar: its settings in its panel)
-  await page.getByTestId("tee-bar").getByTestId("fly-edit").click();
+  await page.getByTestId("tee-view-hud").getByTestId("card-fly-edit").click();
   await expect(page.getByTestId("flyover-settings")).toBeVisible();
   const flight = () => page.evaluate(id => {
     const v = (window as any).__dgView;
@@ -340,7 +340,7 @@ test("flyover settings: height, speed and lens change the flight, one undo step 
   // This hole's own: lower than the rest, kept for it only; back to the settings for all holes
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("tee-view").click();
-  await page.getByTestId("tee-bar").getByTestId("fly-edit").click();
+  await page.getByTestId("tee-view-hud").getByTestId("card-fly-edit").click();
   await expect(page.getByTestId("flyover-settings")).toBeVisible();
   // (the 3D view rests while the settings change: drawn in software, its frames hold up the page)
   await page.evaluate(() => (window as any).__dgView.setPaused(true));
@@ -371,7 +371,7 @@ test("flyover on-screen switches: off for all holes, back on for one; no disc fl
   // All holes: the Camera settings from a tee
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("tee-view").click();
-  await page.getByTestId("tee-bar").getByTestId("fly-edit").click();
+  await page.getByTestId("tee-view-hud").getByTestId("card-fly-edit").click();
   await expect(page.getByTestId("flyover-settings")).toBeVisible();
   await page.evaluate(() => (window as any).__dgView.setPaused(true));
   await page.getByTestId("flyover-settings").getByRole("radio", { name: "All holes" }).click();

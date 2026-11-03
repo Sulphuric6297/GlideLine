@@ -261,7 +261,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   const rowH = 64, gap = 8, pillH = 44;
   // (no settings, only the line: the pill, the line and ✓ along the foot)
   const noRow = !side && !replace && !settings.length && !!line;
-  const panelBottom = side ? undefined : noRow ? bottom + kb + 18 + pillH + gap : bottom + kb + 18 + rowH + gap + (open?.pill ? pillH + gap + (lineAbove && line ? 46 + gap : 0) : 0);
+  const panelBottom = side ? undefined : noRow ? bottom + kb + 18 + pillH + gap + (lineAbove ? 46 + gap : 0) : bottom + kb + 18 + rowH + gap + (open?.pill ? pillH + gap + (lineAbove && line ? 46 + gap : 0) : 0);
 
   const pillEl = (
     <div ref={pillRef} className={`flex items-center h-11 rounded-full border shadow-xl transition-opacity duration-200 ${open && !open.pill ? "opacity-0 pointer-events-none" : ""} ${open?.pill ? "bg-zinc-100 border-transparent text-zinc-900" : "glass border-white/10 text-zinc-50"}`} data-testid={pill.testid ?? "bar-pill"}>

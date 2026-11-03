@@ -952,7 +952,7 @@ test.describe("phone", () => {
     await expect(page.getByTestId("design-page").locator("image").first()).toBeAttached();
   });
 
-  test("tee view on a phone: the hole's card, the flyover bar along the bottom (the hole's name, Play flyover, Edit flyover), Tap mode over it, back to the map", async ({ page }) => {
+  test("tee view on a phone: the hole's card (its Flyover line once opened), one line along the bottom (the hole's name, Play flyover, ✓), Tap mode over it, Edit flyover in the hole's menu, back to the map", async ({ page }) => {
     // (on a slow machine, all of it takes a while)
     test.setTimeout(180_000);
     await oneHole(page);
@@ -965,24 +965,32 @@ test.describe("phone", () => {
     await expect(page.getByTestId("tee-view-hud")).toContainText("Par 3");
     // The card slim at first: a tap opens the hole's profile, another closes it
     await expect(page.getByTestId("tee-view-hud").locator("svg").first()).toBeVisible();
+    await expect(page.getByTestId("card-flyover")).toHaveCount(0);
     await page.getByTestId("hud-card-open").tap();
     await expect(page.getByTestId("hud-card-open")).toHaveAttribute("aria-expanded", "true");
+    // (opened: the hole's flyover, Automatic, with the way into its editor)
+    await expect(page.getByTestId("card-flyover")).toContainText("Automatic");
+    await expect(page.getByTestId("card-fly-edit")).toBeVisible();
+    expect((await page.getByTestId("card-fly-edit").boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await page.getByTestId("hud-card-open").tap();
-    // Along the bottom, the map's glass bar: the hole's name, Play flyover beside it, Edit flyover
-    // under them; Tap mode just over it at the right
+    // Along the bottom, one line of the map's glass bar: the hole's name, Play flyover, ✓; no row of
+    // settings, no Edit flyover or Export video on it; Tap mode just over it at the right
     const bar = page.getByTestId("tee-bar");
     await expect(bar.getByTestId("sheet-title")).toHaveText("Hole 1");
     await expect(bar.getByTestId("hud-flyover")).toContainText("Play flyover");
-    await expect(bar.getByTestId("fly-edit")).toContainText("Edit flyover");
+    await expect(bar.getByTestId("bar-row")).toHaveCount(0);
+    await expect(bar.getByTestId("fly-edit")).toHaveCount(0);
+    await expect(bar.getByTestId("fly-export")).toHaveCount(0);
     await expect(page.getByTestId("tap-switch")).toBeVisible();
-    const sw = (await page.getByTestId("tap-switch").boundingBox())!, row = (await bar.getByTestId("bar-row").boundingBox())!;
-    expect(sw.y + sw.height).toBeLessThanOrEqual(row.y);
+    const sw = (await page.getByTestId("tap-switch").boundingBox())!, line = (await bar.getByTestId("hud-flyover").boundingBox())!;
+    expect(sw.y + sw.height).toBeLessThanOrEqual(line.y);
     expect(sw.x + sw.width).toBeGreaterThan(page.viewportSize()!.width - 70);
-    // The hole's name opens its menu: Edit flyover, Export video, help
+    // The hole's name opens its menu: Edit flyover (saying what the flyover is), help; no Export video
     await expect(page.getByTestId("hud-edit")).toHaveCount(0);
     await bar.getByTestId("pill-open").tap();
-    await expect(page.getByTestId("hud-edit")).toBeVisible();
-    await expect(page.getByTestId("hud-help")).toBeVisible();
+    await expect(page.getByTestId("hud-edit")).toContainText("Automatic");
+    await expect(page.getByTestId("hud-help")).toContainText("Tee view help");
+    await expect(page.getByTestId("hud-record")).toHaveCount(0);
     await bar.getByTestId("pill-open").tap();
     await expect(page.getByTestId("pill-menu")).toHaveCount(0);
     // Immersive: no step bar or sheet
@@ -1006,8 +1014,9 @@ test.describe("phone", () => {
     await page.getByTestId("pill-open").tap();
     await page.getByTestId("menu-tee-view").tap();
     const bar = page.getByTestId("tee-bar");
-    // Edit flyover: the editor's bar, the whole flyover's settings in its row
-    await bar.getByTestId("fly-edit").tap();
+    // Edit flyover, in the hole's menu: the editor's bar, the whole flyover's settings in its row
+    await bar.getByTestId("pill-open").tap();
+    await page.getByTestId("hud-edit").tap();
     const ed = page.getByTestId("camera-bar");
     await expect(ed.getByTestId("cam-pill")).toContainText("Flyover");
     // A setting's dial grows out of its button: Altitude, one step up with the arrow key
@@ -1082,7 +1091,8 @@ test.describe("phone", () => {
     await tapPlan(page, 450, 500);
     await page.getByTestId("pill-open").tap();
     await page.getByTestId("menu-tee-view").tap();
-    await page.getByTestId("tee-bar").getByTestId("fly-edit").tap();
+    await page.getByTestId("tee-bar").getByTestId("pill-open").tap();
+    await page.getByTestId("hud-edit").tap();
     const bar = page.getByTestId("camera-bar");
     const keys = () => page.evaluate(() => ((window as any).__dgCourse().holes[0].flyKeys ?? []).length);
     await bar.getByTestId("fly-path").tap();

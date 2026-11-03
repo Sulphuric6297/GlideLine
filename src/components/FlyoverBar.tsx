@@ -3,7 +3,7 @@
 // phone's glass bar (mobile/GlassBar) in the editor, and Tap mode (Walk or Select) over tee view's
 // bar.
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { Clapperboard, Footprints, MousePointer2, Pause, Play, Plus } from "lucide-react";
+import { Clapperboard, Footprints, MousePointer2, Pause, Play, Plus, RotateCcw } from "lucide-react";
 import { LENS, flyoverOf, keyTimes } from "../lib/flight";
 import { fmtDist } from "../lib/units";
 import { changeDoc, updateHole, useCourse, useEditor } from "../state/course";
@@ -29,8 +29,11 @@ export const clock = (t: number, tenths = false) => {
  * happens), the playhead (drag along the line to go to that moment; with no keyframes, a scrub
  * bar's round thumb) and the time, where it is over how long it is. `playing`: a flyover under way,
  * `paused` or not. */
-export function FlightLine({ playing, paused = false, canPlay = true, onPlay, onPause, length, at = null, keys, picked = null, onPick, onRetime, onScrub, moved = false, short = false, bare = false, playId = "hud-flyover" }: {
-  playing: boolean; paused?: boolean; canPlay?: boolean; onPlay: () => void; onPause: () => void;
+export function FlightLine({ playing, paused = false, ended = false, canPlay = true, onPlay, onPause, length, at = null, keys, picked = null, onPick, onRetime, onScrub, moved = false, short = false, bare = false, fit = false, playId = "hud-flyover" }: {
+  playing: boolean; paused?: boolean;
+  /** Played to its end, held there: Play is Play again. */
+  ended?: boolean;
+  canPlay?: boolean; onPlay: () => void; onPause: () => void;
   /** How long it plays (s), if known. */
   length: number | null;
   /** The playhead (s), or none. */
@@ -47,6 +50,9 @@ export function FlightLine({ playing, paused = false, canPlay = true, onPlay, on
   short?: boolean;
   /** Inside a bar of its own (a computer's): no glass of its own. */
   bare?: boolean;
+  /** Sharing one line with a pill and ✓ (a phone's tee view): Play flyover says just Play on a narrow
+   * phone, and how long only where there's room. */
+  fit?: boolean;
   playId?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -54,21 +60,22 @@ export function FlightLine({ playing, paused = false, canPlay = true, onPlay, on
   const running = playing && !paused;
   const go = (
     <button type="button" className="shrink-0 w-8 h-8 rounded-full bg-orange-300 text-zinc-950 flex items-center justify-center active:bg-orange-400 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-      aria-label={running ? "Pause" : playing ? "Play" : "Play flyover"} title={running ? "Pause (Space)" : canPlay ? "Play (Space)" : "Add a second keyframe to play it"} disabled={!playing && !canPlay}
+      aria-label={running ? "Pause" : ended ? "Play again" : playing ? "Play" : "Play flyover"} title={running ? "Pause (Space)" : ended ? "Play again (Space)" : canPlay ? "Play (Space)" : "Add a second keyframe to play it"} disabled={!playing && !canPlay}
       onClick={running ? onPause : onPlay} data-testid={playId}>
-      {running ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
+      {running ? <Pause size={14} fill="currentColor" /> : ended ? <RotateCcw size={15} strokeWidth={2.6} /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
     </button>
   );
   const box = bare ? "h-10 rounded-full flex items-center gap-2.5 pl-1 pr-2" : "h-11 rounded-full glass border border-white/10 shadow-xl flex items-center gap-2.5 pl-1.5 pr-3.5";
-  // (held on a moment with keyframes about: to the tenth, as a keyframe's own time reads)
+  // (held on a moment with keyframes about: to the tenth, as a keyframe's own time reads; held at
+  // the end, never past how long it is)
   const tenths = !!keys?.length && !running;
-  const time = <span className="shrink-0 text-[12.5px] font-semibold text-zinc-300 tabular-nums whitespace-nowrap" data-testid="fly-time">{playing || at !== null ? (short ? clock(at ?? 0, tenths) : <><span className="text-zinc-50">{clock(at ?? 0, tenths)}</span> / {clock(dur)}</>) : clock(dur)}</span>;
+  const time = <span className="shrink-0 text-[12.5px] font-semibold text-zinc-300 tabular-nums whitespace-nowrap" data-testid="fly-time">{playing || at !== null ? (short ? clock(Math.min(at ?? 0, dur), tenths) : <><span className="text-zinc-50">{clock(Math.min(at ?? 0, dur), tenths)}</span> / {clock(dur)}</>) : clock(dur)}</span>;
   // (standing, flying by itself, no playhead: just Play flyover; the whole of it plays)
   if (!playing && !keys?.length && at === null) return (
-    <button type="button" className={`${box} w-full text-left active:bg-white/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`} onClick={onPlay} title="Play flyover (Space)" data-testid={playId}>
+    <button type="button" className={`${box} w-full text-left active:bg-white/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`} onClick={onPlay} aria-label="Play flyover" title="Play flyover (Space)" data-testid={playId}>
       <span className="shrink-0 w-8 h-8 rounded-full bg-orange-300 text-zinc-950 flex items-center justify-center"><Play size={14} fill="currentColor" className="ml-0.5" /></span>
-      <span className="flex-1 min-w-0 text-[15px] font-bold text-zinc-50 truncate">Play flyover</span>
-      {length !== null && time}
+      <span className="flex-1 min-w-0 text-[15px] font-bold text-zinc-50 truncate">Play{fit ? <span className="hidden min-[400px]:inline"> flyover</span> : " flyover"}</span>
+      {length !== null && (fit ? <span className="hidden min-[460px]:inline">{time}</span> : time)}
     </button>
   );
   const pct = (t: number) => `${Math.min(100, Math.max(0, (t / dur) * 100))}%`;

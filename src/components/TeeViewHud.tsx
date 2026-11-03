@@ -1,31 +1,29 @@
-// What shows over tee view and a flyover: the hole's card, View, Tap mode, and the flyover's bar (the
-// map's glass bar, mobile/GlassBar on a phone; on a computer a bar along the foot of the view): the
-// hole's name with the holes either side, Play flyover (playing, the timeline: Pause and a scrub
-// bar, across the bar on a phone), Edit flyover (the Flyover editor, CameraHud: the one place a
-// flyover is changed), Export video, and back to the map. Tee view is for standing, walking and
-// watching; it has none of the flyover's settings. While a flyover plays the card goes, and left
-// alone for a few seconds the bar folds to just its timeline.
+// What shows over tee view and a flyover: the hole's card, View, Tap mode, and the bar (the map's
+// glass bar, mobile/GlassBar on a phone, one line with no row; on a computer a bar along the foot of
+// the view): the hole's name with the holes either side, Play flyover (playing, the timeline: Pause
+// and a scrub bar, across the bar on a phone), and back to the map. Tee view is for being there:
+// looking round, walking, watching the flyover. The flyover is the hole's, changed only in the
+// Flyover editor (CameraHud): the way in from here is the Flyover line on the hole's card (on a
+// phone, the hole's menu too), and Edit flyover once a flyover has played to its end. While a
+// flyover plays the card goes, and left alone for a few seconds the bar folds to just its timeline.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Square, Video, X } from "lucide-react";
-import { useAllowed } from "../auth/perms";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, HelpCircle, Home, Maximize2, Minimize2, Square, Video, X } from "lucide-react";
 import { STAND_HERE, TEE_LEVELS } from "../constants";
 import { activeLayout } from "../lib/course";
 import { courseStats, holeStats } from "../lib/holeStats";
 import { fmtDist, fmtElev } from "../lib/units";
 import { useCourse, useEditor } from "../state/course";
-import { useExportJob } from "../state/exportJob";
-import { recordVideo, useVideoSettings } from "../state/video";
-import { VIDEO_SIZES } from "../lib/video";
 import type { Hole, TeeItem } from "../types";
 import { ElevationProfile } from "./ElevationProfile";
 import { SceneButton } from "./ScenePanel";
 import { editFlyover } from "./FlyoverSettings";
-import { FlightLine, TapModes, useFlight } from "./FlyoverBar";
+import { FlightLine, TapModes, clock, useFlight } from "./FlyoverBar";
 import { askHelp } from "./ui";
 import { getView } from "../state/view";
 import { useSelection } from "./Inspector";
 import { useToolbarRoom } from "./Toolbar";
-import { ActRow, GlassBar, type BarSetting } from "./mobile/GlassBar";
+import { ActRow, GlassBar } from "./mobile/GlassBar";
+import { Disc } from "./mobile/SheetFold";
 
 /** While a flyover waits for its pictures: the hole's name and numbers and a thin moving bar,
  * over the view (shown at once; it fades as the flight begins), and Cancel (it covers the bar
@@ -48,8 +46,26 @@ function FlyoverLoading({ title, facts, on, stage, onCancel }: { title: string; 
   );
 }
 
-/** The bar's height as it rests (the pill's line over the row), for what sits above it. */
-const BAR_H = 44 + 8 + 64 + 18;
+/** The bar's height as it rests (one line: the pill, Play flyover, ✓), for what sits above it. */
+const BAR_H = 50 + 18;
+
+/** The hole's flyover, on its card: what it is and how long, and the way into the Flyover editor. */
+function CardFlyover({ hole, big = false }: { hole: Hole; big?: boolean }) {
+  const { keys, length } = useFlight(hole);
+  const readOnly = useCourse(c => c.readOnly);
+  return (
+    <div className={`flex items-center gap-2 whitespace-nowrap border-t border-white/[0.08] ${big ? "mt-2 pt-1.5 text-[13px]" : "mt-2.5 pt-2 text-xs"} text-zinc-400`} data-testid="card-flyover">
+      <Video size={big ? 16 : 14} className="shrink-0" />
+      <span className="min-w-0 truncate">Flyover <span className="font-semibold text-zinc-200">{keys ? "Custom" : "Automatic"}</span>{length !== null ? ` · ${clock(length)}` : ""}</span>
+      {!readOnly && (
+        <button className={`ml-auto shrink-0 ${big ? "h-11 -mr-1.5 px-2.5" : "h-7 -mr-1.5 px-2"} rounded-full flex items-center gap-1 font-bold text-orange-300 hover:bg-white/10 active:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`}
+          onClick={() => editFlyover(hole.id)} title="The flyover's one editor: its camera, keyframes and settings" data-testid="card-fly-edit">
+          Edit flyover <ChevronRight size={big ? 16 : 14} />
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function TeeViewHud({ compact = false }: { compact?: boolean }) {
   const doc = useCourse(s => s.doc);
@@ -63,14 +79,11 @@ export function TeeViewHud({ compact = false }: { compact?: boolean }) {
 function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const doc = useCourse(s => s.doc);
   const ed = useEditor();
-  const job = useExportJob(s => s.job);
-  const video = useVideoSettings();
   // (from another tee of the hole: its own numbers, as the layout with that tee would play it)
   const viewed = ed.teeViewTee ? doc.items.find((i): i is TeeItem => i.id === ed.teeViewTee && i.type === "tee" && i.holeId === hole.id) : undefined;
   const s = useMemo(() => holeStats(doc, hole, viewed ? { ...activeLayout(doc), tee: viewed.level } : undefined), [doc, hole, viewed]);
-  // (view only: nothing to change; a video only for those who may have downloads)
+  // (view only: nothing to change)
   const readOnly = useCourse(c => c.readOnly);
-  const mayRecord = useAllowed("downloads");
   // (a flyover under way, paused or not; running: not paused)
   const playing = ed.flyover;
   const running = playing && !ed.flyPaused;
@@ -174,12 +187,8 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   // (a few seconds' hint on what a tap does, as tool hints have, as tee view or Tap mode starts)
   const [hint, setHint] = useState(true);
   useEffect(() => { setHint(true); const t = window.setTimeout(() => setHint(false), 4500); return () => window.clearTimeout(t); }, [select]);
-  const record = () => void recordVideo([hole.id]);
-  const recPct = job?.kind === "video" && job.progress !== null ? `${Math.round(job.progress * 100)}%` : null;
-  // (a phone's row: Edit flyover, and Export video for those who may have downloads)
-  const settings: BarSetting[] = [];
-  if (!readOnly) settings.push({ id: "edit", name: "", value: "Edit flyover", icon: <Video size={16} />, run: () => editFlyover(hole.id), testid: "fly-edit", title: "The flyover's one editor: its camera, keyframes and settings" });
-  if (mayRecord) settings.push({ id: "export", name: `${VIDEO_SIZES[video.resolution].label} · ${video.fps} fps`, value: job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : "Export video", icon: <Clapperboard size={16} />, run: record, disabled: !!job, testid: "fly-export" });
+  // (played to its end: held on its last picture, paused; the moment to change it)
+  const ended = playing && ed.flyPaused && at !== null && flight.length !== null && at >= flight.length - 0.1;
   const stats = courseStats(doc);
   const done = doc.holes.filter((_, k) => stats[k].complete);
   const i = done.findIndex(h => h.id === hole.id);
@@ -197,17 +206,16 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const pillMenu = (
     <div className="flex flex-col gap-0.5">
       {playing && <ActRow icon={<Square size={17} />} label="Stop flyover" hint="Back to the tee" onClick={() => ed.set({ flyover: false })} testid="hud-stop" />}
-      {ed.teeStand && !playing && <ActRow icon={<Home size={18} />} label="Return to tee" hint="Back where the hole starts" onClick={() => ed.set({ teeStand: null })} testid="hud-to-tee" />}
-      {mayRecord && !job && <ActRow icon={<Clapperboard size={18} />} label="Export video" hint={`${VIDEO_SIZES[video.resolution].label} · ${video.fps} fps`} onClick={record} testid="hud-record" />}
-      {!readOnly && <ActRow icon={<Video size={18} />} label="Edit flyover" hint="Its camera, keyframes and settings" onClick={() => editFlyover(hole.id)} testid="hud-edit" />}
-      <ActRow icon={<HelpCircle size={18} />} label="Flyover help" hint="How flyovers and camera paths work" onClick={() => askHelp("flyover")} testid="hud-help" />
+      {ed.teeStand && !playing && <ActRow icon={<Home size={18} />} label="Return to tee" hint="Back where the hole starts" onClick={() => ed.set({ teeStand: null })} testid="menu-to-tee" />}
+      {!readOnly && <ActRow icon={<Video size={18} />} label="Edit flyover" hint={`${flight.keys ? "Custom" : "Automatic"}${flight.length !== null ? ` · ${clock(flight.length)}` : ""} · opens the Flyover editor`} onClick={() => editFlyover(hole.id)} testid="hud-edit" />}
+      <ActRow icon={<HelpCircle size={18} />} label="Tee view help" hint="Walking, looking and the flyover" onClick={() => askHelp("tee-view")} testid="hud-help" />
     </div>
   );
   const lineProps = {
-    playing, paused: ed.flyPaused, onPlay: () => ed.set(playing ? { flyPaused: false } : { flyover: true }), onPause: () => ed.set({ flyPaused: true }), length: flight.length, at: playing ? at : null,
+    playing, paused: ed.flyPaused, ended, onPlay: () => ed.set(playing ? { flyPaused: false } : { flyover: true }), onPause: () => ed.set({ flyPaused: true }), length: flight.length, at: playing ? at : null,
     onScrub: playing ? scrub : undefined
   };
-  const line = <FlightLine {...lineProps} />;
+  const line = <FlightLine fit {...lineProps} />;
   const lineBare = <FlightLine bare {...lineProps} />;
   const many = done.length > 1;
   // (a computer: along the foot of the view, over the drawing tools when they're up)
@@ -216,7 +224,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const barH = BAR_H + (playing ? 46 + 8 : 0);
   const bar = !sheetUp && (
     <GlassBar remember="flyover" pill={{ name: `Hole ${s.label}`, prev: many ? () => go(-1) : undefined, next: many ? () => go(1) : undefined, testid: "flyover-pill" }}
-      pillMenu={pillMenu} settings={settings} line={line} lineAbove={playing} tucked={tucked}
+      pillMenu={pillMenu} settings={[]} line={line} lineAbove={playing} tucked={tucked}
       onDone={() => ed.set({ teeView: null, flyover: false })} doneLabel="Done: back to the map"
       bottom={base} onOpen={id => setMenuOpen(!!id)} testid="tee-bar" />
   );
@@ -226,6 +234,8 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const foot = !playing ? 0 : compact ? (tucked ? 18 + 46 + 8 : barH + 8) : base + 18 + 52 + 8;
   useEffect(() => { getView()?.setFlyFoot(foot); }, [foot]);
   useEffect(() => () => getView()?.setFlyFoot(0), []);
+  // (a phone, walked away from the tee: Return to tee just over the bar, at the left, in thumb's reach)
+  const toTee = compact && !!ed.teeStand && !playing && !sheetUp && !menuOpen;
   const hintText = select ? (compact ? "Tap to select · drag to look" : "Click something to select it · drag to look around · Esc back to the map") : compact ? "Tap to walk · drag to look" : `Click the ground to walk · drag to look around${many ? " · ← → other holes" : ""} · Space plays the flyover`;
 
   if (compact) {
@@ -248,18 +258,25 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
           </div>
           {cardOpen && <div className="mt-1.5"><ElevationProfile doc={doc} line={s.line} height={56} teeColor={lvl.color} /></div>}
           {cardOpen && hole.notes && <p className="text-[13px] text-zinc-200 mt-1 line-clamp-3">{hole.notes}</p>}
+          {cardOpen && <CardFlyover hole={hole} big />}
         </div>
         <div className="absolute right-2 top-[max(8px,env(safe-area-inset-top))] pointer-events-auto glass rounded-[20px] p-1 border border-white/10 shadow-2xl"><SceneButton label="View" /></div>
-        {hint && !playing && !sheetUp && !menuOpen && <div className="absolute z-[33] max-w-[calc(100%-96px)] px-3.5 py-1.5 rounded-full bg-black/45 text-[13px] font-semibold text-white/90 text-center whitespace-nowrap truncate pointer-events-none dg-fade-in" style={{ bottom: barH + 12, left: "calc(50% - 28px)", transform: "translateX(-50%)" }} data-testid="tee-hint">{hintText}</div>}
+        {hint && !playing && !sheetUp && !menuOpen && <div className="absolute z-[33] max-w-[calc(100%-96px)] px-3.5 py-1.5 rounded-full bg-black/45 text-[13px] font-semibold text-white/90 text-center whitespace-nowrap truncate pointer-events-none dg-fade-in" style={{ bottom: barH + 12 + (toTee ? 56 : 0), left: "calc(50% - 28px)", transform: "translateX(-50%)" }} data-testid="tee-hint">{hintText}</div>}
+        {toTee && (
+          <button className="absolute left-2.5 h-11 pl-1.5 pr-4 rounded-full glass border border-white/10 shadow-xl flex items-center gap-2 text-[14.5px] font-bold text-zinc-50 pointer-events-auto active:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+            style={{ bottom: barH + 12 }} onClick={() => ed.set({ teeStand: null })} data-testid="hud-to-tee">
+            <Disc tint><Home size={16} /></Disc> Return to tee
+          </button>
+        )}
         {taps}
         {bar}
       </div>
     );
   }
-  // A computer: the flyover's settings in the side panel (the side panel's own card, as anything
-  // selected has), the hole's card at its top; over the view only what's done while watching: the
-  // hole, Play or Pause and the timeline, Back to map. Something selected (Select): its own panel in
-  // that place, the hole's card floating beside it, as on the map
+  // A computer: the hole's card at the top left (its profile, notes, and its flyover with the way into
+  // the editor); over the view only what's done standing there: Tee, the hole, Play or Pause and the
+  // timeline, Back to map. Something selected (Select): its own panel at the left, the hole's card
+  // floating beside it, as on the map
   const thing = !!picked3 || pickedGroup;
   const offset = editing && thing ? 162 : 0;
   const card = (
@@ -286,6 +303,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
           {card}
           <div className="mt-2"><ElevationProfile doc={doc} line={s.line} height={70} teeColor={lvl.color} /></div>
           {hole.notes && <p className="text-xs text-zinc-200 mt-1">{hole.notes}</p>}
+          <CardFlyover hole={hole} />
         </div>
       )}
       {editing && <TeeMap big={ed.teeMap === "big"} off={ed.teeMap === "off"} />}
@@ -299,8 +317,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
         <button className={`${pill} !px-0 w-9 justify-center text-zinc-300`} aria-label="Next hole" title="Next hole (→)" disabled={!many} onClick={() => go(1)} data-testid="hole-next"><ChevronRight size={18} /></button>
         <span className="w-px h-6 bg-white/[0.12] mx-1" />
         <div className="w-[min(420px,30vw)]">{lineBare}</div>
-        {!readOnly && !playing && <button className={pill} onClick={() => editFlyover(hole.id)} title="The flyover's one editor: its camera, keyframes and settings" data-testid="fly-edit"><Video size={15} /> Edit flyover</button>}
-        {mayRecord && <button className={pill} onClick={record} disabled={!!job} title={`Export video · ${VIDEO_SIZES[video.resolution].label}, ${video.fps} fps`} data-testid="fly-export"><Clapperboard size={15} /> {job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : "Export video"}</button>}
+        {!readOnly && ended && <button className={pill} onClick={() => editFlyover(hole.id)} title="The flyover's one editor: its camera, keyframes and settings" data-testid="fly-edit"><Video size={15} /> Edit flyover</button>}
         <span className="w-px h-6 bg-white/[0.12] mx-1" />
         {playing && <button className={pill} onClick={() => ed.set({ flyover: false })} title="Stop and go back to the tee (Esc)" data-testid="hud-stop"><Square size={13} /> Stop</button>}
         <button className={`${pill} bg-white/[0.07]`} onClick={() => ed.set({ teeView: null, flyover: false })} title="Back to the map (Esc)" data-testid="bar-done"><X size={15} /> Back to map</button>

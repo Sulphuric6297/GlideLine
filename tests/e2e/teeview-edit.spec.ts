@@ -135,7 +135,7 @@ test.describe("phone", () => {
     await expect(page.getByTestId("item-strip")).toHaveCount(0);
     // (back to the tee: in the hole's menu, from its name on the bar)
     await page.getByTestId("tee-bar").getByTestId("pill-open").tap();
-    await expect(page.getByTestId("hud-to-tee")).toBeVisible();
+    await expect(page.getByTestId("menu-to-tee")).toBeVisible();
     await page.getByTestId("tee-bar").getByTestId("pill-open").tap();
     await expect(page.getByTestId("pill-menu")).toHaveCount(0);
     // Walk: a tap on the ground walks there

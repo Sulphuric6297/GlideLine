@@ -225,6 +225,13 @@ export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem })
         </div>
         {doc.lidar && s.complete && <HoleTrees hole={hole} line={s.line} />}
       </Section>
+      {/* (first, under the hole's name: the flyover is the hole's, and Edit flyover is never a scroll
+          away) */}
+      {s.complete && (
+        <Section title="Flyover" help="flyover" testid="sec-flyover">
+          <FlyoverRow hole={hole} />
+        </Section>
+      )}
       <HoleParts hole={hole} part={part}>
         {(() => {
           // (the layout worked on, on a hole with no tee of its color: played from the nearest)
@@ -323,11 +330,6 @@ export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem })
         <Field label="Name (optional)"><TextInput label="Hole name" value={hole.name ?? ""} placeholder="e.g. The Gauntlet" onChange={v => set({ name: v || undefined }, false)} onDone={commit} /></Field>
         <Field label="Notes and hole rules"><TextInput area label="Hole notes" value={hole.notes ?? ""} placeholder="e.g. OB left of the path. Mando right of the big oak; drop zone by the bench." onChange={v => set({ notes: v || undefined }, false)} onDone={commit} /></Field>
       </Section>
-      {s.complete && (
-        <Section title="Flyover" help="flyover" testid="sec-flyover">
-          <FlyoverRow hole={hole} />
-        </Section>
-      )}
     </>
   );
 }

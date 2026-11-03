@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { test as plain, expect as plainExpect, type Page } from "@playwright/test";
-import { test, expect, addHole, blankCourse, course, editorState, flyButton, teeCard } from "./fixtures";
+import { test, expect, addHole, blankCourse, course, editorState, teeCard } from "./fixtures";
 import { VIDEO_HOLD, avcCodec, videoBitrate, videoSuffix, videoTimeline, vp9Codec } from "../../src/lib/video";
 import { flightClock } from "../../src/lib/flight";
 
@@ -139,26 +139,23 @@ test("cancel stops a recording, and leaving the Export step doesn't", async ({ p
   await expect(page.getByTestId("pov-basket")).toContainText("250 ft");
 });
 
-test("the Record button over a flyover records that hole", async ({ page }) => {
+test("Export video in the Flyover editor records that hole", async ({ page }) => {
   // (the recording and the flight on screen at once, drawn in software)
   test.setTimeout(600_000);
   await twoHoles(page, [160, 90]);
   // (small, so it is quick: the size is the Export step's choice, tested there)
   await page.evaluate(() => (window as any).__dgVideo().set({ size: { width: 320, height: 180 } }));
   await page.getByTestId("hole-row").nth(1).click();
-  await page.getByTestId("flyover").click();
-  await expect(flyButton(page)).toHaveAttribute("aria-label", "Pause");
+  // (the hole's flyover, in its editor: Export video in its panel; tee view has none)
+  await page.getByTestId("flyover-row").getByTestId("fly-edit").click();
+  await expect(page.getByTestId("camera-hud")).toBeVisible();
   const downloading = page.waitForEvent("download", { timeout: 540_000 });
-  // (Export video, on the bar)
-  const record = page.getByTestId("tee-bar").getByTestId("fly-export");
+  const record = page.getByTestId("cam-panel").getByTestId("fly-export");
   await record.click();
   // (Exporting… until the frames start coming, then how far along it is)
   await expect(record).toHaveText(/Exporting( \d+%|…)/);
   await expect(record).toHaveText(/Exporting \d+%/, { timeout: 60_000 });
   await expect(page.getByTestId("export-progress-pill")).toContainText("Recording hole 2");
-  // The flight on screen goes on by itself, separate from the recording, and lands (held on its
-  // last picture)
-  await expect(flyButton(page)).toHaveAttribute("aria-label", "Play", { timeout: 60_000 });
   const download = await downloading;
   expect(download.suggestedFilename()).toMatch(/^new-disc-golf-course-hole-2-flyover\.(mp4|webm)$/);
   expect(kindOf(readFileSync((await download.path())!))).not.toBe("?");
@@ -177,7 +174,9 @@ test("while a video records, the view from the tee holds still (the recording's 
   expect(await page.evaluate(() => (window as any).__dgEditor().wind)).toBe(true);
   const info = () => page.evaluate(() => (window as any).__dgView.drawInfo() as { frames: number; recording: boolean });
   const downloading = page.waitForEvent("download", { timeout: 150_000 });
-  await page.getByTestId("tee-bar").getByTestId("fly-export").click();
+  // (Export video: the Flyover editor's, opened from the hole's card)
+  await teeCard(page).getByTestId("card-fly-edit").click();
+  await page.getByTestId("cam-panel").getByTestId("fly-export").click();
   await expect.poll(async () => (await info()).recording).toBe(true);
   await page.waitForTimeout(300);
   // Nothing moves on screen but the breeze: it waits (it once kept redrawing the screen and took
