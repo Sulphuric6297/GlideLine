@@ -1066,12 +1066,22 @@ test.describe("phone", () => {
     // Left alone, the bar folds to its timeline; a tap on the view brings it back, and only that
     await expect(bar.locator("[data-tucked]")).toHaveCount(1, { timeout: 15_000 });
     await expect(page.getByTestId("fly-line")).toBeVisible();
+    // (seen the moment it comes back: drawn in software, the page can be too busy to be asked
+    // before it folds again three seconds later)
+    await page.evaluate(() => {
+      const w = window as any, el = document.querySelector('[data-testid="tee-bar"]')!;
+      w.__barBack = false;
+      const mo = new MutationObserver(() => { if (!el.querySelector("[data-tucked]")) { w.__barBack = true; mo.disconnect(); } });
+      mo.observe(el, { subtree: true, attributes: true, childList: true });
+    });
     await page.touchscreen.tap(200, 300);
-    await expect(bar.locator("[data-tucked]")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as any).__barBack)).toBe(true);
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
     // Folded again, Pause on its timeline pauses it at once (the bar coming back as it does) and
     // holds it on its moment, the bar staying up (it ends paused too, on its last picture)
+    // (folded all the way, the timeline settled at the foot, before the tap: not while it moves)
     await expect(bar.locator("[data-tucked]")).toHaveCount(1, { timeout: 15_000 });
+    await expect(bar.getByTestId("flyover-pill")).toBeHidden();
     const paused = () => page.evaluate(() => !!(window as any).__dgEditor().flyPaused);
     if (!(await paused())) await bar.getByTestId("hud-flyover").tap();
     await expect.poll(paused).toBe(true);
