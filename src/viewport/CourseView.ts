@@ -32,7 +32,7 @@ import type { WoodedGrid } from "../lib/forest";
 import { autoFlight, flightClock, flyoverOf, insertKey, keyFlight, keyTimes, keysFromFlight, type Air, type Canopy, type Crown, LENS } from "../lib/flight";
 import { VIDEO_HOLD, titleStrength } from "../lib/video";
 import { drawOverlay, holeTitle, overlayShow, type HoleTitle } from "./flyTitle";
-import { forestDetail, type Forest, type TreeSpot, woodsCrownWidth } from "../three/treeKit";
+import { Forest, forestDetail, type TreeSpot, TREES_SEEN, TREES_SHADOW, woodsCrownWidth } from "../three/treeKit";
 import { brushOnly } from "../lib/brushSpots";
 import { applyEdit, brushStroke, kindOf, levelOf, type BrushKind as PaintKind } from "../lib/areaBrush";
 import { foundAreas } from "../lib/undergrowth";
@@ -498,6 +498,17 @@ export class CourseView {
     this.scene.environment = null;
     this.scene.add(this.hemi);
     this.sun.castShadow = true;
+    // (the trees' layers: the shadow picture takes the set that throws shadows, the corner map that
+    // one too (every tree round the eye, not only those in sight); the cameras the trees in sight.
+    // three picks the shadows' casters by the picture's camera's layers, so its shadow pass is
+    // handed the shadow camera instead, which sees the shadow set and everything else)
+    this.sun.shadow.camera.layers.enable(TREES_SHADOW);
+    {
+      const sm = this.renderer.shadowMap, shadowPass = sm.render.bind(sm), sunCam = this.sun.shadow.camera;
+      sm.render = (lights, scene) => shadowPass(lights, scene, sunCam);
+    }
+    this.miniCam.layers.enable(TREES_SHADOW);
+    this.povCam.layers.enable(TREES_SEEN);
     // (how wide the soft edge is, in texels of the shadow picture: three/softShadows)
     this.sun.shadow.radius = SHADOW_SOFT;
     this.sun.shadow.mapSize.set(this.mobile ? 1024 : 2048, this.mobile ? 1024 : 2048);
@@ -512,6 +523,7 @@ export class CourseView {
     }
 
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.5, 40000);
+    this.camera.layers.enable(TREES_SEEN);
     this.controls = new CameraControls(this.camera, canvas);
     const c = this.controls;
     void c.setLookAt(800, 2400, 550, 800, 0, 550, false);
@@ -1575,6 +1587,7 @@ export class CourseView {
     if (!this.fly) this.povFov = this.povCam.fov;
     // (from a moment: held there, paused, without the title as it starts)
     this.fly = { ...path, t: from !== null ? clamp(from, 0, path.play) : -VIDEO_HOLD.intro, done, title: holeTitle(this.doc.course, holeId), hold, ...(from !== null ? { paused: true } : {}) };
+    this.flyStarted = performance.now();
     const wait: { since: number; loaded: boolean; frames: number } = { since: performance.now(), loaded: false, frames: 0 };
     this.flyWait = wait;
     this.cb.onFlyWait("map");
@@ -1903,9 +1916,20 @@ export class CourseView {
     const restore = this.atmosphere(cam, true);
     this.ground.extras.visible = false;
     this.updateGrass(cam, true);
-    // (the corner map from above draws the same trees: all of them, then)
-    // (every tree, in view or not: each casts its shadow, and the shadows are drawn only now and then)
-    this.updateForests(cam.position);
+    // (the trees in sight for the picture, and those under the shadow picture for its shadows: its
+    // place worked out first)
+    this.syncPlacedBatch();
+    if (this.shadowsDirty) {
+      this.placeSun();
+      this.renderer.shadowMap.needsUpdate = true;
+      this.shadowsDirty = false;
+    }
+    this.nearShadows(cam);
+    // (the shadow camera where it's about to be: three puts it there only as it draws)
+    this.sun.updateMatrixWorld();
+    this.sun.target.updateMatrixWorld();
+    this.sun.shadow.updateMatrices(this.sun);
+    this.updateForests(cam.position, cam, this.sun.shadow.camera);
     waterUniforms.uTime.value = this.clock.elapsedTime;
     waterUniforms.uWind.value = this.wind ? 1 : 0.25;
     // (editing: what's picked and what's under the pointer outlined, as on the map)
@@ -1917,12 +1941,6 @@ export class CourseView {
     // (standing under a tree, the leaves right in front of the eye melt away, those overhead stay;
     // a flyover never fades anything: it's for seeing what's really there)
     treeNearFade.value = this.fly ? 0 : 8;
-    if (this.shadowsDirty) {
-      this.placeSun();
-      this.renderer.shadowMap.needsUpdate = true;
-      this.shadowsDirty = false;
-    }
-    this.nearShadows(cam);
     if (target) {
       this.renderer.setRenderTarget(target);
       this.renderer.clear();
@@ -2351,8 +2369,13 @@ export class CourseView {
    * less grass, softer shadows and fewer trees in full detail; it steps back up when there is
    * room again. Software rendering (no graphics card) keeps its own fixed, lower settings.
    */
+  /** When the flight now under way began (its quality picked in its first seconds, then held). */
+  private flyStarted = 0;
   perfSample(ms: number) {
     if (this.software && !this.adaptiveForced) return;
+    // A flight keeps one quality: picked in its first three seconds (its title, the camera still at
+    // the tee), then held to the end, so the picture never steps down or up partway down the hole
+    if (this.fly && performance.now() - this.flyStarted > 3000) { this.perfSamples.length = 0; return; }
     const s = this.perfSamples;
     s.push(ms);
     // A window of 24 frames, or a second and a half on a slow device (24 frames at 5 a second
@@ -2460,6 +2483,14 @@ export class CourseView {
   /** For tests: whether the view is drawing, how many pictures it has drawn, and whether a video records. */
   drawInfo() {
     return { paused: this.paused, frames: this.frames, recording: this.recordings > 0 };
+  }
+
+  /** For tests: the trees of every forest (the woods, the placed trees drawn together), in the
+   * picture and in the shadows' set just now. */
+  forestStats() {
+    const t = { trees: 0, seen: 0, shadow: 0, placed: this.placedBatch?.forest.counts().trees ?? 0, placedApart: this.placedBatch?.hidden.filter(o => o.visible).length ?? 0 };
+    for (const f of this.forestsOf.list) { const c = f.counts(); t.trees += c.trees; t.seen += c.seen; t.shadow += c.shadow; }
+    return t;
   }
 
   /** For tests: the quality level now. */
@@ -2671,8 +2702,9 @@ export class CourseView {
     const p = cam.position;
     const t = this.clock.elapsedTime;
     const wind = this.wind && this.povHole ? 0.14 : 0.05;
-    this.grass.update(p, this.h(clamp(p.x, 0, doc.canvas.width), clamp(p.z, 0, doc.canvas.height)), t, wind);
-    this.tufts.update(p, t, wind, this.grass.group.visible);
+    const ground = (x: number, z: number) => this.h(clamp(x, 0, doc.canvas.width), clamp(z, 0, doc.canvas.height));
+    this.grass.update(p, ground(p.x, p.z), t, wind, ground);
+    this.tufts.update(p, t, wind, this.grass.group.visible, ground);
   }
 
   /** What a stretch of water mirrors on its banks: woods close by (high and dark) or open grass. */
@@ -2804,14 +2836,68 @@ export class CourseView {
     this.pondsAgain();
   }
 
-  /** Woods: the trees near the camera in full detail. */
-  private updateForests(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera) {
-    for (const o of this.itemsGroup.children) {
-      (o.userData.forest as Forest | undefined)?.update(eye, cam);
-      // (a hedge's bushes, inside its line's group)
-      for (const c of o.children) (c.userData.forest as Forest | undefined)?.update(eye, cam);
+  /**
+   * Standing or flying, the trees placed by hand drawn together, as the woods are (a thousand
+   * trees in a few dozen draws instead of thousands), each exactly where and how it stands; only
+   * where nothing is picked (flying, Walk, a viewer's), as picking and dragging need each tree's
+   * own. A tree with a shape of its own stays itself.
+   */
+  private placedBatch: { forest: Forest; hidden: THREE.Object3D[] } | null = null;
+  private placedBatchDirty = true;
+  private syncPlacedBatch() {
+    const want = !!this.povHole && !this.tapsEdit();
+    if (!want || this.placedBatchDirty) this.dropPlacedBatch();
+    if (!want || this.placedBatch) return;
+    this.placedBatchDirty = false;
+    const spots: TreeSpot[] = [], hidden: THREE.Object3D[] = [];
+    for (const [, entry] of this.objects) {
+      entry.obj.traverse(o => {
+        const pool = o.userData.pool as { shape: TreeSpot["shape"]; variant: number; height: number } | undefined;
+        if (!pool || !(o as THREE.LOD).isLOD || !o.visible) return;
+        const near = (o as THREE.LOD).levels[0]?.object, leaves = near?.children[1] as THREE.Mesh | undefined;
+        if (!leaves) return;
+        leaves.updateWorldMatrix(true, false);
+        const at = new THREE.Vector3().setFromMatrixPosition(leaves.matrixWorld);
+        spots.push({ x: at.x, y: at.z, ground: at.y, height: pool.height, width: 0, shape: pool.shape, variant: pool.variant, tint: new THREE.Color(), turn: 0, lean: 0, matrix: leaves.matrixWorld.clone(), leaf: (leaves.material as THREE.MeshStandardMaterial).color.clone() });
+        hidden.push(o);
+      });
     }
+    if (!spots.length) return;
+    const forest = new Forest(spots);
+    forest.group.name = "placed-trees";
+    forest.group.userData.forest = forest;
+    forest.group.userData.placed = true;
+    this.itemsGroup.add(forest.group);
+    for (const o of hidden) o.visible = false;
+    this.placedBatch = { forest, hidden };
+    this.shadowsDirty = true;
   }
+  private dropPlacedBatch() {
+    const b = this.placedBatch;
+    if (!b) return;
+    this.placedBatch = null;
+    this.itemsGroup.remove(b.forest.group);
+    b.forest.dispose();
+    for (const o of b.hidden) o.visible = true;
+    this.shadowsDirty = true;
+  }
+
+  /** Woods: the trees near the camera in full detail. */
+  private updateForests(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera, sun?: THREE.OrthographicCamera) {
+    // (which they are: found again only when the things drawn changed, not every frame)
+    const kids = this.itemsGroup.children;
+    if (this.forestsOf.children !== kids.length || this.forestsOf.first !== kids[0] || this.forestsOf.last !== kids[kids.length - 1]) {
+      const list: Forest[] = [];
+      for (const o of kids) {
+        if (o.userData.forest) list.push(o.userData.forest as Forest);
+        // (a hedge's bushes, inside its line's group)
+        for (const c of o.children) if (c.userData.forest) list.push(c.userData.forest as Forest);
+      }
+      this.forestsOf = { children: kids.length, first: kids[0], last: kids[kids.length - 1], list };
+    }
+    for (const f of this.forestsOf.list) f.update(eye, cam, sun);
+  }
+  private forestsOf: { children: number; first?: THREE.Object3D; last?: THREE.Object3D; list: Forest[] } = { children: -1, list: [] };
 
   /** How much grass to draw: as set, or (automatically) none without a graphics card. */
   private grassQuality(): GrassQuality {
@@ -3156,6 +3242,8 @@ export class CourseView {
   }
   private syncItemsAll() {
     const doc = this.doc!;
+    // (the placed trees' batch made again from what they are now, next time it's drawn)
+    this.placedBatchDirty = true;
     const seen = new Set<string>();
     for (const item of doc.course.items) {
       if (item.type === "label" || item.type === "area" || item.type === "line") continue;
@@ -4092,6 +4180,8 @@ export class CourseView {
       const size = lean ? 128 : 256;
       const rt = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType, generateMipmaps: false });
       const cube = new THREE.CubeCamera(1, 3000, rt);
+      // (the trees round the water, in sight or not: those that throw shadows round the eye)
+      for (const c of cube.children) c.layers.enable(TREES_SHADOW);
       cube.position.copy(next[1].at);
       cube.updateMatrixWorld(true);
       if (cube.coordinateSystem !== r.coordinateSystem) { cube.coordinateSystem = r.coordinateSystem; cube.updateCoordinateSystem(); }

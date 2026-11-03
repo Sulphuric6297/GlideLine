@@ -358,6 +358,33 @@ test("a flyover's keyframes: two set, the timeline scrubbed (the camera follows 
   await page.getByTestId("cam-done").click();
 });
 
+test("from the tee and flying, only what can be seen is drawn: the placed trees drawn together, the trees out of sight left out, the shadows from their own set; the flight's quality held", async () => {
+  await draw(page, false);
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "select", selectedId: null }));
+  const hole = (await course(page)).holes[0];
+  const stats = () => page.evaluate(() => (window as any).__dgView.forestStats());
+  // From the tee, walking (nothing to pick): the placed trees in one batch, each of them hidden as
+  // itself; fewer trees in the picture than there are, and some in the shadows' set
+  await page.evaluate(id => (window as any).__dgEditor().set({ teeView: id, teeViewTee: null, teeStand: null, flyover: false, standTap: "walk" }), hole.id);
+  await expect.poll(async () => (await stats()).placed, { timeout: 30_000 }).toBeGreaterThan(100);
+  const a = await stats();
+  expect(a.placedApart).toBe(0);
+  expect(a.seen).toBeLessThan(a.trees * 0.8);
+  expect(a.shadow).toBeGreaterThan(0);
+  // Select on (each tree picked as itself): the batch let go, every tree itself again
+  await page.evaluate(() => (window as any).__dgEditor().set({ standTap: "edit" }));
+  await expect.poll(async () => (await stats()).placed).toBe(0);
+  await page.evaluate(() => (window as any).__dgEditor().set({ standTap: "walk" }));
+  // Flying: the batch again, and the quality held once under way (a run of slow frames changes nothing)
+  await page.evaluate(() => (window as any).__dgEditor().set({ flyover: true, flyPaused: false }));
+  await expect.poll(async () => (await stats()).placed, { timeout: 30_000 }).toBeGreaterThan(100);
+  await page.waitForTimeout(3500);
+  const tier = await page.evaluate(() => (window as any).__dgView.qualityInfo().tier);
+  await page.evaluate(() => { const v = (window as any).__dgView; v.forceAdaptive(); for (let i = 0; i < 30; i++) v.perfSample(200); v.forceAdaptive(false); });
+  expect(await page.evaluate(() => (window as any).__dgView.qualityInfo().tier)).toBe(tier);
+  await page.evaluate(() => (window as any).__dgEditor().set({ flyover: false, teeView: null, standTap: "walk" }));
+});
+
 test("on a phone, the Trees tool has the same kinds, woods included, and the ways to plant a stand", async ({ browser }) => {
   const phone = await browser.newPage({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() });
   await phone.goto("/");

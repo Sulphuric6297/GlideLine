@@ -521,15 +521,25 @@ const tintedFoliage = (base: THREE.MeshStandardMaterial, tint: THREE.Color) => {
 
 // ---------------------------------------------------------------- woods: instanced, two levels of detail
 
-export type TreeSpot = { x: number; y: number; ground: number; height: number; width: number; shape: TreeShape; variant: number; tint: THREE.Color; turn: number; lean: number };
+export type TreeSpot = { x: number; y: number; ground: number; height: number; width: number; shape: TreeShape; variant: number; tint: THREE.Color; turn: number; lean: number;
+  /** A tree placed by hand, drawn with the others: exactly where and how it stands (its meshes'
+   * own matrix), and its leaves' own color. */
+  matrix?: THREE.Matrix4; leaf?: THREE.Color };
 
 /** Trees nearer than this to the camera use the close shapes, ft (less without a graphics card);
  * the middle ones out to `midOf(nearFt)`, the rest the far ones. `all`: every tree, bush and bit
  * of underbrush in its closest version however far off (a video recording: nothing changes as
  * the camera comes up to it). */
 export const forestDetail = { nearFt: 260, version: 0, all: false };
-// (what a forest's camera sees: worked out in these, kept to save making them every time)
+// (what a forest's camera sees, and the sun's shadow picture: worked out in these, kept to save
+// making them every time)
 const seeDir = new THREE.Vector3(), seeMatrix = new THREE.Matrix4(), seeFrustum = new THREE.Frustum(), seeBall = new THREE.Sphere();
+const sunMatrix = new THREE.Matrix4(), sunFrustum = new THREE.Frustum();
+/** The layers trees are drawn on: what a camera sees (1), and what throws the sun's shadows (2). A
+ * camera that shows trees takes layer 1; the sun's shadow pass, the corner map and a pond's
+ * reflection take layer 2. Seen from where you stand or fly, each is only what it needs: the trees
+ * in sight for the picture, those under the shadow picture for the shadows. */
+export const TREES_SEEN = 1, TREES_SHADOW = 2;
 /** How far the camera turns before the trees it sees are worked out again (6 degrees). */
 const TURN_COS = Math.cos((6 * Math.PI) / 180);
 export const midOf = (nearFt: number) => nearFt * 3;
@@ -540,7 +550,10 @@ export const midOf = (nearFt: number) => nearFt * 3;
  */
 export class Forest {
   readonly group = new THREE.Group();
-  private sets: { spots: TreeSpot[]; near: THREE.InstancedMesh[]; mid: THREE.InstancedMesh[]; far: THREE.InstancedMesh[]; tints: THREE.Color[] }[] = [];
+  private sets: { spots: TreeSpot[]; near: THREE.InstancedMesh[]; mid: THREE.InstancedMesh[]; far: THREE.InstancedMesh[]; tints: THREE.Color[]; shadow: THREE.InstancedMesh[][] }[] = [];
+  /** Where the shadow picture was when the trees were last sorted (its matrix's position). */
+  private lastSun = new THREE.Vector3(Infinity, 0, 0);
+  private lastCull = false;
   private last = new THREE.Vector3(Infinity, 0, 0);
   private lastDir = new THREE.Vector3();
   private lastFov = 0;
@@ -571,88 +584,146 @@ export class Forest {
       const nearMeshes = make(near), midMeshes = make(mid), farMeshes = make(far);
       const mats: THREE.Matrix4[] = [];
       // (photographed leaves take each tree's tint gently)
-      const tintOf = (s: TreeSpot) => leafTint(near, s.tint);
+      const tintOf = (s: TreeSpot) => s.leaf ?? leafTint(near, s.tint);
       list.forEach((s, i) => {
-        const sx = woodsSpread(s.width / s.height / naturalOf(s.shape, near));
-        e.set(s.lean * Math.cos(s.turn), s.turn, s.lean * Math.sin(s.turn));
-        m.compose(p.set(s.x, s.ground, s.y), q.setFromEuler(e), sc.set(s.height * sx, s.height, s.height * sx));
-        mats.push(m.clone());
+        if (s.matrix) mats.push(s.matrix.clone());
+        else {
+          const sx = woodsSpread(s.width / s.height / naturalOf(s.shape, near));
+          e.set(s.lean * Math.cos(s.turn), s.turn, s.lean * Math.sin(s.turn));
+          m.compose(p.set(s.x, s.ground, s.y), q.setFromEuler(e), sc.set(s.height * sx, s.height, s.height * sx));
+          mats.push(m.clone());
+        }
         for (const mesh of [...nearMeshes, ...midMeshes, ...farMeshes]) mesh.setColorAt(i, tintOf(s));
       });
       for (const mesh of [...nearMeshes, ...midMeshes, ...farMeshes]) {
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         mesh.frustumCulled = false;
+        mesh.layers.set(TREES_SEEN);
+        mesh.layers.enable(TREES_SHADOW);
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         this.group.add(mesh);
       }
+      // (the same trees again, only for the sun's shadows while the camera's own are only those in
+      // sight: no colors, never in the picture)
+      const shadowOf = (proto: TreeProto, pair: THREE.InstancedMesh[]) => pair.map((seen, k) => {
+        const mesh = new THREE.InstancedMesh(k === 0 ? proto.bark : proto.leaves, seen.material, list.length);
+        mesh.castShadow = true;
+        mesh.frustumCulled = false;
+        mesh.layers.set(TREES_SHADOW);
+        mesh.visible = false;
+        mesh.count = 0;
+        this.group.add(mesh);
+        return mesh;
+      });
+      const shadow = [shadowOf(near, nearMeshes), shadowOf(mid, midMeshes), shadowOf(far, farMeshes)];
       // Bark stays its own color (only the leaves take the tint)
       for (const mesh of [nearMeshes[0], midMeshes[0], farMeshes[0]]) {
         for (let i = 0; i < list.length; i++) mesh.setColorAt(i, new THREE.Color(1, 1, 1));
       }
       // (each tree's leaf color worked out once, not at every move of the camera)
-      this.sets.push({ spots: list, near: nearMeshes, mid: midMeshes, far: farMeshes, tints: list.map(tintOf) });
+      this.sets.push({ spots: list, near: nearMeshes, mid: midMeshes, far: farMeshes, tints: list.map(tintOf), shadow });
       this.matrices.push(mats);
     }
     this.update(new THREE.Vector3(Infinity, 0, Infinity));
   }
 
-  /** Close trees in full detail, the rest lighter; with the camera, only the trees in and round
-   * what it sees (redone when the camera moved a fair way or turned a little). */
-  update(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera) {
+  /**
+   * Close trees in full detail, the rest lighter. With the camera (standing or flying), only the
+   * trees in and round what it sees are in the picture, and the sun's shadows have their own set:
+   * only the trees under its shadow picture (`sun`, the shadow camera), so the shadows of trees
+   * just out of sight still fall into view. Redone when the camera moved a fair way or turned a
+   * little, or the shadow picture moved on. Without the camera (the map), every tree, for both.
+   */
+  update(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera, sun?: THREE.OrthographicCamera) {
     // (and again when the reach of full detail changed)
     const dir = cam ? cam.getWorldDirection(seeDir) : null;
     const turned = !!dir && (this.lastDir.dot(dir) < TURN_COS || Math.abs(cam!.fov - this.lastFov) > 1);
-    if (!turned && this.last.distanceToSquared(eye) < 30 * 30 && Number.isFinite(this.last.x) && this.version === forestDetail.version) return;
+    const cull = !!cam && !forestDetail.all;
+    let sunMoved = false;
+    if (cull && sun) {
+      seeDir.setFromMatrixPosition(sun.matrixWorld);
+      sunMoved = this.lastSun.distanceToSquared(seeDir) > 1;
+    }
+    if (!turned && !sunMoved && cull === this.lastCull && this.last.distanceToSquared(eye) < 30 * 30 && Number.isFinite(this.last.x) && this.version === forestDetail.version) return;
     this.version = forestDetail.version;
+    this.lastCull = cull;
+    // (the trees' meshes never move, each tree's place is in its instance: their matrices worked out
+    // here, not again every frame for the thousands of them)
+    this.group.updateWorldMatrix(true, false);
+    this.group.traverse(o => {
+      if (o === this.group) return;
+      o.matrixAutoUpdate = false;
+      o.matrixWorld.multiplyMatrices(this.group.matrixWorld, o.matrix);
+      o.matrixWorldAutoUpdate = false;
+    });
     this.last.copy(eye);
-    if (dir) { this.lastDir.copy(dir); this.lastFov = cam!.fov; }
-    // (what the camera sees, the trees round its edges kept: well past them, for the shadows
-    // trees just out of sight throw into it, and for turning before the next time round)
-    let see: THREE.Frustum | null = null;
-    if (cam && !forestDetail.all) {
-      cam.updateMatrixWorld();
-      seeMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    if (dir) { this.lastDir.copy(cam!.getWorldDirection(seeDir)); this.lastFov = cam!.fov; }
+    if (sun) this.lastSun.setFromMatrixPosition(sun.matrixWorld);
+    // (what the camera sees, the trees round its edges kept, enough for turning a little before
+    // the next time round; and what the shadow picture covers)
+    let see: THREE.Frustum | null = null, shade: THREE.Frustum | null = null;
+    if (cull) {
+      cam!.updateMatrixWorld();
+      seeMatrix.multiplyMatrices(cam!.projectionMatrix, cam!.matrixWorldInverse);
       see = seeFrustum.setFromProjectionMatrix(seeMatrix);
+      if (sun) shade = sunFrustum.setFromProjectionMatrix(sunMatrix.multiplyMatrices(sun.projectionMatrix, sun.matrixWorldInverse));
     }
     const nearFt = this.ladder.nearFt ?? forestDetail.nearFt, midFt = this.ladder.midFt ?? midOf(forestDetail.nearFt);
     const r2 = nearFt * nearFt, m2 = midFt * midFt, all = forestDetail.all;
     this.sets.forEach((set, si) => {
-      const n = [0, 0, 0];
+      const n = [0, 0, 0], ns = [0, 0, 0];
       const levels = [set.near, set.mid, set.far];
       const drawn = (this.drawnNow[si] = new Uint8Array(set.spots.length));
       set.spots.forEach((s, i) => {
         const dx = s.x - eye.x, dz = s.y - eye.z, dy = s.ground + s.height * 0.5 - eye.y;
         const d2 = dx * dx + dz * dz + dy * dy;
         if (!all && d2 > this.maxFt * this.maxFt) return;
+        const l = all || d2 < r2 ? 0 : d2 < m2 ? 1 : 2;
+        const mat = this.matrices[si][i];
+        if (shade) {
+          seeBall.center.set(s.x, s.ground + s.height * 0.5, s.y);
+          seeBall.radius = s.height * 0.75;
+          if (shade.intersectsSphere(seeBall)) {
+            set.shadow[l][0].setMatrixAt(ns[l], mat);
+            set.shadow[l][1].setMatrixAt(ns[l], mat);
+            ns[l]++;
+          }
+        }
         if (see) {
           seeBall.center.set(s.x, s.ground + s.height * 0.5, s.y);
-          seeBall.radius = s.height + 150 + Math.sqrt(d2) * 0.12;
+          seeBall.radius = s.height + 30 + Math.sqrt(d2) * 0.12;
           if (!see.intersectsSphere(seeBall)) return;
         }
-        const l = all || d2 < r2 ? 0 : d2 < m2 ? 1 : 2;
         drawn[i] = 1;
-        const mat = this.matrices[si][i];
         levels[l][0].setMatrixAt(n[l], mat);
         levels[l][1].setMatrixAt(n[l], mat);
         levels[l][1].setColorAt(n[l], set.tints[i]);
         n[l]++;
       });
       // (only the part in use sent to the graphics card: the bark's colors never change)
+      const send = (mesh: THREE.InstancedMesh, count: number, colors: boolean) => {
+        mesh.count = count;
+        mesh.visible = count > 0;
+        if (!count) return;
+        mesh.instanceMatrix.clearUpdateRanges();
+        mesh.instanceMatrix.addUpdateRange(0, count * 16);
+        mesh.instanceMatrix.needsUpdate = true;
+        if (colors && mesh.instanceColor) {
+          mesh.instanceColor.clearUpdateRanges();
+          mesh.instanceColor.addUpdateRange(0, count * 3);
+          mesh.instanceColor.needsUpdate = true;
+        }
+      };
       levels.forEach((meshes, l) => {
         meshes.forEach((mesh, k) => {
-          mesh.count = n[l];
-          mesh.visible = n[l] > 0;
-          if (!n[l]) return;
-          mesh.instanceMatrix.clearUpdateRanges();
-          mesh.instanceMatrix.addUpdateRange(0, n[l] * 16);
-          mesh.instanceMatrix.needsUpdate = true;
-          if (k === 1 && mesh.instanceColor) {
-            mesh.instanceColor.clearUpdateRanges();
-            mesh.instanceColor.addUpdateRange(0, n[l] * 3);
-            mesh.instanceColor.needsUpdate = true;
-          }
+          // (culled: in the picture only, its shadows the shadow set's; otherwise both)
+          mesh.castShadow = !shade;
+          if (shade) mesh.layers.disable(TREES_SHADOW);
+          else mesh.layers.enable(TREES_SHADOW);
+          send(mesh, n[l], k === 1);
         });
+        set.shadow[l].forEach(mesh => send(mesh, shade ? ns[l] : 0, false));
       });
     });
   }
@@ -661,6 +732,11 @@ export class Forest {
    * can be picked. */
   eachDrawn(f: (s: TreeSpot) => void) {
     this.sets.forEach((set, si) => { const on = this.drawnNow[si]; set.spots.forEach((s, i) => { if (on?.[i]) f(s); }); });
+  }
+
+  /** Its own buffers let go (the shapes and materials are shared, kept). */
+  dispose() {
+    this.group.traverse(o => (o as THREE.InstancedMesh).isInstancedMesh && (o as THREE.InstancedMesh).dispose());
   }
 
   /** Trees standing within `r` of a plan point (for tests). */
@@ -673,7 +749,10 @@ export class Forest {
     return {
       trees: this.sets.reduce((a, s) => a + s.spots.length, 0),
       near: this.sets.reduce((a, s) => a + s.near[1].count, 0),
-      conifers: this.sets.reduce((a, s) => a + s.spots.filter(x => x.shape === "conifer").length, 0)
+      conifers: this.sets.reduce((a, s) => a + s.spots.filter(x => x.shape === "conifer").length, 0),
+      /** In the picture just now, and in the shadows' own set (standing or flying). */
+      seen: this.sets.reduce((a, s) => a + s.near[1].count + s.mid[1].count + s.far[1].count, 0),
+      shadow: this.sets.reduce((a, s) => a + s.shadow.reduce((b, l) => b + l[1].count, 0), 0)
     };
   }
 }

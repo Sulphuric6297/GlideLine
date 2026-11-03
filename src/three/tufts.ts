@@ -5,7 +5,7 @@
 // as the blades: the ground's height, how long the grass grows there, its color.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { GRASS_VERT_HEAD, GRASS, type GrassUniformSource } from "./grass";
+import { GRASS_VERT_HEAD, GRASS, SpotBlocks, type GrassUniformSource } from "./grass";
 
 /** Size of the repeating pattern of tuft spots, ft. */
 const TILE = 12;
@@ -87,7 +87,7 @@ const spots = (half: number, perTile: number, seed0: number) => {
   return { out, span: tiles * TILE, count: tiles * tiles * perTile };
 };
 
-type Layer = { mesh: THREE.Mesh; span: number; uniforms: Record<string, THREE.IUniform> };
+type Layer = { blocks: SpotBlocks; mat: THREE.Material; span: number; uniforms: Record<string, THREE.IUniform>; far: number };
 
 /** The tufts and flowers around the camera. */
 export class Tufts {
@@ -109,18 +109,16 @@ export class Tufts {
 
   private build(m: { grass: Part[]; flowers: Part[][] }, q: number) {
     if (q !== this.built) return;
-    for (const l of this.layers) { l.mesh.geometry.dispose(); (l.mesh.material as THREE.Material).dispose(); this.group.remove(l.mesh); }
+    for (const l of this.layers) { l.blocks.dispose(); l.mat.dispose(); }
     this.layers = [];
     this.src.releaseUniforms(this);
     if (!q) return;
     const reach = q >= 3 ? 130 : q === 2 ? 100 : 70;
     const add = (part: Part, half: number, perTile: number, seed: number, opts: { size: number; minTall: number; density: number; tintMix: number; far: number }) => {
-      const { out, span, count } = spots(half, perTile, seed);
-      const geo = new THREE.InstancedBufferGeometry();
+      const { out, span } = spots(half, perTile, seed);
+      const geo = new THREE.BufferGeometry();
       geo.index = part.geo.index;
       for (const name of ["position", "normal", "uv"]) { const a = part.geo.getAttribute(name); if (a) geo.setAttribute(name, a); }
-      geo.setAttribute("aSpot", new THREE.InstancedBufferAttribute(out, 2));
-      geo.instanceCount = count;
       const uniforms: Record<string, THREE.IUniform> = {
         ...this.src.uniformsFor(opts.far, this),
         uSize: { value: opts.size },
@@ -142,13 +140,15 @@ export class Tufts {
           .replace("#include <normal_fragment_begin>", "float faceDirection = 1.0;\nvec3 normal = normalize( vNormal );\nvec3 nonPerturbedNormal = normal;");
       };
       mat.customProgramCacheKey = () => `dg-tufts-${opts.tintMix}`;
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.frustumCulled = false;
-      mesh.receiveShadow = true;
-      mesh.name = "tufts";
-      mesh.raycast = () => {};
-      this.group.add(mesh);
-      this.layers.push({ mesh, span, uniforms });
+      // (in blocks, as the grass: only those in sight and in reach drawn)
+      const blocks = new SpotBlocks(this.group, geo, out, span, 32, g => {
+        const mesh = new THREE.Mesh(g, mat);
+        mesh.receiveShadow = true;
+        mesh.name = "tufts";
+        mesh.raycast = () => {};
+        return mesh;
+      });
+      this.layers.push({ blocks, mat, span, uniforms, far: opts.far });
     };
     // Grass clumps in the lawn and rough, a foot or two high, a good many (six triangles each)
     for (const part of m.grass) add(part, reach, q >= 3 ? 40 : q === 2 ? 26 : 14, 7151, { size: 1.6, minTall: 0.35, density: 1, tintMix: 1, far: reach });
@@ -156,12 +156,14 @@ export class Tufts {
     if (q >= 2) m.flowers.forEach((f, i) => { for (const part of f) add(part, 45, 1, 911 + i * 101, { size: 1.3, minTall: 1.2, density: 0.6, tintMix: 0, far: 45 }); });
   }
 
-  update(eye: THREE.Vector3, time: number, wind: number, visible: boolean) {
+  update(eye: THREE.Vector3, time: number, wind: number, visible: boolean, height: (x: number, z: number) => number = () => 0) {
     this.group.visible = visible && this.ready;
     if (!this.group.visible) return;
     for (const l of this.layers) {
       const half = l.span / 2;
-      (l.uniforms.uOrigin.value as THREE.Vector2).set(Math.floor((eye.x - half) / TILE) * TILE, Math.floor((eye.z - half) / TILE) * TILE);
+      const ox = Math.floor((eye.x - half) / TILE) * TILE, oz = Math.floor((eye.z - half) / TILE) * TILE;
+      (l.uniforms.uOrigin.value as THREE.Vector2).set(ox, oz);
+      l.blocks.update(ox, oz, eye, l.far, 0, height, 4);
       (l.uniforms.uEye.value as THREE.Vector3).copy(eye);
       l.uniforms.uTime.value = time;
       l.uniforms.uWind.value = wind;
@@ -169,7 +171,7 @@ export class Tufts {
   }
 
   dispose() {
-    for (const l of this.layers) { l.mesh.geometry.dispose(); (l.mesh.material as THREE.Material).dispose(); }
+    for (const l of this.layers) { l.blocks.dispose(); l.mat.dispose(); }
     this.layers = [];
     this.src.releaseUniforms(this);
   }
