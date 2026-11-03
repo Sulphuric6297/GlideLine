@@ -346,7 +346,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
             foot, centred; the line itself is always the same element) */}
         {line && !side && lineAbove ? (
           <>
-            <div className={`w-full flex ${tucked && low ? "justify-center" : ""}`}><div className={tucked && low ? "w-[min(360px,100%)] dg-fade-in" : "w-full"}>{line}</div></div>
+            <div className={`w-full flex ${tucked && low ? "justify-center" : ""}`}><div className={tucked && low ? "w-[min(360px,100%)] dg-appear" : "w-full"}>{line}</div></div>
             <div className={`w-full flex items-center gap-2 transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""} ${tucked && low ? "hidden" : ""}`} data-tucked={noRow && tucked ? "" : undefined}>
               <div className="shrink-0 min-w-0">{pillEl}</div>
               {(beside || noRow) && <div className="ml-auto shrink-0 flex items-center gap-2">{beside}{noRow && doneEl}</div>}
@@ -355,7 +355,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
         ) : line && !side ? (
           <div className={`w-full flex items-center gap-2 ${tucked && low ? "justify-center" : ""}`}>
             <div className={`shrink-0 transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""} ${tucked && low ? "hidden" : ""}`}>{pillEl}</div>
-            <div className={tucked && low ? "w-[min(360px,100%)] dg-fade-in" : "flex-1 min-w-0"}>{line}</div>
+            <div className={tucked && low ? "w-[min(360px,100%)] dg-appear" : "flex-1 min-w-0"}>{line}</div>
             {noRow && <div className={`transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""} ${tucked && low ? "hidden" : ""}`}>{doneEl}</div>}
           </div>
         ) : pillEl}

@@ -466,6 +466,8 @@ select {
 /* (a hint over the map, coming in softly) */
 @keyframes dgfadein { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .dg-fade-in { animation: dgfadein 0.25s ease; }
+/* (fading in where it is: dg-fade-in is for what's centred by translate(-50%)) */
+.dg-appear { animation: dgfade 0.25s ease; }
 @media (prefers-reduced-motion: reduce) { .dg-fade-in { animation: none; } }
 
 /* The phone's steps tucking away under a tool's bar, and coming back up (mobile/CompactShell) */

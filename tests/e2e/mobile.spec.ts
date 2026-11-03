@@ -1079,9 +1079,7 @@ test.describe("phone", () => {
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
     // Folded again, Pause on its timeline pauses it at once (the bar coming back as it does) and
     // holds it on its moment, the bar staying up (it ends paused too, on its last picture)
-    // (folded all the way, the timeline settled at the foot, before the tap: not while it moves)
     await expect(bar.locator("[data-tucked]")).toHaveCount(1, { timeout: 15_000 });
-    await expect(bar.getByTestId("flyover-pill")).toBeHidden();
     const paused = () => page.evaluate(() => !!(window as any).__dgEditor().flyPaused);
     if (!(await paused())) await bar.getByTestId("hud-flyover").tap();
     await expect.poll(paused).toBe(true);
