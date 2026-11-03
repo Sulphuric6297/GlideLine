@@ -299,7 +299,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
         <span className="w-px h-6 bg-white/[0.12] mx-1" />
         <div className="w-[min(420px,30vw)]">{lineBare}</div>
         {!readOnly && !playing && <button className={pill} onClick={() => editFlyover(hole.id)} title="The flyover's one editor: its camera, keyframes and settings" data-testid="fly-edit"><Video size={15} /> Edit flyover</button>}
-        {mayRecord && !playing && <button className={pill} onClick={record} disabled={!!job} title={`Export video · ${VIDEO_SIZES[video.resolution].label}, ${video.fps} fps`} data-testid="fly-export"><Clapperboard size={15} /> {job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : "Export video"}</button>}
+        {mayRecord && <button className={pill} onClick={record} disabled={!!job} title={`Export video · ${VIDEO_SIZES[video.resolution].label}, ${video.fps} fps`} data-testid="fly-export"><Clapperboard size={15} /> {job?.kind === "video" ? `Exporting ${recPct ?? "…"}` : "Export video"}</button>}
         <span className="w-px h-6 bg-white/[0.12] mx-1" />
         {playing && <button className={pill} onClick={() => ed.set({ flyover: false })} title="Stop and go back to the tee (Esc)" data-testid="hud-stop"><Square size={13} /> Stop</button>}
         <button className={`${pill} bg-white/[0.07]`} onClick={() => ed.set({ teeView: null, flyover: false })} title="Back to the map (Esc)" data-testid="bar-done"><X size={15} /> Back to map</button>

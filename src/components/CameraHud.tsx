@@ -318,9 +318,10 @@ export function CameraHud({ compact = false }: { compact?: boolean }) {
       for (const k of held) MOVES[k].forEach((v, j) => (m[j] += v));
       getView()?.freeMove({ f: Math.sign(m[0]), s: Math.sign(m[1]), u: Math.sign(m[2]), fast });
     };
+    // (typing, or a dial or a menu open: the keys are theirs, not the camera's)
     const typing = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      return !!t && (t.tagName === "TEXTAREA" || t.tagName === "SELECT" || (t.tagName === "INPUT" && !["range", "checkbox", "radio"].includes((t as HTMLInputElement).type)) || t.isContentEditable);
+      return !!t && (t.tagName === "TEXTAREA" || t.tagName === "SELECT" || (t.tagName === "INPUT" && !["range", "checkbox", "radio"].includes((t as HTMLInputElement).type)) || t.isContentEditable || t.getAttribute("role") === "slider" || !!t.closest?.('[role="dialog"]'));
     };
     const down = (e: KeyboardEvent) => {
       if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
