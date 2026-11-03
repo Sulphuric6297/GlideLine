@@ -1000,7 +1000,7 @@ test.describe("phone", () => {
 
   test("the flyover's settings in its bar's row on a phone, as it plays too; a thing selected, its bar in the flyover bar's place; playing, the bar folds to its timeline and a tap brings it back", async ({ page }) => {
     // (a flight's loading screen takes a while on a slow machine)
-    test.setTimeout(180_000);
+    test.setTimeout(240_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
     await page.getByTestId("pill-open").tap();
@@ -1094,11 +1094,11 @@ test.describe("phone", () => {
     const n = await keys();
     await bar.getByTestId("fly-key-add").tap();
     await expect.poll(keys).toBe(n + 1);
-    await expect.poll(async () => (await editorState(page)).flyKey).toBe(2);
+    await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().flyKey)).toBe(2);
     await expect(bar.getByTestId("flyover-pill")).toContainText("Keyframe 3");
     // ✓: done with the keyframe, the hole's bar again
     await bar.getByTestId("bar-done").tap();
-    await expect.poll(async () => (await editorState(page)).flyKey).toBeNull();
+    await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().flyKey)).toBeNull();
     await expect(bar.getByTestId("flyover-pill")).toContainText("Hole");
   });
 
