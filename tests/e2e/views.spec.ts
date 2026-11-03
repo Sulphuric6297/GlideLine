@@ -393,6 +393,9 @@ test("flyover on-screen switches: off for all holes, back on for one; no disc fl
   await backToMap(page);
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("flyover-row").getByTestId("fly-edit").click();
+  await expect(page.getByTestId("hole-flight")).toBeVisible();
+  // (the 3D view rests again while the settings change: drawn in software, its frames hold up the page)
+  await page.evaluate(() => (window as any).__dgView.setPaused(true));
   // (the switches, folded at the bottom of the editor's panel)
   await page.getByTestId("hole-flight").getByTestId("flyover-onscreen").locator("summary").click();
   await expect(page.getByTestId("hole-flight").getByTestId("flyover-show")).toBeVisible();
@@ -523,9 +526,11 @@ test("the Flyover editor: Add keyframe turns an Automatic path Custom; a keyfram
   await expect(page.getByTestId("cam-moved")).toBeVisible();
   await page.getByTestId("cam-update").click();
   await expect.poll(async () => (await keys())[1].alt).toBeGreaterThan(k1b.alt + 2);
-  // Delete: one fewer
+  // Delete: one fewer (the 3D view resting meanwhile: drawn in software, its frames hold up the page)
+  await page.evaluate(() => (window as any).__dgView.setPaused(true));
   await page.getByTestId("cam-remove").click();
   await expect.poll(async () => (await keys()).length).toBe(n - 1);
+  await page.evaluate(() => (window as any).__dgView.setPaused(false));
   // Esc: the whole flyover; Automatic again; Done: back on the map, the hole still picked
   await page.keyboard.press("Escape");
   await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().flyKey)).toBeNull();

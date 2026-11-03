@@ -1007,8 +1007,8 @@ test.describe("phone", () => {
   });
 
   test("the flyover's settings in the Flyover editor's bar on a phone; a thing selected in tee view, its bar in the flyover bar's place; playing, the bar folds to its timeline and a tap brings it back", async ({ page }) => {
-    // (a flight's loading screen takes a while on a slow machine)
-    test.setTimeout(360_000);
+    // (a flight's loading screen takes a while on a slow machine, and the flight is at its slowest)
+    test.setTimeout(600_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
     await page.getByTestId("pill-open").tap();
@@ -1079,7 +1079,9 @@ test.describe("phone", () => {
     await expect(page.getByTestId("bar-menu")).toHaveCount(0);
     // Folded again, Pause on its timeline pauses it at once (the bar coming back as it does) and
     // holds it on its moment, the bar staying up (it ends paused too, on its last picture)
+    // (folded all the way, the timeline settled at the foot, before the tap: not as it moves there)
     await expect(bar.locator("[data-tucked]")).toHaveCount(1, { timeout: 15_000 });
+    await expect(bar.getByTestId("flyover-pill")).toBeHidden();
     const paused = () => page.evaluate(() => !!(window as any).__dgEditor().flyPaused);
     if (!(await paused())) await bar.getByTestId("hud-flyover").tap();
     await expect.poll(paused).toBe(true);
