@@ -280,7 +280,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
       {ed.teeCardHidden && !playing && <div className={`absolute top-4 ${editing && thing ? "left-[324px]" : "left-4"}`}><CardChip label={s.label} color={lvl.color} ink={lvl.ink} /></div>}
       {(
         <div className={`absolute top-4 pointer-events-auto glass backdrop-blur rounded-[24px] px-4 py-3 text-white shadow-2xl border border-white/10 w-[300px] ${playing || ed.teeCardHidden ? "hidden" : ""} ${editing && thing ? "left-[324px]" : "left-4"}`} data-testid="tee-view-hud">
-          <div className="absolute right-2 top-2 flex items-center gap-0.5">
+          <div className="absolute z-10 right-2 top-2 flex items-center gap-0.5">
             <HideCard />
           </div>
           {card}

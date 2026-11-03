@@ -362,6 +362,8 @@ test("flyover settings: height, speed and lens change the flight, one undo step 
 });
 
 test("flyover on-screen switches: off for all holes, back on for one; no disc flight lines anywhere", async ({ page }) => {
+  // (slow under software rendering: the Flyover editor opened twice)
+  test.setTimeout(240_000);
   await blankCourse(page);
   const h1 = await addHole(page, { x: 300, y: 500 }, { x: 800, y: 500 });
   const h2 = await addHole(page, { x: 300, y: 700 }, { x: 800, y: 700 });

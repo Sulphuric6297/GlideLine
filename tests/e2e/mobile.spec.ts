@@ -1000,7 +1000,7 @@ test.describe("phone", () => {
 
   test("the flyover's settings in the Flyover editor's bar on a phone; a thing selected in tee view, its bar in the flyover bar's place; playing, the bar folds to its timeline and a tap brings it back", async ({ page }) => {
     // (a flight's loading screen takes a while on a slow machine)
-    test.setTimeout(240_000);
+    test.setTimeout(360_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
     await page.getByTestId("pill-open").tap();

@@ -206,6 +206,8 @@ test.describe("phone", () => {
     // (the tool's bar: Kind opens the kinds just over it)
     await page.getByTestId("tool-options").tap();
     await page.getByTestId("field-kind-basketball").tap();
+    // (the menu closed: the tool's hint again)
+    if (await page.getByTestId("bar-away").count()) await page.getByTestId("bar-away").tap();
     await expect(page.getByTestId("tool-hint")).toHaveText("Tap where the basketball court goes");
     await tapPlan(page, 450, 380);
     await expect.poll(async () => (await fields(page)).length).toBe(1);
