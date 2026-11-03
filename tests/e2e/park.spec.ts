@@ -206,7 +206,15 @@ test.describe("phone", () => {
     // (the tool's bar: Kind opens the kinds just over it)
     await page.getByTestId("tool-options").tap();
     await page.getByTestId("field-kind-basketball").tap();
-    if (await page.getByTestId("bar-away").count()) await page.getByTestId("bar-away").tap();
+    // (picking closes the menu, or a tap on the view does; the next tap only once it's gone, or
+    // that tap closes it instead)
+    const menu = page.getByTestId("bar-menu");
+    const closed = async () => {
+      await expect(menu).toHaveCount(0, { timeout: 2000 }).catch(() => page.getByTestId("bar-away").tap({ timeout: 2000 }).catch(() => {}));
+      await expect(menu).toHaveCount(0);
+      await expect(page.getByTestId("bar-away")).toHaveCount(0);
+    };
+    await closed();
     await tapPlan(page, 450, 380);
     await expect.poll(async () => (await fields(page)).length).toBe(1);
     const f = (await fields(page))[0];
@@ -215,14 +223,17 @@ test.describe("phone", () => {
     expect((await editorState(page)).selectedId).toBe(f.id);
     const strip = page.getByTestId("item-strip");
     await expect(strip).toBeVisible();
+    // (a setting's choices grow out of its button, over the bar)
     await strip.getByTestId("strip-play").tap();
-    await strip.getByRole("radiogroup", { name: "Play" }).getByRole("radio", { name: "Out of play" }).tap();
+    await menu.getByRole("radiogroup", { name: "Play" }).getByRole("radio", { name: "Out of play" }).tap();
     await expect.poll(async () => (await fields(page))[0].outOfPlay).toBe(true);
+    await closed();
     await strip.getByTestId("strip-kind").tap();
-    await strip.getByRole("radiogroup", { name: "Field kind" }).getByRole("radio", { name: "Volleyball court" }).tap();
+    await menu.getByRole("radiogroup", { name: "Field kind" }).getByRole("radio", { name: "Volleyball court" }).tap();
     await expect.poll(async () => (await fields(page))[0].field).toBe("volleyball");
+    await closed();
     await strip.getByTestId("strip-markings").tap();
-    await expect(strip.getByRole("slider", { name: "Markings turn" })).toBeVisible();
+    await expect(menu.getByRole("slider", { name: "Markings turn" })).toBeVisible();
   });
 });
 
