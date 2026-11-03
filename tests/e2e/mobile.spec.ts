@@ -1068,6 +1068,40 @@ test.describe("phone", () => {
     await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
   });
 
+  test("a custom camera path on a phone: the timeline across the bar; a keyframe tapped holds the flyover on it and its bar comes up; Add keyframe adds one after it; ✓ back to the hole's bar", async ({ page }) => {
+    test.setTimeout(180_000);
+    await oneHole(page);
+    await tapPlan(page, 450, 500);
+    await page.getByTestId("pill-open").tap();
+    await page.getByTestId("menu-tee-view").tap();
+    const bar = page.getByTestId("tee-bar");
+    const keys = () => page.evaluate(() => ((window as any).__dgCourse().holes[0].flyKeys ?? []).length);
+    await bar.getByTestId("fly-path").tap();
+    await page.getByTestId("bar-menu").getByRole("radio", { name: /Custom/ }).tap();
+    await expect.poll(keys).toBeGreaterThanOrEqual(2);
+    // (the hole's bar: the timeline over the hole's name, Add keyframe beside it)
+    await expect(bar.getByTestId("fly-line")).toBeVisible();
+    await expect(bar.getByTestId("fly-key-add")).toBeVisible();
+    await expect(bar.getByTestId("flyover-pill")).toContainText("Hole");
+    // A keyframe tapped: the flyover held on its moment, the keyframe's own bar
+    await bar.getByTestId("fly-key").nth(1).tap();
+    await expect.poll(() => page.evaluate(() => { const e = (window as any).__dgEditor(); return [e.flyKey, e.flyover, e.flyPaused]; })).toEqual([1, true, true]);
+    await expect(bar.getByTestId("flyover-pill")).toContainText("Keyframe 2");
+    await expect(bar.getByTestId("fly-move-camera")).toBeVisible();
+    await expect(bar.getByTestId("fly-key-add")).toContainText("after 2");
+    await expect.poll(() => page.evaluate(() => { const ed = (window as any).__dgEditor(), el = document.querySelector('[data-testid="flyover-loading"]'); return ed.flyLoading === null && (!el || getComputedStyle(el).pointerEvents === "none"); }), { timeout: 120_000 }).toBe(true);
+    // Add keyframe: one more, after it, and it's the one selected
+    const n = await keys();
+    await bar.getByTestId("fly-key-add").tap();
+    await expect.poll(keys).toBe(n + 1);
+    await expect.poll(async () => (await editorState(page)).flyKey).toBe(2);
+    await expect(bar.getByTestId("flyover-pill")).toContainText("Keyframe 3");
+    // ✓: done with the keyframe, the hole's bar again
+    await bar.getByTestId("bar-done").tap();
+    await expect.poll(async () => (await editorState(page)).flyKey).toBeNull();
+    await expect(bar.getByTestId("flyover-pill")).toContainText("Hole");
+  });
+
   test("the camera on a phone: the stick moves it, the arrows lift it, a drag turns it, a big button adds the keyframe", async ({ page }) => {
     test.setTimeout(180_000);
     await oneHole(page);

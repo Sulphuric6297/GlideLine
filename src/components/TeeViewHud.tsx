@@ -1,10 +1,15 @@
 // What shows over tee view and a flyover: the hole's card, View, Tap mode, and the flyover's bar (the
-// map's glass bar, mobile/GlassBar): the hole's name with the holes either side and its menu, the
-// flyover's timeline beside it, and every flyover setting in its row; ✓ back to the map. The same on
-// a phone and a computer (centred along the bottom there, its keys in the tips). While a flyover
-// plays the card goes, and left alone for a few seconds the bar folds to just its timeline.
+// map's glass bar, mobile/GlassBar): the flyover's timeline (across the bar, over the pill, once it
+// has keyframes or plays), the hole's name with the holes either side and its menu, and every
+// flyover setting in its row; ✓ back to the map. A keyframe selected (on the timeline, or the
+// playhead dragged onto it), the flyover holds on its moment and the bar is the keyframe's, as a
+// selected thing's is: Keyframe 2 with ‹ ›, its settings, ✓ done with it. Add keyframe beside the
+// pill. On a computer the settings are in the side panel and the bar over the view keeps the hole,
+// the timeline, Add keyframe and Back to map. While a flyover plays the card goes, and left alone
+// for a few seconds the bar folds to just its timeline. Someone viewing sees no keyframes: just
+// the flyover, and a scrub bar.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Settings2, Square, Video, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clapperboard, HelpCircle, Home, Maximize2, Minimize2, Settings2, Square, Trash2, Video, X } from "lucide-react";
 import { useAllowed } from "../auth/perms";
 import { STAND_HERE, TEE_LEVELS } from "../constants";
 import { activeLayout } from "../lib/course";
@@ -18,7 +23,7 @@ import type { Hole, TeeItem } from "../types";
 import { ElevationProfile } from "./ElevationProfile";
 import { SceneButton } from "./ScenePanel";
 import { HoleFlight, cameraFrom } from "./FlyoverSettings";
-import { FlightLine, TapModes, retimeKeys, useFlight, useFlyoverSettings } from "./FlyoverBar";
+import { AddKeyframe, FlightLine, TapModes, addKeyframe, addWhere, retimeKeys, useFlight, useFlyoverSettings, useKeyframeSettings } from "./FlyoverBar";
 import { askHelp } from "./ui";
 import { getView } from "../state/view";
 import { useSelection } from "./Inspector";
@@ -103,9 +108,12 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   // (a phone, a thing picked: its own bar in the flyover bar's place)
   const sheetUp = compact && !readOnly && !playing && !!ed.selectedId && doc.items.some(i => i.id === ed.selectedId);
   const [cardOpen, setCardOpen] = useState(false);
-  // The flyover's timeline: its keyframes (a custom camera path), the playhead as it plays
+  // The flyover's timeline: its keyframes (a custom camera path; someone viewing sees none), the one
+  // selected, the playhead as it plays
   const flight = useFlight(hole);
-  const picked = flight.keys ? Math.min(ed.flyKey ?? 0, flight.keys.length - 1) : null;
+  const keys = readOnly ? null : flight.keys;
+  const picked = keys && ed.flyKey !== null ? Math.min(ed.flyKey, keys.length - 1) : null;
+  const pickedT = picked !== null ? flight.times[picked] ?? null : null;
   const [at, setAt] = useState<number | null>(null);
   useEffect(() => {
     if (!playing) { setAt(null); return; }
@@ -122,6 +130,50 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const sig = JSON.stringify([hole.flyKeys, hole.flyover, doc.flyover]);
   const firstSig = useRef(sig);
   useEffect(() => { if (sig !== firstSig.current) { firstSig.current = sig; if (useEditor.getState().flyover) getView()?.flyRefresh(); } }, [sig]);
+  // A keyframe selected: the flyover held on its moment, the playhead there (standing, it starts,
+  // held there; held already, it goes there; its time changed, with it)
+  useEffect(() => {
+    if (pickedT === null || running) return;
+    if (!playing) { useEditor.getState().set({ flyover: true, flyPaused: true, flyFrom: pickedT }); return; }
+    const now = getView()?.flyClock()?.t ?? null;
+    if (now !== null && Math.abs(now - pickedT) > 0.05) getView()?.flySeek(pickedT);
+    setAt(pickedT);
+  }, [pickedT, playing, running]);
+  const pick = (k: number) => {
+    if (!keys) return;
+    const i = Math.max(0, Math.min(keys.length - 1, k));
+    ed.set(running ? { flyKey: i, flyPaused: true } : { flyKey: i });
+  };
+  // (the playhead dragged: onto a keyframe, it's selected and the playhead is on it; off them, none
+  // is; standing, the flyover starts held there)
+  const scrub = (t: number) => {
+    const near = Math.max(0.15, (flight.length ?? 10) / 60);
+    const k = keys && !running ? flight.times.findIndex(x => Math.abs(x - t) < near) : -1;
+    const to = k >= 0 ? flight.times[k] : t;
+    setAt(to);
+    if (playing) { getView()?.flySeek(to); if (keys && !running) ed.set({ flyKey: k >= 0 ? k : null }); }
+    else if (keys) ed.set({ flyover: true, flyPaused: true, flyFrom: to, flyKey: k >= 0 ? k : null });
+  };
+  // (the playhead: as it plays; standing with keyframes, at the start)
+  const playhead = playing ? at : keys ? 0 : null;
+  const addNow = () => { if (keys) addKeyframe(hole.id, addWhere(flight.times, picked, playhead)); };
+  // (a computer: K adds a keyframe, [ and ] go to the keyframe before or after; before the map's
+  // own keys, which would go to other holes)
+  const keyRef = useRef({ addNow, pick, picked, n: keys?.length ?? 0 });
+  keyRef.current = { addNow, pick, picked, n: keys?.length ?? 0 };
+  useEffect(() => {
+    if (compact || !keys) return;
+    const on = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && ((el.tagName === "INPUT" && !["range", "checkbox", "radio"].includes((el as HTMLInputElement).type)) || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || useEditor.getState().flyCam) return;
+      const r = keyRef.current;
+      if (e.key === "k" || e.key === "K") { e.preventDefault(); e.stopPropagation(); r.addNow(); }
+      else if (e.key === "[" || e.key === "]") { e.preventDefault(); e.stopPropagation(); r.pick(r.picked === null ? (e.key === "]" ? 0 : r.n - 1) : r.picked + (e.key === "]" ? 1 : -1)); }
+    };
+    window.addEventListener("keydown", on, true);
+    return () => window.removeEventListener("keydown", on, true);
+  }, [compact, !!keys]); // eslint-disable-line react-hooks/exhaustive-deps
   // Left alone while it plays, the bar folds to its timeline; a touch, a move of the mouse or a key
   // brings it back (not while a menu or dial is open). The touch that brings it back does only that:
   // it doesn't also press what comes up under the finger (the timeline, still there, works at once)
@@ -180,7 +232,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
   const i = done.findIndex(h => h.id === hole.id);
   const go = (d: number) => {
     const next = done[(i + d + done.length) % done.length];
-    if (next) ed.set({ teeView: next.id, teeViewTee: null, flyover: ed.flyover });
+    if (next) ed.set({ teeView: next.id, teeViewTee: null, flyover: ed.flyover, flyKey: null });
   };
   const lvl = TEE_LEVELS[s.level];
   // (beside the big number: the hole's name, or the tee it's seen from; standing away from the tee,
@@ -203,28 +255,43 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
     updateHole(hole.id, { flyKeys: retimeKeys(flight.keys, flight.times, k, t) }, false);
     if (end) useCourse.getState().commit();
   };
-  const line = (
-    <FlightLine playing={playing} paused={ed.flyPaused} onPlay={() => ed.set(playing ? { flyPaused: false } : { flyover: true })} onPause={() => ed.set({ flyPaused: true })} length={flight.length} at={playing ? at : null}
-      keys={flight.keys ? flight.times : undefined} picked={picked} onRetime={readOnly ? undefined : retime}
-      onPick={k => { ed.set({ flyKey: k }); if (playing && flight.keys) { setAt(flight.times[k]); getView()?.flySeek(flight.times[k]); } }}
-      onScrub={playing ? t => { setAt(t); getView()?.flySeek(t); } : undefined} short={!!flight.keys} />
-  );
-  const lineBare = (
-    <FlightLine bare playing={playing} paused={ed.flyPaused} onPlay={() => ed.set(playing ? { flyPaused: false } : { flyover: true })} onPause={() => ed.set({ flyPaused: true })} length={flight.length} at={playing ? at : null}
-      keys={flight.keys ? flight.times : undefined} picked={picked} onRetime={readOnly ? undefined : retime}
-      onPick={k => { ed.set({ flyKey: k }); if (playing && flight.keys) { setAt(flight.times[k]); getView()?.flySeek(flight.times[k]); } }}
-      onScrub={playing ? t => { setAt(t); getView()?.flySeek(t); } : undefined} />
+  const lineProps = {
+    playing, paused: ed.flyPaused, onPlay: () => ed.set(playing ? { flyPaused: false } : { flyover: true }), onPause: () => ed.set({ flyPaused: true }), length: flight.length, at: playhead,
+    keys: keys ? flight.times : undefined, picked, onRetime: keys ? retime : undefined, onPick: pick, onScrub: playing || keys ? scrub : undefined
+  };
+  const line = <FlightLine {...lineProps} />;
+  const lineBare = <FlightLine bare {...lineProps} />;
+  // (a keyframe selected: the bar is the keyframe's, with ‹ › to the ones either side)
+  const keySettings = useKeyframeSettings(hole, picked ?? 0);
+  const keyBar = picked !== null && !!keys;
+  const keyMenu = keys && picked !== null && (
+    <div className="flex flex-col gap-0.5">
+      <ActRow icon={<Video size={18} />} label="Move camera" hint={`Move keyframe ${picked + 1}'s camera yourself`} onClick={() => cameraFrom(hole.id, picked)} testid="key-move" />
+      {keys.length > 2 && <ActRow icon={<Trash2 size={18} />} label={`Delete keyframe ${picked + 1}`} danger onClick={() => { updateHole(hole.id, { flyKeys: keys.filter((_, j) => j !== picked) }); ed.set({ flyKey: Math.max(0, picked - 1) }); }} testid="key-delete" />}
+      <ActRow icon={<HelpCircle size={18} />} label="Flyover help" hint="How flyovers and camera paths work" onClick={() => askHelp("flyover")} testid="hud-help" />
+    </div>
   );
   const many = done.length > 1;
   // (a computer: along the foot of the view, over the drawing tools when they're up)
   const base = compact ? 0 : toolsUp ? toolbar + 6 : 0;
+  // (a phone: the timeline across the bar once there's one to use, keyframes or a flyover under way)
+  const fullLine = !!keys || playing;
+  const barH = BAR_H + (fullLine ? 46 + 8 : 0);
   const bar = !sheetUp && (
-    <GlassBar remember="flyover" pill={{ name: `Hole ${s.label}`, prev: many ? () => go(-1) : undefined, next: many ? () => go(1) : undefined, testid: "flyover-pill" }}
-      pillMenu={pillMenu} settings={settings} line={line} tucked={tucked} onDone={() => ed.set({ teeView: null, flyover: false })} doneLabel="Done: back to the map"
+    <GlassBar remember={keyBar ? "flyover-key" : "flyover"}
+      pill={keyBar ? { name: `Keyframe ${picked! + 1}`, prev: () => pick(picked! - 1), next: () => pick(picked! + 1), prevOff: picked === 0, nextOff: picked === keys!.length - 1, prevLabel: "The keyframe before", nextLabel: "The keyframe after", testid: "flyover-pill" }
+        : { name: `Hole ${s.label}`, prev: many ? () => go(-1) : undefined, next: many ? () => go(1) : undefined, testid: "flyover-pill" }}
+      pillMenu={keyBar ? keyMenu : pillMenu} settings={keyBar ? keySettings : settings} line={line} lineAbove={fullLine} tucked={tucked}
+      beside={keys ? <AddKeyframe times={flight.times} picked={picked} at={playhead} onAdd={addNow} /> : undefined}
+      onDone={keyBar ? () => ed.set({ flyKey: null }) : () => ed.set({ teeView: null, flyover: false })} doneLabel={keyBar ? "Done with the keyframe" : "Done: back to the map"}
       bottom={base} onOpen={id => setMenuOpen(!!id)} testid="tee-bar" />
   );
   const wide = typeof window !== "undefined" && window.innerWidth >= 1200;
-  const taps = !readOnly && !playing && !menuOpen && (compact ? <TapModes bottom={BAR_H + 12} /> : <TapModes bottom={base + (wide ? 18 : 84)} right={16} />);
+  const taps = !readOnly && !playing && !menuOpen && (compact ? <TapModes bottom={barH + 12} /> : <TapModes bottom={base + (wide ? 18 : 84)} right={16} />);
+  // (the overlay's course name above the bar while the flyover shows; a video has no bar)
+  const foot = !playing ? 0 : compact ? (tucked ? 18 + 46 + 8 : barH + 8) : base + 18 + 52 + 8;
+  useEffect(() => { getView()?.setFlyFoot(foot); }, [foot]);
+  useEffect(() => () => getView()?.setFlyFoot(0), []);
   const hintText = select ? (compact ? "Tap to select · drag to look" : "Click something to select it · drag to look around · Esc back to the map") : compact ? "Tap to walk · drag to look" : `Click the ground to walk · drag to look around${many ? " · ← → other holes" : ""} · Space plays the flyover`;
 
   if (compact) {
@@ -249,7 +316,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
           {cardOpen && hole.notes && <p className="text-[13px] text-zinc-200 mt-1 line-clamp-3">{hole.notes}</p>}
         </div>
         <div className="absolute right-2 top-[max(8px,env(safe-area-inset-top))] pointer-events-auto glass rounded-[20px] p-1 border border-white/10 shadow-2xl"><SceneButton label="View" /></div>
-        {hint && !playing && !sheetUp && !menuOpen && <div className="absolute z-[33] max-w-[calc(100%-96px)] px-3.5 py-1.5 rounded-full bg-black/45 text-[13px] font-semibold text-white/90 text-center whitespace-nowrap truncate pointer-events-none dg-fade-in" style={{ bottom: BAR_H + 12, left: "calc(50% - 28px)", transform: "translateX(-50%)" }} data-testid="tee-hint">{hintText}</div>}
+        {hint && !playing && !sheetUp && !menuOpen && <div className="absolute z-[33] max-w-[calc(100%-96px)] px-3.5 py-1.5 rounded-full bg-black/45 text-[13px] font-semibold text-white/90 text-center whitespace-nowrap truncate pointer-events-none dg-fade-in" style={{ bottom: barH + 12, left: "calc(50% - 28px)", transform: "translateX(-50%)" }} data-testid="tee-hint">{hintText}</div>}
         {taps}
         {bar}
       </div>
@@ -316,6 +383,7 @@ function HoleHud({ hole, compact }: { hole: Hole; compact: boolean }) {
         <button className={`${pill} !px-0 w-9 justify-center text-zinc-300`} aria-label="Next hole" title="Next hole (→)" disabled={!many} onClick={() => go(1)} data-testid="hole-next"><ChevronRight size={18} /></button>
         <span className="w-px h-6 bg-white/[0.12] mx-1" />
         <div className="w-[min(480px,34vw)]">{lineBare}</div>
+        {keys && <AddKeyframe compact={false} times={flight.times} picked={picked} at={playhead} onAdd={addNow} />}
         <span className="w-px h-6 bg-white/[0.12] mx-1" />
         {playing && <button className={pill} onClick={() => ed.set({ flyover: false })} title="Stop and go back to the tee (Esc)" data-testid="hud-stop"><Square size={13} /> Stop</button>}
         <button className={`${pill} bg-white/[0.07]`} onClick={() => ed.set({ teeView: null, flyover: false })} title="Back to the map (Esc)" data-testid="bar-done"><X size={15} /> Back to map</button>

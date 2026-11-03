@@ -1539,7 +1539,7 @@ export class CourseView {
    * picture, the flight (the title fading), a moment at the basket; `done` runs when it lands.
    * `hold`: at the end it stays on its last picture, paused (`done` runs then), as a video player
    * does, instead of ending. */
-  flyover(holeId: string, done?: () => void, hold = false) {
+  flyover(holeId: string, done?: () => void, hold = false, from: number | null = null) {
     const path = this.flightPath(holeId);
     if (!path || !this.doc) {
       this.fly = null;
@@ -1550,7 +1550,8 @@ export class CourseView {
     }
     this.setTeeView(holeId);
     if (!this.fly) this.povFov = this.povCam.fov;
-    this.fly = { ...path, t: -VIDEO_HOLD.intro, done, title: holeTitle(this.doc.course, holeId), hold };
+    // (from a moment: held there, paused, without the title as it starts)
+    this.fly = { ...path, t: from !== null ? clamp(from, 0, path.play) : -VIDEO_HOLD.intro, done, title: holeTitle(this.doc.course, holeId), hold, ...(from !== null ? { paused: true } : {}) };
     const wait: { since: number; loaded: boolean; frames: number } = { since: performance.now(), loaded: false, frames: 0 };
     this.flyWait = wait;
     this.cb.onFlyWait("map");
@@ -1987,7 +1988,7 @@ export class CourseView {
       info = { basket: inside ? { x: ((q.x + 1) / 2) * w, y: ((1 - q.y) / 2) * h } : null, toBasket: dist({ x: cam.position.x, y: cam.position.z }, b) };
     }
     // (what it shows as set now, if changed mid-flight)
-    drawOverlay(g, w, h, { ...f.title, show: overlayShow(doc.course, this.povHole ?? "") }, titleStrength(f.t), info, doc.course);
+    drawOverlay(g, w, h, { ...f.title, show: overlayShow(doc.course, this.povHole ?? "") }, titleStrength(f.t), info, doc.course, this.flyFoot);
   }
 
   /** In the tee view: a marker over the basket (too small to see from far away) with the distance. */
@@ -2044,6 +2045,15 @@ export class CourseView {
     const p = this.flightPath(this.povHole);
     if (!p) return;
     Object.assign(this.fly, p, { t: Math.min(this.fly.t, p.play) });
+    this.invalidate();
+  }
+
+  /** Room kept at the foot of the view (px) for the bar over it: the overlay's course name sits
+   * above it on screen (a video has none). */
+  private flyFoot = 0;
+  setFlyFoot(px: number) {
+    if (px === this.flyFoot) return;
+    this.flyFoot = px;
     this.invalidate();
   }
 

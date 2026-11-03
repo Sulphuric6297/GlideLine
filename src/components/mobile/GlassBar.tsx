@@ -7,8 +7,10 @@
 // what's open without drawing on it; the row slides sideways when it holds more than fits, with +N
 // saying how many are past the edge, and opens where it was last left. While a finger works on the
 // map the bar fades almost away (`faded`). Held sideways (`side`), it stands up the right edge.
-// Beside the pill it can carry a `line` (a flyover's timeline); `tucked`, only that line shows. On a
-// computer it's `center`ed along the bottom of its box, its menus over their buttons there too.
+// Beside the pill it can carry a `line` (a flyover's timeline), or across the bar over the pill's
+// line (`lineAbove`); `tucked`, only that line shows. `beside`: at the other end of the pill's line
+// (a flyover's Add keyframe). On a computer it's `center`ed along the bottom of its box, its menus
+// over their buttons there too.
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react";
 import { MenuRows } from "../ui";
@@ -39,8 +41,13 @@ export type BarPill = {
   name: ReactNode;
   small?: ReactNode;
   icon?: ReactNode;
-  /** A hole's arrows to the holes either side. */
+  /** A hole's arrows to the holes either side (or a keyframe's, `prevLabel`/`nextLabel` saying so;
+   * `prevOff`/`nextOff`: none that way). */
   prev?: () => void;
+  prevLabel?: string;
+  nextLabel?: string;
+  prevOff?: boolean;
+  nextOff?: boolean;
   /** ‹ back to what came before (a hole's flyover: the hole's own settings). */
   back?: () => void;
   next?: () => void;
@@ -117,6 +124,10 @@ type Props = {
   from?: DOMRect | null;
   /** Beside the pill, the rest of its line: a flyover's timeline. */
   line?: ReactNode;
+  /** The line across the bar, over the pill's (room for keyframes). */
+  lineAbove?: boolean;
+  /** At the other end of the pill's line. */
+  beside?: ReactNode;
   /** Only the line, the pill and the row put away (a flyover playing, left alone). */
   tucked?: boolean;
   /** Centred along the bottom, at most this wide (a computer), `inset` from the left (a panel there). */
@@ -124,7 +135,7 @@ type Props = {
   inset?: number;
 };
 
-export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want, from, line, tucked = false, center, inset = 0 }: Props) {
+export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want, from, line, lineAbove = false, beside, tucked = false, center, inset = 0 }: Props) {
   const [open, setOpen] = useState<Open>(null);
   // (tucked: first the pill and the row fade where they are; a moment later, folded, only the line
   // at the foot; brought back from there by the page once no finger is on the line)
@@ -250,11 +261,11 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   const rowH = 64, gap = 8, pillH = 44;
   // (no settings, only the line: the pill, the line and ✓ along the foot)
   const noRow = !side && !replace && !settings.length && !!line;
-  const panelBottom = side ? undefined : noRow ? bottom + kb + 18 + pillH + gap : bottom + kb + 18 + rowH + gap + (open?.pill ? pillH + gap : 0);
+  const panelBottom = side ? undefined : noRow ? bottom + kb + 18 + pillH + gap : bottom + kb + 18 + rowH + gap + (open?.pill ? pillH + gap + (lineAbove && line ? 46 + gap : 0) : 0);
 
   const pillEl = (
     <div ref={pillRef} className={`flex items-center h-11 rounded-full border shadow-xl transition-opacity duration-200 ${open && !open.pill ? "opacity-0 pointer-events-none" : ""} ${open?.pill ? "bg-zinc-100 border-transparent text-zinc-900" : "glass border-white/10 text-zinc-50"}`} data-testid={pill.testid ?? "bar-pill"}>
-      {pill.prev && <button className="w-10 h-11 flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole before" onClick={pill.prev} data-testid="hole-prev"><ChevronLeft size={19} /></button>}
+      {pill.prev && <button className="w-10 h-11 flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10 disabled:opacity-30" aria-label={pill.prevLabel ?? "The hole before"} disabled={pill.prevOff} onClick={pill.prev} data-testid="hole-prev"><ChevronLeft size={19} /></button>}
       {pill.back && <button className="w-10 h-11 -mr-1 flex items-center justify-center text-orange-300 rounded-full active:bg-white/10" aria-label="Back" onClick={pill.back} data-testid="pill-back"><ChevronLeft size={20} /></button>}
       <button className={`h-11 ${pill.prev || pill.back ? "px-1" : "pl-3.5"} pr-3 flex items-center gap-2 rounded-full min-w-0 ${side ? "flex-1 justify-center !px-2 gap-1" : "max-w-[calc(100vw-120px)]"} focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`}
         aria-haspopup={pillMenu ? "menu" : undefined} aria-expanded={!!open?.pill} disabled={!pillMenu && !pill.back}
@@ -264,7 +275,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
         {pill.small && !side && <span className={`text-[12.5px] truncate ${open?.pill ? "text-zinc-600" : "text-zinc-400"}`}>· {pill.small}</span>}
         {pillMenu && (open?.pill ? <ChevronUp size={15} className="shrink-0 text-zinc-500" /> : <ChevronDown size={15} className="shrink-0 text-zinc-400" />)}
       </button>
-      {pill.next && <button className="w-10 h-11 flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10" aria-label="The hole after" onClick={pill.next} data-testid="hole-next"><ChevronRight size={19} /></button>}
+      {pill.next && <button className="w-10 h-11 flex items-center justify-center text-zinc-300 rounded-full active:bg-white/10 disabled:opacity-30" aria-label={pill.nextLabel ?? "The hole after"} disabled={pill.nextOff} onClick={pill.next} data-testid="hole-next"><ChevronRight size={19} /></button>}
     </div>
   );
 
@@ -290,9 +301,10 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
               className={`group shrink-0 h-[50px] ${side ? "w-full justify-center text-center" : "text-left"} ${act && s.icon && !side ? "pl-1.5 pr-3" : "px-3"} rounded-[18px] flex items-center gap-2 transition-[background-color,transform,opacity] duration-100 active:scale-[0.97] disabled:opacity-40 disabled:active:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "bg-zinc-100 text-zinc-900" : act ? "text-orange-300 active:bg-orange-300/10" : "text-zinc-50 active:bg-white/[0.1]"}`}>
               {act && s.icon && !side && <Disc tint>{s.icon}</Disc>}
               <span className={`flex flex-col justify-center ${side ? "items-center" : "items-start"}`}>
-                <span className={`text-[11px] font-semibold leading-none whitespace-nowrap ${on ? "text-zinc-600" : act ? "text-orange-300/80" : "text-zinc-400"}`}>{s.name}</span>
+                {/* (an action that says what it does needs no word over it) */}
+                {s.name && <span className={`text-[11px] font-semibold leading-none whitespace-nowrap ${on ? "text-zinc-600" : act ? "text-orange-300/80" : "text-zinc-400"}`}>{s.name}</span>}
                 {(s.value !== undefined || sw) && (
-                  <span className="mt-1 text-[15px] font-semibold leading-none whitespace-nowrap flex items-center gap-1.5">
+                  <span className={`${s.name ? "mt-1" : ""} text-[15px] font-semibold leading-none whitespace-nowrap flex items-center gap-1.5`}>
                     {s.value}
                     {sw && <span className={`inline-block w-[30px] h-[18px] rounded-full relative transition-colors ${s.on ? "bg-orange-300" : "bg-white/20"}`}><span className={`absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-all ${s.on ? "right-[2px]" : "left-[2px]"}`} /></span>}
                     {s.control && <ChevronDown size={14} strokeWidth={2.6} className={`shrink-0 -ml-0.5 transition-transform ${on ? "rotate-180 text-zinc-600" : "text-orange-300"}`} />}
@@ -332,7 +344,15 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
         style={side ? undefined : center ? { bottom: bottom + kb + 18, left: `calc(50% + ${inset / 2}px)`, width: `min(${center}px, calc(100% - ${20 + inset}px))`, transform: "translateX(-50%)" } : { bottom: bottom + kb + 18 }} data-testid={testid}>
         {/* (tucked: the pill and the row fade where they are, then, folded, only the line at the
             foot, centred; the line itself is always the same element) */}
-        {line && !side ? (
+        {line && !side && lineAbove ? (
+          <>
+            <div className={`w-full flex ${tucked && low ? "justify-center" : ""}`}><div className={tucked && low ? "w-[min(360px,100%)] dg-fade-in" : "w-full"}>{line}</div></div>
+            <div className={`w-full flex items-center gap-2 transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""} ${tucked && low ? "hidden" : ""}`}>
+              <div className="shrink-0 min-w-0">{pillEl}</div>
+              {(beside || noRow) && <div className="ml-auto shrink-0 flex items-center gap-2">{beside}{noRow && doneEl}</div>}
+            </div>
+          </>
+        ) : line && !side ? (
           <div className={`w-full flex items-center gap-2 ${tucked && low ? "justify-center" : ""}`}>
             <div className={`shrink-0 transition-opacity duration-300 ${tucked ? "opacity-0 !pointer-events-none" : ""} ${tucked && low ? "hidden" : ""}`}>{pillEl}</div>
             <div className={tucked && low ? "w-[min(360px,100%)] dg-fade-in" : "flex-1 min-w-0"}>{line}</div>

@@ -271,7 +271,12 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
     // (it holds at its end, paused, as a video player does; the camera's own preview ends)
     if (ed.flyover && ed.teeView && ed.teeView !== STAND_HERE) {
       if (ed.flyCam) view.flyover(ed.teeView, () => useEditor.getState().set({ flyover: false }));
-      else view.flyover(ed.teeView, () => useEditor.getState().set({ flyPaused: true }), true);
+      else {
+        // (asked for at a moment: it opens held there)
+        const from = useEditor.getState().flyFrom ?? null;
+        view.flyover(ed.teeView, () => useEditor.getState().set({ flyPaused: true }), true, from);
+        if (from !== null) useEditor.getState().set({ flyFrom: null });
+      }
     }
     else { view.setTeeView(ed.teeView, ed.teeViewTee ?? null, ed.teeStand ?? null); useEditor.getState().set({ flyLoading: null, ...(ed.teeView ? {} : { teeViewTee: null, teeStand: null }) }); }
   }, [view, ed.teeView, ed.teeViewTee, ed.flyover, ed.teeStand]);

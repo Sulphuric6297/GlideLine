@@ -37,7 +37,7 @@ import { ActionSheet, type SheetAction } from "./ActionSheet";
 import { BottomSheet, type Detent } from "./BottomSheet";
 import { PageTools } from "./PageTools";
 import { useHoleSettings, useItemSettings } from "./HoleStrip";
-import { FlightLine, useFlight, useFlyoverSettings } from "../FlyoverBar";
+import { AddKeyframe, FlightLine, addKeyframe, addWhere, useFlight, useFlyoverSettings, useKeyframeSettings } from "../FlyoverBar";
 import { Disc } from "./SheetFold";
 import { ActRow, EdgeSlider, GlassBar, useBarNav, type BarSetting } from "./GlassBar";
 import { MoveCornerHere } from "../PlaceByGps";
@@ -654,9 +654,22 @@ function HoleFlyoverBar({ hole, back, faded, side, onHeight }: { hole: Hole; bac
   const settings = useFlyoverSettings(hole);
   const flight = useFlight(hole);
   const s = holeStats(doc, hole);
-  const play = () => useEditor.getState().set({ teeView: hole.id, teeViewTee: null, flyover: true });
-  const line = s.complete ? <FlightLine playing={false} onPlay={play} onPause={() => {}} length={flight.length} keys={flight.keys ? flight.times : undefined} picked={flight.keys ? Math.min(useEditor.getState().flyKey ?? 0, flight.keys.length - 1) : null} onPick={k => useEditor.getState().set({ flyKey: k })} /> : undefined;
-  return <GlassBar remember="hole-flyover" pill={{ name: `Hole ${holeLabel(doc, hole.id)}`, small: "Flyover", back, testid: "selection-header" }} settings={settings} line={side ? undefined : line} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
+  // (a keyframe selected on the timeline: the bar is the keyframe's, as in tee view)
+  const flyKey = useEditor(e => e.flyKey);
+  const set = useEditor(e => e.set);
+  const keys = flight.keys;
+  const picked = keys && flyKey !== null ? Math.min(flyKey, keys.length - 1) : null;
+  const keySettings = useKeyframeSettings(hole, picked ?? 0);
+  const pick = (k: number) => keys && set({ flyKey: Math.max(0, Math.min(keys.length - 1, k)) });
+  const play = () => set({ teeView: hole.id, teeViewTee: null, flyover: true });
+  const line = s.complete ? <FlightLine playing={false} onPlay={play} onPause={() => {}} length={flight.length} at={keys ? (picked !== null ? flight.times[picked] : 0) : null} keys={keys ? flight.times : undefined} picked={picked} onPick={pick} /> : undefined;
+  const keyBar = picked !== null && !!keys;
+  const pill = keyBar
+    ? { name: `Keyframe ${picked! + 1}`, prev: () => pick(picked! - 1), next: () => pick(picked! + 1), prevOff: picked === 0, nextOff: picked === keys!.length - 1, prevLabel: "The keyframe before", nextLabel: "The keyframe after", testid: "selection-header" }
+    : { name: `Hole ${holeLabel(doc, hole.id)}`, small: "Flyover", back, testid: "selection-header" };
+  return <GlassBar remember={keyBar ? "hole-flyover-key" : "hole-flyover"} pill={pill} settings={keyBar ? keySettings : settings} line={side ? undefined : line} lineAbove={!!keys}
+    beside={keys && !side ? <AddKeyframe times={flight.times} picked={picked} at={picked !== null ? flight.times[picked] : 0} onAdd={() => addKeyframe(hole.id, addWhere(flight.times, picked, 0))} /> : undefined}
+    onDone={keyBar ? () => set({ flyKey: null }) : () => select(null)} doneLabel={keyBar ? "Done with the keyframe" : "Done: put it down"} faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
 }
 
 /** Anything else picked: its pill (its hole, and what can be done with it), every setting it has. */
