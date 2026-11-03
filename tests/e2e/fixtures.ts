@@ -175,6 +175,14 @@ export const course = (page: Page) => page.evaluate(() => {
   const d = (window as any).__dgCourse();
   return { ...d, background: d.background ? `${d.background.slice(0, 22)}… (${d.background.length})` : null, terrainHeights: Object.keys(d.terrainHeights).length };
 });
+/** Tee view on a computer: the hole's card (in the Flyover panel, or floating when the panel is
+ * put away), its bar over the view, and Back to map on it. */
+export const teeCard = (page: Page) => page.locator('[data-testid="fly-panel"], [data-testid="tee-view-hud"]').first();
+export const teeBar = (page: Page) => page.getByTestId("tee-bar");
+export const backToMap = (page: Page) => page.getByTestId("tee-bar").getByTestId("bar-done").click();
+/** The flyover's Play on its bar: "Pause" while it plays, "Play" held (paused, or at its end). */
+export const flyButton = (page: Page) => page.getByTestId("tee-bar").getByTestId("hud-flyover");
+
 export const editorState = (page: Page) => page.evaluate(() => {
   const s = (window as any).__dgEditor();
   return { step: s.step, tool: s.tool, selectedId: s.selectedId, group: s.group, dragSelect: s.dragSelect, designSel: s.designSel, activeHoleId: s.activeHoleId, view: s.view, teeView: s.teeView, flyLook: s.flyLook };

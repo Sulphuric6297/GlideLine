@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { test as plain, expect as plainExpect, type Page } from "@playwright/test";
-import { test, expect, addHole, blankCourse, course, editorState } from "./fixtures";
+import { test, expect, addHole, blankCourse, course, editorState, flyButton, teeCard } from "./fixtures";
 import { VIDEO_HOLD, avcCodec, videoBitrate, videoSuffix, videoTimeline, vp9Codec } from "../../src/lib/video";
 import { flightClock } from "../../src/lib/flight";
 
@@ -134,7 +134,7 @@ test("cancel stops a recording, and leaving the Export step doesn't", async ({ p
   await page.getByRole("button", { name: "2 Design" }).click();
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("tee-view").click();
-  await expect(page.getByTestId("tee-view-hud")).toContainText("Par 3 · 250 ft");
+  await expect(teeCard(page)).toContainText("Par 3 · 250 ft");
   await expect(page.getByTestId("pov-basket")).toContainText("250 ft");
 });
 
@@ -145,19 +145,22 @@ test("the Record button over a flyover records that hole", async ({ page }) => {
   await page.evaluate(() => (window as any).__dgVideo().set({ size: { width: 320, height: 180 } }));
   await page.getByTestId("hole-row").nth(1).click();
   await page.getByTestId("flyover").click();
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Stop/);
+  await expect(flyButton(page)).toHaveAttribute("aria-label", "Pause");
   const downloading = page.waitForEvent("download", { timeout: 150_000 });
-  await page.getByTestId("hud-record").click();
-  // (Recording… until the frames start coming, then how far along it is)
-  await expect(page.getByTestId("hud-record")).toHaveText(/Recording( \d+%|…)/);
-  await expect(page.getByTestId("hud-record")).toHaveText(/Recording \d+%/, { timeout: 60_000 });
+  // (Export video, in the Flyover panel)
+  const record = page.getByTestId("fly-panel").getByTestId("fly-export");
+  await record.click();
+  // (Exporting… until the frames start coming, then how far along it is)
+  await expect(record).toHaveText(/Exporting( \d+%|…)/);
+  await expect(record).toHaveText(/Exporting \d+%/, { timeout: 60_000 });
   await expect(page.getByTestId("export-progress-pill")).toContainText("Recording hole 2");
-  // The flight on screen goes on by itself, separate from the recording, and lands
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Fly over/, { timeout: 60_000 });
+  // The flight on screen goes on by itself, separate from the recording, and lands (held on its
+  // last picture)
+  await expect(flyButton(page)).toHaveAttribute("aria-label", "Play", { timeout: 60_000 });
   const download = await downloading;
   expect(download.suggestedFilename()).toMatch(/^new-disc-golf-course-hole-2-flyover\.(mp4|webm)$/);
   expect(kindOf(readFileSync((await download.path())!))).not.toBe("?");
-  await expect(page.getByTestId("hud-record")).toHaveText("Record");
+  await expect(record).toHaveText("Export video");
   await expect(page.getByTestId("export-progress-pill")).toBeHidden();
   // Still looking at hole 2
   expect((await editorState(page)).teeView).toBe(await page.evaluate(() => (window as any).__dgCourse().holes[1].id));
@@ -168,11 +171,11 @@ test("while a video records, the view from the tee holds still (the recording's 
   await twoHoles(page, [320, 180]);
   await page.getByTestId("hole-row").nth(1).click();
   await page.getByTestId("tee-view").click();
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect(teeCard(page)).toBeVisible();
   expect(await page.evaluate(() => (window as any).__dgEditor().wind)).toBe(true);
   const info = () => page.evaluate(() => (window as any).__dgView.drawInfo() as { frames: number; recording: boolean });
   const downloading = page.waitForEvent("download", { timeout: 150_000 });
-  await page.getByTestId("hud-record").click();
+  await page.getByTestId("fly-panel").getByTestId("fly-export").click();
   await expect.poll(async () => (await info()).recording).toBe(true);
   await page.waitForTimeout(300);
   // Nothing moves on screen but the breeze: it waits (it once kept redrawing the screen and took

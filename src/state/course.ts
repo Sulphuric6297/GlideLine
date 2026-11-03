@@ -341,6 +341,8 @@ useEditor.subscribe((s, p) => { if (s.flyPaused && (!s.flyover || s.teeView !== 
 // (a keyframe is held selected while the flyover is paused on it: played on, stopped or another
 // hole, none is, unless one was asked for just then; flying the camera keeps its own)
 useEditor.subscribe((s, p) => {
+  // (the camera put away: standing on the tee again, none held)
+  if (p.flyCam && !s.flyCam && s.flyKey !== null && s.flyKey === p.flyKey) { s.set({ flyKey: null }); return; }
   if (s.flyKey === null || s.flyKey !== p.flyKey || s.flyCam || p.flyCam) return;
   if ((p.flyover && !s.flyover) || (s.flyover && p.flyPaused && !s.flyPaused) || s.teeView !== p.teeView) s.set({ flyKey: null });
 });

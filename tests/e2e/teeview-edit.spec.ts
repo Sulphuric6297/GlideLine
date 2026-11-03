@@ -1,5 +1,5 @@
 import { devices } from "@playwright/test";
-import { test, expect, addHole, blankCourse, course, editorState, pinch, screenOf, tapPlan } from "./fixtures";
+import { test, expect, addHole, blankCourse, course, editorState, pinch, screenOf, tapPlan, teeCard } from "./fixtures";
 
 // Standing anywhere in 3D: the person dropped on the map, walking by clicking the ground, picking
 // and moving things as on the map. (Each frame of the 3D view is slow to draw without a graphics
@@ -24,7 +24,7 @@ test("standing: the person dragged onto the map; Walk or Edit says what a click 
   await page.mouse.down();
   await page.mouse.move(spot.x, spot.y, { steps: 4 });
   await page.mouse.up();
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect(teeCard(page)).toBeVisible();
   await expect.poll(async () => (await stand(page))?.x).toBeCloseTo(260, -1);
   expect((await editorState(page)).teeView).toBe(hole.id);
   await page.waitForTimeout(1000);
@@ -62,7 +62,7 @@ test("standing: the person dragged onto the map; Walk or Edit says what a click 
   await page.keyboard.press("Control+z");
   await expect.poll(async () => (await course(page)).items.some((i: any) => i.id === tree.id)).toBe(true);
   await page.evaluate(() => (window as any).__dgActions.select(null));
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect(teeCard(page)).toBeVisible();
 
   // Edit: a click on open ground walks nowhere (it lets go); a drag there looks around, as in Walk
   const was = await stand(page);
@@ -95,7 +95,7 @@ test("standing: the person dragged onto the map; Walk or Edit says what a click 
   // Back to the tee: standing on it again
   await page.getByTestId("hud-to-tee").click();
   await expect.poll(() => stand(page)).toBeNull();
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect(teeCard(page)).toBeVisible();
 });
 
 test.describe("phone", () => {
@@ -127,16 +127,17 @@ test.describe("phone", () => {
     const crown = await screenOf(page, tree.x, tree.y, (tree.height ?? 30) * 0.5);
     await page.touchscreen.tap(crown.x, crown.y);
     await expect.poll(async () => (await editorState(page)).selectedId).toBe(tree.id);
-    // its usual sheet, in the bar's place
-    await expect(page.getByTestId("sheet")).toBeVisible();
-    await expect(page.getByTestId("hud-to-tee")).toHaveCount(0);
+    // its usual bar, in the flyover bar's place
+    await expect(page.getByTestId("item-strip")).toBeVisible();
+    await expect(page.getByTestId("tee-bar")).toHaveCount(0);
     await page.screenshot({ path: test.info().outputPath("phone-picked.png") });
     await page.evaluate(() => (window as any).__dgActions.select(null));
-    await expect(page.getByTestId("sheet")).toHaveCount(0);
-    // (back to the tee: under More, on a phone's bar)
-    await page.getByTestId("hud-more").tap();
+    await expect(page.getByTestId("item-strip")).toHaveCount(0);
+    // (back to the tee: in the hole's menu, from its name on the bar)
+    await page.getByTestId("tee-bar").getByTestId("pill-open").tap();
     await expect(page.getByTestId("hud-to-tee")).toBeVisible();
-    await page.getByTestId("hud-more").tap();
+    await page.getByTestId("tee-bar").getByTestId("pill-open").tap();
+    await expect(page.getByTestId("pill-menu")).toHaveCount(0);
     // Walk: a tap on the ground walks there
     await page.getByTestId("tap-walk").tap();
     const ahead = await screenOf(page, 520, 500, 0);
@@ -236,7 +237,7 @@ test("standing with no hole at all, or far from every hole: right there, the way
   await page.evaluate(() => (window as any).__dgView.fitSite(false));
   await drop(400, 340);
   await expect.poll(async () => (await editorState(page)).teeView).toBe(hole.id);
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect(teeCard(page)).toBeVisible();
 });
 
 test("standing never goes past the map's edge: a spot asked for past it, or a step out past it, stays just inside", async ({ page }) => {
@@ -247,7 +248,7 @@ test("standing never goes past the map's edge: a spot asked for past it, or a st
   // (the view's own spot, where the eye is)
   const at = () => page.evaluate(() => (window as any).__dgView.povStand);
   await page.evaluate(id => (window as any).__dgEditor().set({ teeView: id, teeStand: { x: -400, y: -300 }, flyover: false }), one.id);
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect(teeCard(page)).toBeVisible();
   await expect.poll(async () => (await at())?.x ?? -1).toBeGreaterThan(0);
   const p = await at();
   expect(p.x).toBeLessThan(10);
@@ -268,7 +269,7 @@ test("standing: walking near another hole puts you on it; the hole's card hides 
   const two = await addHole(page, { x: 200, y: 800 }, { x: 600, y: 800 });
   await page.keyboard.press("Escape");
   await page.evaluate(id => (window as any).__dgEditor().set({ teeView: id, teeStand: { x: 250, y: 320 }, flyover: false }), one.id);
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect(teeCard(page)).toBeVisible();
   // (what's placed over the view hears of each move: comment pins follow it)
   const heard = await page.evaluate(() => { const w = window as any; w.__heard = 0; w.__dgView.onView(() => { w.__heard++; }); return w.__heard; });
   await page.mouse.move(700, 400);
@@ -276,7 +277,10 @@ test("standing: walking near another hole puts you on it; the hole's card hides 
   await page.mouse.move(820, 400, { steps: 4 });
   await page.mouse.up({ button: "right" });
   await expect.poll(() => page.evaluate(() => (window as any).__heard)).toBeGreaterThan(heard + 1);
-  // The card put away: a chip with the hole's number; back again
+  // The card put away: a chip with the hole's number; back again (the Flyover panel closed
+  // first: the card floats over the view then)
+  await page.getByTestId("fly-panel-close").click();
+  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
   await page.getByTestId("hud-card-hide").click();
   await expect(page.getByTestId("tee-view-hud")).toBeHidden();
   await page.getByTestId("hud-card-show").click();

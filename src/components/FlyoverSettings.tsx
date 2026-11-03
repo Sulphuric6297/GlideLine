@@ -124,7 +124,7 @@ function AutoFlight({ hole, scope }: { hole: Hole; scope: Scope }) {
 }
 
 /** Camera path Custom: the selected keyframe (‹ › through them, Delete), its altitude, field of
- * view and time, Edit camera path, Add keyframe and Edit on map. On the map (`timeline`) the
+ * view and time, and Move camera; none selected, the card says so. On the map (`timeline`) the
  * keyframes' timeline is here too, with Play flyover; in tee view it's in the bar over the view. */
 function KeyFlight({ hole, keys, timeline }: { hole: Hole; keys: FlyKey[]; timeline: boolean }) {
   const doc = useCourse(s => s.doc);
