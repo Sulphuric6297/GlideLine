@@ -649,10 +649,11 @@ test("elevation on the Forest map: hills shade the painting, each Elevation look
   for (const look of ["cliffs", "contours", "terraces"]) {
     await page.getByTestId(`elevation-${look}`).click();
     await expect.poll(async () => (await course(page)).style.reliefLook).toBe(look);
+    // (a picture of its own: waited for, as on a slow machine the last look's can still be up as
+    // the new one starts painting)
+    await expect.poll(async () => seen.has(await painting.getAttribute("href")), { timeout: 60_000 }).toBe(false);
     await painted(page);
-    const href = await painting.getAttribute("href");
-    expect(seen.has(href)).toBe(false);
-    seen.add(href);
+    seen.add(await painting.getAttribute("href"));
   }
   await page.getByTestId("elevation-shaded").click();
   await expect.poll(async () => (await course(page)).style.reliefLook).toBeUndefined();
