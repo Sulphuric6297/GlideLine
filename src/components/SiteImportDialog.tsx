@@ -1,7 +1,7 @@
 // Finding the park, on one map from start to finish: search (disc golf courses and parks first),
 // the park framed by its own outline, what this spot will bring (each a switch, with where it
 // comes from), then the map filling in as each part lands, with a checklist of how each went.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Droplets, Flag, Image as ImageIcon, Loader2, MapPin, Mountain, Pencil, Route, Search, Target, TreeDeciduous, Trees, X } from "lucide-react";
 import { SitePickerMap, type Arrived } from "./SitePickerMap";
 import { fetchPlaceSuggestions, resolveSiteLocation, type PlaceSuggestion } from "../lib/geo/geocode";
@@ -17,7 +17,8 @@ import type { PhotoSourceId } from "../lib/geo/photoSources";
 import { fmtArea, fmtDist } from "../lib/units";
 import { getDoc } from "../state/course";
 import type { CourseItem } from "../types";
-import { HelpLink } from "./ui";
+import { HelpLink, Slider } from "./ui";
+import { BEST_GUESS, UG_BLOCK, brushAcres, brushAreas, brushLevels, tapPatch, type BrushTune } from "../lib/undergrowth";
 import { useLayout, useTouch } from "./useLayout";
 import { BottomSheet, type Detent } from "./mobile/BottomSheet";
 
@@ -63,8 +64,53 @@ const frameAround = (b: GeoBounds): GeoBounds => {
   return f;
 };
 
-const ROW_NAMES: Record<SourceId, string> = { photo: "Photo", elevation: "Ground", lidar: "Measured trees", osm: "Paths, roads and more", buildings: "Buildings from the air", photoTrees: "Trees from the photo", gov: "Creeks, wetlands and buildings" };
-const ORDER: SourceId[] = ["photo", "elevation", "lidar", "osm", "buildings", "photoTrees"];
+const ROW_NAMES: Record<SourceId, string> = { photo: "Photo", elevation: "Ground", lidar: "Measured trees", osm: "Paths, roads and more", buildings: "Buildings from the air", photoTrees: "Trees from the photo", gov: "Creeks, wetlands and buildings", seasons: "Seasons from space" };
+const ORDER: SourceId[] = ["photo", "elevation", "lidar", "osm", "buildings", "photoTrees", "seasons"];
+
+/** The brush's levels on the map: light, medium, heavy. */
+const BRUSH_COLOR = ["", "#fde68a", "#f59e0b", "#b45309"];
+const MUCH = ["Only the surest", "Fewer", "Best guess", "More", "Every hint"];
+
+/** Underbrush, looked at before it comes in: how much and (under Fine-tune) how thick, the acres
+ * as tuned, and how sure it is, in words. A tap on a patch on the map steps it heavy, medium,
+ * light, off. */
+function BrushRow({ on, onSwitch, tune, onTune, open, onOpen, acres, from, surveyYear, seenFrom }: { on: boolean; onSwitch: (v: boolean) => void; tune: BrushTune; onTune: (t: BrushTune) => void; open: boolean; onOpen: (v: boolean) => void; acres: number[]; from: "both" | "survey" | "satellite"; surveyYear?: number; seenFrom?: string }) {
+  const total = acres[1] + acres[2] + acres[3];
+  const fromWords = from === "both" ? `the ${surveyYear ?? ""} aerial survey and satellite passes from ${seenFrom}` : from === "survey" ? `the ${surveyYear ?? ""} aerial survey` : `satellite passes from ${seenFrom}`;
+  return (
+    <div data-testid="review-underbrush-row">
+      <div className={`flex items-center gap-2 px-2 py-1 rounded-[10px] text-[12.5px] ${on ? "text-zinc-100" : "text-zinc-500"}`}>
+        <span className="w-[11px] h-[11px] rounded-[3px] shrink-0" style={{ background: SOURCES.underbrush.color, opacity: on ? 1 : 0.35 }} />
+        <span className="truncate">Underbrush</span>
+        <HelpLink topic="underbrush-import" label="Underbrush" />
+        <span className="ml-auto tabular-nums text-zinc-300 whitespace-nowrap" data-testid="review-underbrush-acres">{total < 10 ? total.toFixed(1) : Math.round(total)} ac</span>
+        <button type="button" role="switch" aria-checked={on} aria-label="Trees and bushes: Underbrush" data-testid="review-underbrush" onClick={() => onSwitch(!on)}
+          className={`relative w-[30px] h-[17px] rounded-full shrink-0 ${on ? "bg-[#a2cf6a]" : "bg-white/[0.14]"}`}>
+          <span className={`absolute top-[2px] w-[13px] h-[13px] rounded-full ${on ? "right-[2px] bg-zinc-900" : "left-[2px] bg-zinc-400"}`} />
+        </button>
+      </div>
+      {on && (
+        <div className="pl-[27px] pr-2 pb-1.5" data-testid="review-underbrush-tune">
+          <Slider label="How much" min={0} max={4} step={1} value={tune.much} onChange={v => onTune({ ...tune, much: v })} format={v => MUCH[Math.round(v)]} />
+          <div className="flex items-center gap-2 text-[11.5px] text-zinc-400 -mt-1 mb-1">
+            {[1, 2, 3].map(l => <span key={l} className="inline-flex items-center gap-1"><span className="w-[9px] h-[9px] rounded-[2px]" style={{ background: BRUSH_COLOR[l] }} />{["", "Light", "Medium", "Heavy"][l]}</span>)}
+          </div>
+          <button className="text-[12px] text-zinc-300 hover:text-zinc-50 py-1" aria-expanded={open} onClick={() => onOpen(!open)} data-testid="review-underbrush-more">{open ? "▾" : "▸"} Fine-tune</button>
+          {open && (
+            <div className="mt-1">
+              <Slider label="How thick" min={-1} max={1} step={0.25} value={tune.thick} onChange={v => onTune({ ...tune, thick: v })} format={v => (v <= -0.75 ? "Much thinner" : v < 0 ? "Thinner" : v === 0 ? "As found" : v < 0.75 ? "Thicker" : "Much thicker")} />
+              <p className="text-[11.5px] text-zinc-400 leading-snug">Tap a patch on the map to make it lighter, a step at a time, then gone. Tap again to bring it back.</p>
+              {(tune.much !== BEST_GUESS.much || tune.thick !== BEST_GUESS.thick || Object.keys(tune.set ?? {}).length > 0) && (
+                <button className="text-[12px] text-orange-300 hover:text-orange-200 py-1" onClick={() => onTune({ ...BEST_GUESS })} data-testid="review-underbrush-reset">Back to the best guess</button>
+              )}
+            </div>
+          )}
+          <p className="text-[11.5px] text-zinc-500 leading-snug mt-1">From {fromWords}. It finds about two of every three patches; brush cut or grown since may differ. Every area can be changed after.</p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** How each kind of thing that came in is drawn on the map while the rest is still coming. */
 const drawnAs = (i: CourseItem): { area?: string; line?: string; weight?: number } => {
@@ -109,6 +155,9 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   // What this spot has (looked up as the frame settles)
   // (looking before it comes in: what came, which sources are on, which wins where two overlap)
   const [review, setReview] = useState<{ site: ImportedSite; on: Partial<Record<SourceKey, boolean>>; keep: "osm" | "fema"; photo?: PhotoSourceId } | null>(null);
+  // How much brush and how thick (as the course last had it), and the patches set by a tap
+  const [tune, setTune] = useState<BrushTune>(() => ({ ...BEST_GUESS, ...(getDoc().site.brushTune ?? {}) }));
+  const [tuneOpen, setTuneOpen] = useState(false);
   const [here, setHere] = useState<{ photo?: PhotoChoice; photos?: PhotoChoice[]; photoIds?: string[]; survey?: { year: number; covered: "full" | "partial" | "none" } } | null>(null);
   const [status, setStatus] = useState<{ state: "idle" | "searching" | "loading" | "error"; text: string; progress?: { fraction: number } }>({ state: "idle", text: "" });
   const [sources, setSources] = useState<Partial<Record<SourceId, SourceStatus>>>({});
@@ -257,7 +306,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   // Looked at before it comes in: what's on, each source in its own color, where it came from on hover
   useEffect(() => {
     if (!review || !landed.current) return;
-    const s = reviewedSite(review.site, review.on, review.keep);
+    const s = reviewedSite(review.site, { ...review.on, underbrush: false }, review.keep);
     const a: Arrived = { ...landed.current, areas: [], lines: [], trees: [] };
     for (const i of [...s.mapped, ...s.trees]) {
       const k = sourceOf(i), c = k ? SOURCES[k].color : "#e5e7eb", tip = k ? `${SOURCES[k].label}${SOURCES[k].who ? ` · ${SOURCES[k].who}` : ""}` : undefined;
@@ -269,6 +318,20 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
     for (let k = 0; k < lt.length; k += step) a.trees.push({ x: lt[k][0], y: lt[k][1], r: lt[k][3], color: k >= fromSummer ? SOURCES.summerTrees.color : SOURCES.lidarTrees.color });
     setArrived(a);
   }, [review]);
+
+  // The brush as tuned: each block's level, the areas (on a layer of their own, drawn again while
+  // How much or How thick moves), and a tap on a patch stepping it lighter, then off, then back
+  const brushU = review?.site.underbrush;
+  const brushOn = !!brushU && review?.on.underbrush !== false;
+  const brushLv = useMemo(() => (brushU ? brushLevels(brushU, tune) : null), [brushU, tune]);
+  const brushShapes = useMemo(() => (brushU && brushLv && brushOn ? brushAreas(brushLv, brushU.bx, brushU.by).map(a => ({ points: a.points, color: BRUSH_COLOR[a.density === 0.5 ? 1 : a.density === 2 ? 3 : 2] })) : null), [brushU, brushLv, brushOn]);
+  const tapBrush = (x: number, y: number) => {
+    if (!brushU || !brushLv || !brushOn || x < 0 || y < 0) return;
+    const i = Math.floor(x / UG_BLOCK), j = Math.floor(y / UG_BLOCK);
+    if (i >= brushU.bx || j >= brushU.by) return;
+    const next = tapPatch(brushU, tune, j * brushU.bx + i);
+    if (next) setTune(next);
+  };
 
   const run = async (photoId?: PhotoSourceId) => {
     if (!selection || tooBig || running.current) return;
@@ -479,7 +542,8 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
 
   const mapEl = (
     <SitePickerMap imagery={imagery} photoIds={here?.photoIds} view={view} selection={selection} drawing={drawing} onDrawingChange={setDrawing} onSelect={onSelect} onTooSmall={tooSmall} onLocate={locate}
-      selectViewSignal={0} units={units} outline={outline?.outline ?? null} fit={fit} arrived={arrived} angle={angle} onAngle={setAngle} />
+      selectViewSignal={0} units={units} outline={outline?.outline ?? null} fit={fit} arrived={arrived} angle={angle} onAngle={setAngle}
+      brush={review ? brushShapes : null} onTap={review && brushOn ? tapBrush : undefined} />
   );
   const framing = !!selection && !loading;
   // Looking before it comes in: each source a row, grouped, with its count and a switch
@@ -487,7 +551,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   const shared = review ? sharedBuildings(review.site) : 0;
   const choices = (here?.photos ?? []).filter(c => c.id !== "esri" || (here?.photos ?? []).length < 3);
   const setOn = (k: SourceKey, v: boolean) => setReview(r => (r ? { ...r, on: { ...r.on, [k]: v } } : r));
-  const bring = () => { if (review) onImported(reviewedSite(review.site, review.on, review.keep), { trees, osm, course: course && !!outline?.course?.holes, turn: angle }); };
+  const bring = () => { if (review) onImported(reviewedSite(review.site, review.on, review.keep, tune), { trees, osm, course: course && !!outline?.course?.holes, turn: angle }); };
   const reviewButtons = (
     <div className="flex gap-2">
       <button className="h-12 px-4 rounded-[14px] bg-white/[0.08] hover:bg-white/[0.12] text-[14px] font-semibold text-zinc-200" onClick={() => { setReview(null); setArrived(null); }} data-testid="review-back">Back</button>
@@ -513,12 +577,16 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
       {GROUPS.map(g => {
         const keys = (Object.keys(SOURCES) as SourceKey[]).filter(k => SOURCES[k].group === g.id && (counts[k] ?? 0) > 0);
         if (!keys.length) return null;
-        const total = keys.reduce((s, k) => s + (review.on[k] !== false ? counts[k] ?? 0 : 0), 0);
+        const total = keys.reduce((s, k) => s + (review.on[k] !== false && k !== "underbrush" ? counts[k] ?? 0 : 0), 0);
         return (
           <div key={g.id} className="rounded-[14px] bg-white/[0.045] p-1" data-testid={`review-${g.id}`}>
             <div className="flex items-center text-[13px] font-semibold px-2 pt-1 pb-0.5">{g.label}<span className="ml-auto text-[12px] font-normal text-zinc-400 tabular-nums">{total.toLocaleString()}</span></div>
             {keys.map(k => {
               const on = review.on[k] !== false, s = SOURCES[k];
+              if (k === "underbrush" && brushU) return (
+                <BrushRow key={k} on={on} onSwitch={v => setOn(k, v)} tune={tune} onTune={t => setTune(t)} open={tuneOpen} onOpen={setTuneOpen}
+                  acres={brushLv ? brushAcres(brushLv) : [0, 0, 0, 0]} from={brushU.from} surveyYear={brushU.surveyYear} seenFrom={brushU.seenFrom} />
+              );
               return (
                 <div key={k}>
                   <div className={`flex items-center gap-2 px-2 py-1 rounded-[10px] text-[12.5px] ${on ? "text-zinc-100" : "text-zinc-500"}`}>

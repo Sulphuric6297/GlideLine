@@ -5,6 +5,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { TOPICS } from "../lib/guide";
+import { useEditor } from "../state/course";
 
 /** The nearest box that scrolls (or the page). */
 const scrollerOf = (el: HTMLElement | null): HTMLElement | null => {
@@ -90,7 +91,7 @@ export const WholePanelOnly = ({ children }: { children: ReactNode }) => (useCon
 
 /** The help guide opened at a topic (a panel's ? button): the app listens for this. */
 export const HELP_EVENT = "dg-help";
-const askHelp = (topic: string) => window.dispatchEvent(new CustomEvent(HELP_EVENT, { detail: topic }));
+export const askHelp = (topic: string) => window.dispatchEvent(new CustomEvent(HELP_EVENT, { detail: topic }));
 
 /** A small ? beside a setting: a tip about it (the help guide's own words), and the way on to its
  * page in the guide. */
@@ -177,6 +178,22 @@ export const Select = ({ value, onChange, label, testid, children, className = "
   </select>
 );
 
+/** Inside a phone's glass menu (mobile/GlassBar): choices as the menu's rows, one under another,
+ * the picked one lit, instead of chips or a segmented strip. */
+export const MenuRows = createContext(false);
+/** One choice as a glass menu's row: its dot or icon, its words, and a line on what it does. */
+export const PickRow = ({ on, onClick, color, icon, label, hint, testid }: { on: boolean; onClick: () => void; color?: string; icon?: ReactNode; label: ReactNode; hint?: string; testid?: string }) => (
+  <button type="button" role="radio" aria-checked={on} onClick={onClick} data-testid={testid}
+    className={`w-full flex items-center gap-3 text-left rounded-[18px] px-3 min-h-[46px] py-2 transition-colors ${FOCUS} ${on ? "bg-orange-300 text-zinc-950" : "text-zinc-100 active:bg-white/[0.1]"}`}>
+    {color && <span className="w-3 h-3 rounded-full border border-black/30 ring-1 ring-white/40 shrink-0" style={{ background: color }} />}
+    {icon && <span className="shrink-0 flex">{icon}</span>}
+    <span className="min-w-0 flex flex-col">
+      <span className="text-[15px] font-semibold leading-tight">{label}</span>
+      {hint && <span className={`text-[12.5px] leading-snug mt-0.5 ${on ? "text-zinc-800" : "text-zinc-400"}`}>{hint}</span>}
+    </span>
+  </button>
+);
+
 /** A small chip, picked or not (ChipPick's, and the hole chips'): 44 px tall on touch. */
 export const chipCls = (on: boolean) => `flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 touch:py-2 touch:px-3 touch:text-[13px] touch:min-h-[44px] rounded-full text-xs font-semibold transition-colors ${FOCUS} ${on ? "bg-zinc-100 text-zinc-900" : "bg-white/[0.07] text-zinc-300 hover:bg-white/[0.12] hover:text-zinc-50"}`;
 
@@ -184,9 +201,15 @@ export const chipCls = (on: boolean) => `flex items-center gap-1.5 shrink-0 whit
  * a tee color, a surface. Each can have a color dot or an icon, and a tooltip. `row`: one row
  * that scrolls sideways (a phone's strip). */
 export function ChipPick<T extends string>({ value, options, onChange, label, testid, row = false }: { value: T; options: { value: T; label: string; color?: string; icon?: ReactNode; title?: string }[]; onChange: (v: T) => void; label: string; testid?: string; row?: boolean }) {
+  const menu = useContext(MenuRows);
   const box = useRef<HTMLDivElement>(null);
   // (a row: the one picked scrolled into view when it shows)
-  useEffect(() => { if (row) box.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.scrollIntoView?.({ inline: "center", block: "nearest" }); }, [row]);
+  useEffect(() => { if (row || menu) box.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.scrollIntoView?.({ inline: "center", block: "nearest" }); }, [row, menu]);
+  if (menu) return (
+    <div ref={box} className="flex flex-col gap-0.5" role="radiogroup" aria-label={label} data-testid={testid}>
+      {options.map(o => <PickRow key={o.value} on={value === o.value} onClick={() => onChange(o.value)} color={o.color} icon={o.icon} label={o.label} hint={o.title} />)}
+    </div>
+  );
   return (
     <div ref={box} className={row ? "flex gap-1.5 overflow-x-auto touch-pan-x touch-pan-y dg-scroll -mx-1 px-1" : "flex flex-wrap gap-1"} role="radiogroup" aria-label={label} data-testid={testid}>
       {options.map(o => {
@@ -256,6 +279,11 @@ export const Slider = ({ value, onChange, min, max, step = 1, label, format, onD
 );
 
 export function Segmented<T extends string | number>({ value, options, onChange, label }: { value: T; options: { value: T; label: ReactNode; title?: string }[]; onChange: (v: T) => void; label?: string }) {
+  if (useContext(MenuRows)) return (
+    <div className="flex flex-col gap-0.5" role="radiogroup" aria-label={label}>
+      {options.map(o => <PickRow key={String(o.value)} on={value === o.value} onClick={() => onChange(o.value)} label={o.label} hint={o.title} />)}
+    </div>
+  );
   return (
     <div className="flex flex-wrap gap-0.5 bg-white/[0.07] p-[3px] rounded-[11px]" role="radiogroup" aria-label={label}>
       {options.map(o => (
@@ -276,6 +304,11 @@ export function Segmented<T extends string | number>({ value, options, onChange,
 
 /** A few choices whose names alone wouldn't say what they do: each with a line that does. */
 export function ChoiceList<T extends string>({ value, options, onChange, label, testid }: { value: T; options: { value: T; label: string; hint?: string }[]; onChange: (v: T) => void; label: string; testid?: string }) {
+  if (useContext(MenuRows)) return (
+    <div className="flex flex-col gap-0.5" role="radiogroup" aria-label={label} data-testid={testid}>
+      {options.map(o => <PickRow key={o.value} on={value === o.value} onClick={() => onChange(o.value)} label={o.label} hint={o.hint} />)}
+    </div>
+  );
   return (
     <div className="flex flex-col gap-1" role="radiogroup" aria-label={label} data-testid={testid}>
       {options.map(o => {
@@ -381,6 +414,14 @@ export function ColorInput({ value, onChange, label, onDone }: { value: string; 
   const box = useRef<HTMLDivElement>(null);
   // (opened: from the colour it is now)
   useEffect(() => { if (open) { setHsl(hexHsl(value)); setCode(value); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (open, the thing it colours shows solid on the map, though it's selected: see-through, its
+  // colours couldn't be judged)
+  useEffect(() => {
+    if (!open) return;
+    const ed = useEditor.getState();
+    ed.set({ colorPicking: ed.colorPicking + 1 });
+    return () => { const e = useEditor.getState(); e.set({ colorPicking: Math.max(0, e.colorPicking - 1) }); };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) { setOpen(false); onDone?.(); } };

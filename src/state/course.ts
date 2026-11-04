@@ -148,6 +148,10 @@ type EditorStore = {
   /** The brush (the ground tool and painting areas): radius (ft), strength (1 to 10), and what it does to the ground. */
   brushSize: number;
   brushStrength: number;
+  /** Painting areas: what the brush does to the areas there. */
+  areaBrush: "add" | "remove" | "thinner" | "thicker" | "restore";
+  /** Reshaping just this area with the brush (from its panel). */
+  reshapeId: string | null;
   groundBrush: "raise" | "lower" | "flatten" | "smooth" | "restore";
   /** Drawing a section of underbrush (not of trees) for `patchFor`. */
   patchBrush: boolean;
@@ -203,6 +207,12 @@ type EditorStore = {
   /** The tee view's flyover settings open over it. */
   teeSettings?: boolean;
   flyover: boolean;
+  /** The flyover playing, paused: held on its moment, to look at it or change it (Play goes on). */
+  flyPaused: boolean;
+  /** A flyover asked for at a moment (s), held there: a keyframe picked, the timeline dragged. */
+  flyFrom?: number | null;
+  /** Colour pickers open now: what's selected shows solid meanwhile, to judge its colours. */
+  colorPicking: number;
   /** The selected hole's keyframe picked (its place in the list; null: none). */
   flyKey: number | null;
   /** Flying the camera yourself, first person, over the tee view's hole (making keyframes). */
@@ -263,6 +273,8 @@ export const useEditor = create<EditorStore>()(set => ({
   holeToBasket: null,
   brushSize: 25,
   brushStrength: 5,
+  areaBrush: "add",
+  reshapeId: null,
   groundBrush: "raise",
   patchBrush: false,
   designSel: null,
@@ -285,6 +297,8 @@ export const useEditor = create<EditorStore>()(set => ({
   standOf: null,
   teeView: null,
   flyover: false,
+  flyPaused: false,
+  colorPicking: 0,
   flyKey: null,
   flyCam: false,
   flyLoading: null,
@@ -322,3 +336,13 @@ if (typeof window !== "undefined") {
 useEditor.subscribe((s, p) => { if (s.teeView !== p.teeView && s.teeStand && s.teeStand === p.teeStand) s.set({ teeStand: null }); });
 // (another thing picked: no part of the last one)
 useEditor.subscribe((s, p) => { if (s.selectedId !== p.selectedId && s.fieldPart) s.set({ fieldPart: null }); });
+// (a flyover that ends, or another hole's, starts unpaused)
+useEditor.subscribe((s, p) => { if (s.flyPaused && (!s.flyover || s.teeView !== p.teeView)) s.set({ flyPaused: false }); });
+// (a keyframe is held selected while the flyover is paused on it: played on, stopped or another
+// hole, none is, unless one was asked for just then; flying the camera keeps its own)
+useEditor.subscribe((s, p) => {
+  // (the camera put away: standing on the tee again, none held)
+  if (p.flyCam && !s.flyCam && s.flyKey !== null && s.flyKey === p.flyKey) { s.set({ flyKey: null }); return; }
+  if (s.flyKey === null || s.flyKey !== p.flyKey || s.flyCam || p.flyCam) return;
+  if ((p.flyover && !s.flyover) || (s.flyover && p.flyPaused && !s.flyPaused) || s.teeView !== p.teeView) s.set({ flyKey: null });
+});

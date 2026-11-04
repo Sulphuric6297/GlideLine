@@ -12,7 +12,7 @@ type Ctx = CanvasRenderingContext2D;
 type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
 export type BrushTree = { x: number; y: number; r: number; col: RGB; seed: number; pine?: boolean; h?: number };
 
-import { OP, beginMap, endMap, gpuPainter, paintBatch } from "./brushGpu";
+import { OP, beginMap, dropMap, endMap, gpuPainter, paintBatch } from "./brushGpu";
 
 const hash = (a: number, b: number) => { const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return s - Math.floor(s); };
 /** A stroke's own random numbers (0..1), from its seed: whole-number maths, so the graphics chip's
@@ -403,17 +403,31 @@ const workers = () => {
   return pool;
 };
 let jobId = 0;
-const waiting = new Map<number, (p: Painted | null) => void>();
-const ask = (w: Worker, trees: BrushTree[], sun: number[]) => new Promise<Painted | null>(res => {
+const waiting = new Map<number, (p: unknown) => void>();
+const ask = <T = Painted>(w: Worker, trees: BrushTree[], sun: number[], scale: number, list = false) => new Promise<T | null>(res => {
   const id = ++jobId;
-  waiting.set(id, res);
+  waiting.set(id, res as (p: unknown) => void);
   if (!(w as unknown as { told?: boolean }).told) {
     (w as unknown as { told?: boolean }).told = true;
-    w.onmessage = (e: MessageEvent<{ id: number; out: Painted | null }>) => { const f = waiting.get(e.data.id); waiting.delete(e.data.id); f?.(e.data.out); };
+    w.onmessage = (e: MessageEvent<{ id: number; out: unknown }>) => { const f = waiting.get(e.data.id); waiting.delete(e.data.id); f?.(e.data.out); };
     w.onerror = () => { for (const [k, f] of waiting) { waiting.delete(k); f(null); } };
   }
-  w.postMessage({ id, trees, sun });
+  w.postMessage({ id, trees, sun, scale, list });
 });
+
+/** Trees' strokes listed for the graphics chip, in order (a worker's, or the page's own). */
+export type Listed = { data: Float32Array; n: number };
+let nowhere: Ctx | null = null;
+export const listTrees = (trees: BrushTree[], sun: number[], into?: Listed): Listed => {
+  const r: Rec = { data: into?.data ?? new Float32Array(Math.max(1024, trees.length * 400) * OP), n: 0, soft: 0, crown: [0, 0, 1, 0, 0, 0, 0, 0] };
+  // (nothing is drawn while strokes are listed: a canvas for the shape of the calls)
+  nowhere ??= canvas(1, 1).getContext("2d") as Ctx;
+  for (const t of trees) {
+    rec = r;
+    try { (t.pine ? paintPine : paintCrown)(nowhere, t.x, t.y, t.r, t.col, t.seed, sun); } finally { rec = null; }
+  }
+  return { data: r.data, n: r.n };
+};
 
 /** A thing for the painter's driver to wait for (lib/forest: forestCanvasAsync); what it gives is
  * handed back into the steps. A driver that can't wait hands back nothing. */
@@ -425,6 +439,12 @@ export type Wait = { wait: Promise<unknown> };
  * a batch each at a time, and here they're laid on the map in order. `sun`: toward the sun. */
 /** The map's scale while its trees paint (pixels a foot; 0: not known): leaves a real size. */
 let pxPerFt = 0;
+/** (a worker's: the map's scale, for the trees it paints) */
+export const setPxPerFt = (v: number) => { pxPerFt = v; };
+// (one map's trees on the chip at a time: its sun, light and tile size are set for the whole map,
+// so another map's trees painted in between would land with the wrong ones; the next waits)
+let chipBusy = false, chipFree: (() => void)[] = [];
+const freeChip = () => { chipBusy = false; const f = chipFree; chipFree = []; f.forEach(go => go()); };
 export function* drawBrushedSteps(g: Ctx, trees: BrushTree[], sun: number[], scale = 0): Generator<void | Wait, void, unknown> {
   pxPerFt = scale;
   // (the shorter trees first, in four bands of height, so a tall crown lies over the short ones
@@ -437,29 +457,68 @@ export function* drawBrushedSteps(g: Ctx, trees: BrushTree[], sun: number[], sca
   let listing = 0, painting = 0, strokes = 0;
   // The graphics chip, where there is one: the trees' strokes listed a slice at a time, painted a
   // batch at a time (a batch ends between trees: a tree's shadows fall on its own leaves)
-  const p = gpuPainter();
+  let p = gpuPainter();
+  // (another map's trees on the chip: waited for; a driver that can't wait paints these the other way)
+  while (p && chipBusy) {
+    const turn = yield { wait: new Promise<boolean>(go => chipFree.push(() => go(true))) };
+    if (turn !== true) p = null;
+    else p = gpuPainter();
+  }
   if (p && sorted.length) {
-    const W = g.canvas.width, H = g.canvas.height, BATCH = 120000;
-    const look = { sun, light: mix(P.sun, [255, 255, 255], 0.3), dark: P.shadow, shadeRim: P.shadeRimCol, tex: P.tex, lift: P.lift, sink: P.sink, scallop: P.scallop };
-    // (listing only while a tree is listed: other painting in between paints as usual)
-    const mine: Rec = { data: new Float32Array(BATCH * OP * 1.25), n: 0, soft: 0, crown: [0, 0, 1, 0, 0, 0, 0, 0] };
-    const map = beginMap(p, W, H, look, bristles() as TexImageSource);
-    let ok = !!map, i = 0, since = performance.now();
-    for (; i < sorted.length && ok; i++) {
-      const t = sorted[i], l0 = performance.now();
-      rec = mine;
-      try { (t.pine ? paintPine : paintCrown)(g, t.x, t.y, t.r, t.col, t.seed, sun); } finally { rec = null; }
-      listing += performance.now() - l0;
-      if (mine.n >= BATCH || i === sorted.length - 1) {
-        const q0 = performance.now();
-        ok = paintBatch(p, map!, mine.data, mine.n);
-        painting += performance.now() - q0; strokes += mine.n; mine.n = 0;
+    chipBusy = true;
+    let map: ReturnType<typeof beginMap> = null, ended = false;
+    try {
+      const W = g.canvas.width, H = g.canvas.height, BATCH = 120000;
+      const look = { sun, light: mix(P.sun, [255, 255, 255], 0.3), dark: P.shadow, shadeRim: P.shadeRimCol, tex: P.tex, lift: P.lift, sink: P.sink, scallop: P.scallop };
+      // (listing only while a tree is listed: other painting in between paints as usual)
+      const mine: Rec = { data: new Float32Array(BATCH * OP * 1.25), n: 0, soft: 0, crown: [0, 0, 1, 0, 0, 0, 0, 0] };
+      map = beginMap(p, W, H, look, bristles() as TexImageSource);
+      let ok = !!map, i = 0, since = performance.now();
+      // (many trees: their strokes listed by the workers, a slice each, a few slices ahead, and
+      // painted here in order as they come; the very strokes the page would list)
+      const ws = canWork() ? workers() : [];
+      if (ws.length > 1 && sorted.length > 200) {
+        const SLICE = 64, slices: BrushTree[][] = [];
+        for (let k = 0; k < sorted.length; k += SLICE) slices.push(sorted.slice(k, k + SLICE));
+        const asked: Promise<Listed | null>[] = [], ahead = ws.length * 3;
+        const more = (done: number) => { while (asked.length < slices.length && asked.length < done + ahead) { const k = asked.length; asked.push(ask<Listed>(ws[k % ws.length], slices[k], sun, scale, true)); } };
+        more(0);
+        for (let k = 0; k < slices.length && ok; k++) {
+          const l0 = performance.now();
+          let got = (yield { wait: asked[k] }) as Listed | null | undefined;
+          // (the driver can't wait, or a worker failed: listed here)
+          if (!got) { pxPerFt = scale; got = listTrees(slices[k], sun, mine); mine.data = got.data; }
+          listing += performance.now() - l0;
+          more(k + 1);
+          const q0 = performance.now();
+          ok = paintBatch(p, map!, got.data, got.n);
+          painting += performance.now() - q0; strokes += got.n;
+          i += slices[k].length;
+          if (performance.now() - since > 12) { yield; since = performance.now(); }
+        }
       }
-      if (performance.now() - since > 12) { yield; since = performance.now(); }
+      for (; i < sorted.length && ok; i++) {
+        const t = sorted[i], l0 = performance.now();
+        rec = mine;
+        // (this map's scale, each tree: another map's trees may have painted in between)
+      pxPerFt = scale;
+      try { (t.pine ? paintPine : paintCrown)(g, t.x, t.y, t.r, t.col, t.seed, sun); } finally { rec = null; }
+        listing += performance.now() - l0;
+        if (mine.n >= BATCH || i === sorted.length - 1) {
+          const q0 = performance.now();
+          ok = paintBatch(p, map!, mine.data, mine.n);
+          painting += performance.now() - q0; strokes += mine.n; mine.n = 0;
+        }
+        if (performance.now() - since > 12) { yield; since = performance.now(); }
+      }
+      if (map) { const q0 = performance.now(); ended = true; ok = endMap(p, map, g) && ok; painting += performance.now() - q0; }
+      if (ok) { told(sorted.length, strokes, listing, painting, performance.now() - t0, `graphics chip, ${W} x ${H}`); return; }
+      // (the chip was lost: nothing of it reached the map; all the trees painted the other way)
+    } finally {
+      // (stopped part way, or done: its tiles let go and the chip free for the next map)
+      if (map && !ended) dropMap(p, map);
+      freeChip();
     }
-    if (map) { const q0 = performance.now(); ok = endMap(p, map, g) && ok; painting += performance.now() - q0; }
-    if (ok) { told(sorted.length, strokes, listing, painting, performance.now() - t0, `graphics chip, ${W} x ${H}`); return; }
-    // (the chip was lost: nothing of it reached the map; all the trees painted the other way)
   }
   const ws = canWork() ? workers() : [];
   if (ws.length && sorted.length > 24) {
@@ -469,7 +528,7 @@ export function* drawBrushedSteps(g: Ctx, trees: BrushTree[], sun: number[], sca
     // let go once laid, so only those few are held)
     const asked: Promise<Painted | null>[] = [];
     const ahead = ws.length * 2;
-    const more = () => { while (asked.length < batches.length && asked.length < done + ahead) { const k = asked.length; asked.push(ask(ws[k % ws.length], batches[k], sun)); } };
+    const more = () => { while (asked.length < batches.length && asked.length < done + ahead) { const k = asked.length; asked.push(ask(ws[k % ws.length], batches[k], sun, scale)); } };
     let done = 0;
     more();
     for (; done < batches.length; ) {
@@ -487,6 +546,7 @@ export function* drawBrushedSteps(g: Ctx, trees: BrushTree[], sun: number[], sca
   for (const t of sorted) {
     const S = sizeOf(t);
     if (!own || own.width < S) own = canvas(Math.max(S, 128), Math.max(S, 128));
+    pxPerFt = scale;
     paintTree(own, t, sun);
     layTree(g, own as CanvasImageSource, t, S);
     if (performance.now() - since > 12) { yield; since = performance.now(); }

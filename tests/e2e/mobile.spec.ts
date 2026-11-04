@@ -16,6 +16,10 @@ const sheet = (page: Page) => page.getByTestId("sheet");
 const detent = (page: Page) => sheet(page).getAttribute("data-detent");
 /** Settles after a sheet move (its slide takes 0.3 s). */
 const settle = (page: Page) => page.waitForTimeout(450);
+/** The glass bar of what's picked (its pill and its row of settings). */
+const bar = (page: Page, testid = "item-strip") => page.getByTestId(testid);
+/** A setting's menu or dial, open above the bar. */
+const menu = (page: Page) => page.getByTestId("bar-menu");
 
 /** Starts on open ground, with the Hole tool. */
 async function openGround(page: Page) {
@@ -40,22 +44,27 @@ async function oneHole(page: Page) {
 test.describe("phone", () => {
   test.use(device("iPhone 13"));
 
-  test("a hole picked: the strip under the map, its dial widening the fairway live (one undo step); holding open ground offers a tee, a bend, a new hole", async ({ page }) => {
+  test("a hole picked: its bar under a whole-screen map, its dial widening the fairway live (one undo step); holding open ground offers a tee, a bend, a new hole", async ({ page }) => {
     await oneHole(page);
     const hole = (await course(page)).holes[0];
     await page.evaluate(id => (window as any).__dgActions.select(id), hole.id);
-    await expect(page.getByTestId("hole-strip")).toBeVisible();
+    await expect(bar(page, "hole-strip")).toBeVisible();
     await settle(page);
-    expect(await detent(page)).toBe("locked");
-    // (the tools make way for it)
+    // (no sheet, no steps, no tools: the map has the screen down to the bar)
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(page.getByTestId("bottom-nav")).toHaveCount(0);
     await expect(page.getByTestId("tool-strip")).toHaveCount(0);
-    // The hole in the map above the sheet
-    const sheetTop = (await sheet(page).boundingBox())!.y;
+    // The hole in the map above the bar
+    const barTop = (await bar(page, "hole-strip").boundingBox())!.y;
+    expect(barTop).toBeGreaterThan(page.viewportSize()!.height * 0.75);
     const mid = await screenOf(page, 450, 500);
-    expect(mid.y).toBeLessThan(sheetTop);
+    expect(mid.y).toBeLessThan(barTop);
     // Fairway: the dial dragged left widens it as it goes, one undo step in all
     await page.getByTestId("strip-fairway").tap();
     const dial = page.getByTestId("dial");
+    // (the menu grown out of its button all the way before the dial's place is measured)
+    await expect(dial).toBeVisible();
+    await page.waitForTimeout(400);
     const w0 = (await course(page)).holes[0].fairwayWidth;
     const past0 = await page.evaluate(() => (window as any).__dgHistory().past);
     const b = (await dial.boundingBox())!;
@@ -65,10 +74,11 @@ test.describe("phone", () => {
     await expect.poll(async () => (await course(page)).holes[0].fairwayWidth).toBe(w0 + 10);
     await page.mouse.up();
     expect(await page.evaluate(() => (window as any).__dgHistory().past)).toBe(past0 + 1);
-    // Par: the choices in its place
+    // Par: its choices grow out of its button; a pick closes them
     await page.getByTestId("strip-par").tap();
-    await page.getByTestId("hole-strip").getByRole("radio", { name: "4" }).tap();
+    await menu(page).getByRole("radio", { name: "Par 4" }).tap();
     await expect.poll(async () => (await course(page)).holes[0].par).toBe(4);
+    await expect(menu(page)).toHaveCount(0);
     // Holding open ground beside the hole: a tee there, a bend
     // (open ground a little above the hole on screen, clear of its fairway)
     const m = await screenOf(page, 450, 500);
@@ -169,6 +179,8 @@ test.describe("phone", () => {
     // Move here: where it goes and how far, then Move it
     await page.evaluate(() => (window as any).__dgEditor().set({ tool: "select" }));
     await page.evaluate(id => (window as any).__dgActions.select(id), bench.id);
+    // (the first setting on its bar while your location is on)
+    await page.getByTestId("strip-movehere").tap();
     await page.getByTestId("move-here").tap();
     await expect(page.getByTestId("move-here-check")).toContainText("moves");
     await page.getByTestId("move-here-go").tap();
@@ -194,11 +206,11 @@ test.describe("phone", () => {
     expect((await course(page)).holes).toHaveLength(1);
   });
 
-  test("the map's buttons all sit above the panel; the compass shows once the map is turned", async ({ page }) => {
+  test("the map's buttons all sit above the step's row and its panel; the compass shows once the map is turned", async ({ page }) => {
     await oneHole(page);
     const above = async () => {
       await settle(page);
-      const top = (await sheet(page).boundingBox())!.y;
+      const top = (await (await sheet(page).count() ? sheet(page) : page.getByTestId("tool-strip")).boundingBox())!.y;
       const buttons = page.getByTestId("map-controls").locator("button");
       const n = await buttons.count();
       expect(n).toBeGreaterThan(1);
@@ -268,17 +280,24 @@ test.describe("phone", () => {
         await expect(page.getByTestId("page-tool-panel").getByTestId("print-layers")).toHaveCount(0);
         await page.getByTestId("page-tool-done").tap();
         await expect(page.getByTestId("page-tool-panel")).toHaveCount(0);
+      } else if (label === "Design") {
+        // (about the map: its tools in the row over the steps, its panel in its tab)
+        await expect(sheet(page)).toHaveCount(0);
+        await expect(page.getByTestId("tool-strip")).toBeVisible();
+        await expect(page.getByTestId("tool-select")).toHaveCount(0);
       } else await expect(page.getByTestId("sheet-title")).toHaveText(title);
       await expect(nav(page).getByRole("button", { name: new RegExp(label) })).toHaveAttribute("aria-current", "step");
     }
-    // Tapping the step that is open shows more of its panel, and tapping again less
+    // Tapping the step you're on brings its panel up out of the tab, and again puts it away
     await nav(page).getByRole("button", { name: /Design/ }).tap();
-    await settle(page);
-    expect(await detent(page)).toBe("peek");
+    await expect(page.getByTestId("tool-strip")).toBeVisible();
     await nav(page).getByRole("button", { name: /Design/ }).tap();
     await expect.poll(() => detent(page)).toBe("half");
+    await expect(page.getByTestId("sheet-title")).toHaveText("Design");
+    await expect(page.getByTestId("tool-strip")).toHaveCount(0);
     await nav(page).getByRole("button", { name: /Design/ }).tap();
-    await expect.poll(() => detent(page)).toBe("peek");
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(page.getByTestId("tool-strip")).toBeVisible();
   });
 
   test("finding the park on a phone: the search in the sheet, then the place on top, the map, and the panel dragged down to give the map the screen, its button still there", async ({ page }) => {
@@ -311,19 +330,18 @@ test.describe("phone", () => {
     await expect.poll(async () => (await editorState(page)).tool).toBe("select");
   });
 
-  test("the sheet rests at peek, half and full: drag it, tap its handle, or use the arrow keys", async ({ page }) => {
+  test("a step's panel comes up out of its tab, half and full: drag it, tap its handle, or use the arrow keys; at its smallest it goes back into the tab", async ({ page }) => {
     await oneHole(page);
+    const design = nav(page).getByRole("button", { name: /Design/ });
+    const away = async () => { await expect(sheet(page)).toHaveCount(0); await expect(page.getByTestId("tool-strip")).toBeVisible(); };
+    // (Design at rest: its tools over the steps, its panel in its tab)
+    await away();
+    await design.tap();
+    await expect.poll(() => detent(page)).toBe("half");
     const handle = page.getByTestId("sheet-handle");
-    expect(await detent(page)).toBe("peek");
     const top = async () => (await sheet(page).boundingBox())!.y;
-    const visible = async () => (await page.getByTestId("bottom-nav").boundingBox())!.y - (await top());
-    const peekH = await visible();
-    // Tap: peek, half, full, and round again
-    await handle.tap();
+    // Tap: half, full, then back into the tab
     await settle(page);
-    expect(await detent(page)).toBe("half");
-    const halfH = await visible();
-    expect(halfH).toBeGreaterThan(peekH + 100);
     await handle.tap();
     await settle(page);
     expect(await detent(page)).toBe("full");
@@ -331,31 +349,39 @@ test.describe("phone", () => {
     const bar = (await page.getByTestId("top-bar").boundingBox())!;
     expect(await top()).toBeGreaterThanOrEqual(bar.y + bar.height - 4);
     await handle.tap();
+    await away();
+    // Drag the handle up: it follows the finger, then rests at the nearest height; dragged right
+    // down, it goes back into its tab
+    await design.tap();
+    await expect.poll(() => detent(page)).toBe("half");
     await settle(page);
-    expect(await detent(page)).toBe("peek");
-    // Drag the handle up: it follows the finger, then rests at the nearest height
     let h = (await handle.boundingBox())!;
-    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y - halfH + peekH }, 16);
+    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y - 300 }, 16);
+    await settle(page);
+    expect(await detent(page)).toBe("full");
+    // (a flick down goes one height: full to half, then half back into the tab)
+    h = (await handle.boundingBox())!;
+    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y + 300 }, 16);
     await settle(page);
     expect(await detent(page)).toBe("half");
-    // ...and down again
     h = (await handle.boundingBox())!;
-    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y + 260 }, 16);
+    await touchDrag(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: h.x + h.width / 2, y: h.y + 300 }, 16);
+    await away();
     await settle(page);
-    expect(await detent(page)).toBe("peek");
-    // The keyboard: the handle is a button that takes the arrow keys, and says what it does
-    await handle.focus();
-    await expect(handle).toHaveAttribute("aria-label", /Panel: small/);
-    await page.keyboard.press("ArrowUp");
+    // The keyboard: the handle is a button that takes the arrow keys
+    await design.tap();
     await expect.poll(() => detent(page)).toBe("half");
+    await handle.focus();
     await page.keyboard.press("ArrowUp");
     await expect.poll(() => detent(page)).toBe("full");
     await page.keyboard.press("ArrowDown");
+    await expect.poll(() => detent(page)).toBe("half");
     await page.keyboard.press("ArrowDown");
-    await expect.poll(() => detent(page)).toBe("peek");
-    // The list itself: pulled up while the sheet isn't at full height, it brings the sheet up;
-    // pulled down from its top, it lets the sheet down
-    await handle.tap();
+    await away();
+    // The list itself: pulled up while the panel isn't at full height, it brings it up; pulled
+    // down from its top, it lets it down
+    await design.tap();
+    await expect.poll(() => detent(page)).toBe("half");
     await settle(page);
     const list = (await page.getByTestId("sheet-body").boundingBox())!;
     const at = { x: list.x + list.width / 2, y: list.y + 40 };
@@ -384,14 +410,16 @@ test.describe("phone", () => {
     await expect(page.getByTestId("draw-bar")).toHaveCount(0);
     // The tool stays on for the next hole; X goes back to Select
     expect((await editorState(page)).tool).toBe("add-hole");
-    await page.getByTestId("tool-close").tap();
+    await page.getByTestId("bar-done").tap();
     expect((await editorState(page)).tool).toBe("select");
   });
 
   test("an area drawn with taps: Undo takes a point back, Done finishes it", async ({ page }) => {
     await oneHole(page);
-    await nav(page).getByRole("button", { name: /Design/ }).tap();
+    // (on Design already: its tools in the row over the steps)
     await page.locator('[data-tool="rules"]').tap();
+    // (what it puts down: Kind, on the tool's bar)
+    await page.getByTestId("tool-options").tap();
     await page.getByTestId("area-kind-ob").tap();
     await expect(page.getByTestId("tool-hint")).toHaveText("Tap the corners");
     for (const [x, y] of [[350, 300], [550, 300], [550, 420], [350, 420]]) await tapPlan(page, x, y);
@@ -405,8 +433,8 @@ test.describe("phone", () => {
     expect(area.kind).toBe("ob");
     expect(area.points.length).toBe(3);
     expect((await editorState(page)).tool).toBe("select");
-    // (the drawn area picked, its strip up: back to the tools)
-    await page.getByTestId("selection-back").tap();
+    // (the drawn area picked, its bar up: ✓ puts it down, back to the tools)
+    await page.getByTestId("bar-done").tap();
     // Cancel drops what is being drawn
     await page.locator('[data-tool="paths"]').tap();
     await tapPlan(page, 300, 250);
@@ -417,12 +445,13 @@ test.describe("phone", () => {
   });
 
   test("the app never scrolls as a whole when something low in the sheet is brought into view", async ({ page }) => {
-    // (on the Design step, its sheet peeking)
+    // (on the Site step, its long panel up at half height)
     await oneHole(page);
+    await nav(page).getByRole("button", { name: /Site/ }).tap();
+    await expect.poll(() => detent(page)).toBe("half");
     await settle(page);
-    expect(await detent(page)).toBe("peek");
     const before = (await page.getByTestId("plan").boundingBox())!;
-    // The sheet's last button is below the screen while the sheet peeks; a keyboard, a screen
+    // The panel's last button is below the screen at half height; a keyboard, a screen
     // reader or find in page brings it into view like this (it once scrolled the whole app up,
     // map, sheet and step bar, with no way back)
     const below = await sheet(page).evaluate(el => {
@@ -439,24 +468,31 @@ test.describe("phone", () => {
     await expect(nav(page)).toBeInViewport({ ratio: 1 });
   });
 
-  test("tapping a hole puts its strip in the sheet; Close returns to the step", async ({ page }) => {
+  test("tapping a hole puts its bar over the map: every setting in its row, its notes too, what can be done with it from its name; ✓ returns to the step", async ({ page }) => {
     await oneHole(page);
     await tapPlan(page, 450, 500);
-    await expect(page.getByTestId("hole-strip")).toBeVisible();
+    await expect(bar(page, "hole-strip")).toBeVisible();
     await expect(page.getByTestId("sheet-title")).toHaveText("Hole 1");
     await expect(page.getByTestId("selection-header")).toContainText("Par 3");
     // (Screen readers hear it: the panel changes without the focus moving)
     await expect(page.getByTestId("announce")).toHaveText("Hole 1 selected");
-    // The rest of it in All settings, in the strip: par, fairway, notes
-    await page.getByTestId("strip-all").tap();
-    await expect(page.getByTestId("strip-pane").getByRole("radiogroup", { name: "Par" })).toBeVisible();
-    await page.getByRole("radiogroup", { name: "Par" }).getByRole("radio", { name: "4" }).tap();
-    await expect.poll(async () => (await course(page)).holes[0].par).toBe(4);
-    // (a hole has an X at the header's right end, no back arrow)
-    await expect(page.getByTestId("selection-back")).toHaveCount(0);
-    await page.getByTestId("selection-close").tap();
+    // Every setting is in the row, the rarer ones further along (no All settings)
+    for (const id of ["par", "fairway", "tees", "pins", "ob", "foliage", "name", "notes", "number"]) await expect(page.getByTestId(`strip-${id}`)).toBeAttached();
+    await expect(page.getByTestId("strip-all")).toHaveCount(0);
+    await expect(page.getByTestId("bar-more")).toBeVisible();
+    await page.getByTestId("bar-more").tap();
+    await page.getByTestId("strip-notes").tap();
+    await menu(page).getByRole("textbox", { name: "Hole notes" }).fill("Mando left of the oak");
+    await page.getByTestId("bar-away").dispatchEvent("pointerdown");
+    await expect.poll(async () => (await course(page)).holes[0].notes).toBe("Mando left of the oak");
+    // Its name opens what can be done with it
+    await page.getByTestId("pill-open").tap();
+    await expect(page.getByTestId("pill-menu").getByTestId("menu-zoom")).toBeVisible();
+    await page.getByTestId("pill-open").tap();
+    await page.getByTestId("bar-done").tap();
     await expect.poll(async () => (await editorState(page)).selectedId).toBeNull();
-    await expect(page.getByTestId("sheet-title")).toHaveText("Design");
+    await expect(page.getByTestId("tool-strip")).toBeVisible();
+    await expect(page.getByTestId("bottom-nav")).toBeVisible();
   });
 
   test("holding a finger on a tee opens its menu (the right-click); Delete there, and Undo", async ({ page }) => {
@@ -542,6 +578,33 @@ test.describe("phone", () => {
     await expect.poll(scale).toBeLessThan(now * 0.85);
   });
 
+  test("two fingers twisted turn the map in 2D as in 3D, round the ground between them; it stays looking straight down", async ({ page }) => {
+    await openGround(page);
+    const info = () => page.evaluate(() => (window as any).__dgView.viewInfo());
+    const i0 = await info();
+    expect(i0.tiltDeg).toBeLessThan(1);
+    const box = (await page.getByTestId("plan").boundingBox())!;
+    const at = { x: box.x + box.width / 2, y: box.y + box.height * 0.4 };
+    const g0 = (await planAt(page, at.x, at.y))!;
+    // (a quarter turn of the fingers, a little at a time, as a hand turns)
+    await touches(page, async send => {
+      const two = (deg: number) => { const r = (deg * Math.PI) / 180; return [{ x: at.x - 70 * Math.cos(r), y: at.y - 70 * Math.sin(r) }, { x: at.x + 70 * Math.cos(r), y: at.y + 70 * Math.sin(r) }]; };
+      await send("touchStart", two(0));
+      for (let i = 1; i <= 15; i++) await send("touchMove", two(4 * i));
+      await send("touchEnd", []);
+    });
+    await page.waitForTimeout(500);
+    const i1 = await info();
+    const turned = Math.abs((((i1.heading - i0.heading) % 360) + 540) % 360 - 180);
+    expect(turned).toBeGreaterThan(30);
+    expect(i1.tiltDeg).toBeLessThan(1);
+    await expect.poll(async () => (await editorState(page)).view).toBe("2d");
+    await expect(page.getByTestId("compass")).toBeVisible();
+    // (the ground that was between the fingers is still there)
+    const g1 = (await planAt(page, at.x, at.y))!;
+    expect(Math.hypot(g1.x - g0.x, g1.y - g0.y)).toBeLessThan(6);
+  });
+
   test("a finger holds the ground as it moves the map, flat and tilted; let go while moving and it slides on, slowing; two fingers slide it too", async ({ page }) => {
     await oneHole(page);
     const box = (await page.getByTestId("plan").boundingBox())!;
@@ -604,25 +667,24 @@ test.describe("phone", () => {
     expect(Math.abs((await heading()) - h0)).toBeLessThan(1);
   });
 
-  test("the thing picked is framed above the strip: picked just above it, the map moves it clear of the strip and its control", async ({ page }) => {
+  test("the thing picked is framed above the bar: picked low on the map, the map moves it clear of the bar", async ({ page }) => {
     await oneHole(page);
-    // (a tree low on the map, just above the panel's strip, where the panel at half height
-    // would cover it)
-    const strip = (await sheet(page).boundingBox())!.y;
+    // (a tree low on the map, where the bar will be)
+    const strip = page.viewportSize()!.height - 60;
     const box = (await page.getByTestId("plan").boundingBox())!;
     const g = (await planAt(page, box.x + box.width / 2, strip - 40))!;
     await page.evaluate(p => (window as any).__dgActions.placeAt("add-tree", p), g);
     const id = (await course(page)).items.find((i: any) => i.type === "tree").id;
-    await tapPlan(page, g.x, g.y);
+    await page.evaluate(i => (window as any).__dgActions.select(i), id);
     await expect.poll(async () => (await editorState(page)).selectedId).toBe(id);
-    await expect(sheet(page)).toHaveAttribute("data-detent", "locked");
+    await expect(bar(page)).toBeVisible();
     await settle(page);
-    const top = (await sheet(page).boundingBox())!.y;
+    const top = (await bar(page).boundingBox())!.y;
     await expect.poll(async () => (await screenOf(page, g.x, g.y)).y, { timeout: 8000 }).toBeLessThan(top - 20);
     expect((await screenOf(page, g.x, g.y)).y).toBeGreaterThan(64);
   });
 
-  test("a thing picked: the panel stays its strip (every setting a chip, All settings too, a keyboard lifting it), the thing framed above it; panned away, Back to it", async ({ page }) => {
+  test("a thing picked: its bar over the map (every setting in its row, its choices growing out of their buttons), the thing framed above it; panned away, Back to it", async ({ page }) => {
     await oneHole(page);
     const box = (await page.getByTestId("plan").boundingBox())!;
     const g = (await planAt(page, box.x + box.width / 2, box.y + box.height * 0.4))!;
@@ -634,34 +696,35 @@ test.describe("phone", () => {
       return d.items[d.items.length - 1].id;
     }, g);
     await page.evaluate(i => (window as any).__dgActions.select(i), id);
-    await expect(sheet(page)).toHaveAttribute("data-detent", "locked");
-    await expect(page.getByTestId("item-strip")).toBeVisible();
-    await expect(page.getByTestId("sheet-handle")).toHaveCount(0);
+    await expect(bar(page)).toBeVisible();
+    await expect(sheet(page)).toHaveCount(0);
     const vh = page.viewportSize()!.height;
-    const top = async () => (await sheet(page).boundingBox())!.y;
-    // (the map keeps more than half the screen; the woods show above the panel)
-    expect(await top()).toBeGreaterThan(vh * 0.45);
+    const top = async () => (await bar(page).boundingBox())!.y;
+    // (the map keeps all but the bar; the woods show above it)
+    expect(await top()).toBeGreaterThan(vh * 0.75);
     const inView = () => page.evaluate(i => (window as any).__dgView.inView(i), id);
     await expect.poll(inView).toBe(true);
-    // Its name, a chip of its own; typing keeps the panel a strip
+    // Its name: a field over the bar
     await page.getByTestId("strip-name").tap();
     await page.getByRole("textbox", { name: "Area name" }).tap();
     await page.keyboard.type("Big woods");
     await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === id).label).toBe("Big woods");
-    await expect(sheet(page)).toHaveAttribute("data-detent", "locked");
-    // Kind: a picture of each; a tap changes it at once, the panel still a strip
+    // Kind: a picture of each, never taking more than about a third of the screen; a tap changes it
+    // at once, and the menu closes
     await page.getByTestId("strip-kind").tap();
     await expect(page.getByTestId("kind-tiles").getByRole("radio", { name: "Woods" })).toHaveAttribute("aria-checked", "true");
+    expect((await menu(page).boundingBox())!.height).toBeLessThanOrEqual(Math.min(vh * 0.36, 340) + 1);
     await page.getByTestId("kind-water").tap();
     await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === id).kind).toBe("water");
-    await expect(sheet(page)).toHaveAttribute("data-detent", "locked");
-    // All settings: the whole panel, in a box no taller than a quarter of the screen
-    await page.getByTestId("strip-all").tap();
-    const pane = page.getByTestId("strip-pane");
-    await expect(pane.getByRole("group", { name: "Kind" })).toBeVisible();
-    expect((await pane.boundingBox())!.height).toBeLessThanOrEqual(vh * 0.24 + 1);
-    expect(await top()).toBeGreaterThan(vh * 0.4);
-    // Panned well away (once the panel has settled): Back to it brings it back
+    await expect(menu(page)).toHaveCount(0);
+    // A tap on the map closes what's open without drawing anything
+    await page.getByTestId("strip-name").tap();
+    await expect(menu(page)).toBeVisible();
+    const n = (await course(page)).items.length;
+    await page.getByTestId("bar-away").dispatchEvent("pointerdown");
+    await expect(menu(page)).toHaveCount(0);
+    expect((await course(page)).items.length).toBe(n);
+    // Panned well away (once the map has settled): Back to it brings it back
     await settle(page);
     await expect.poll(() => page.evaluate(() => (window as any).__dgView.settled())).toBe(true);
     await page.evaluate(() => (window as any).__dgView.fitBounds({ minX: 1450, minY: 1000, maxX: 1550, maxY: 1080 }, { animate: false }));
@@ -889,83 +952,193 @@ test.describe("phone", () => {
     await expect(page.getByTestId("design-page").locator("image").first()).toBeAttached();
   });
 
-  test("the view from the tee on a phone: the hole's card, big buttons along the bottom, back to the map", async ({ page }) => {
+  test("tee view on a phone: the hole's card (its Flyover line once opened), one line along the bottom (the hole's name, Play flyover, ✓), Tap mode over it, Edit flyover in the hole's menu, back to the map", async ({ page }) => {
     // (on a slow machine, all of it takes a while)
     test.setTimeout(180_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
-    // (the hole's strip starts with Tee view and Fly over; the header's eye does the same)
-    await expect(page.getByTestId("strip-teeview")).toBeVisible();
-    await expect(page.getByTestId("strip-flyover")).toBeVisible();
-    await page.getByTestId("selection-header").getByRole("button", { name: "View from the tee" }).tap();
+    // (the hole's name opens View from the tee and Play flyover)
+    await page.getByTestId("pill-open").tap();
+    await expect(page.getByTestId("pill-menu").getByRole("button", { name: "Play flyover" })).toBeVisible();
+    await page.getByTestId("menu-tee-view").tap();
     await expect(page.getByTestId("tee-view-hud")).toBeVisible();
     await expect(page.getByTestId("tee-view-hud")).toContainText("Par 3");
     // The card slim at first: a tap opens the hole's profile, another closes it
     await expect(page.getByTestId("tee-view-hud").locator("svg").first()).toBeVisible();
+    await expect(page.getByTestId("card-flyover")).toHaveCount(0);
     await page.getByTestId("hud-card-open").tap();
     await expect(page.getByTestId("hud-card-open")).toHaveAttribute("aria-expanded", "true");
+    // (opened: the hole's flyover, Automatic, with the way into its editor)
+    await expect(page.getByTestId("card-flyover")).toContainText("Automatic");
+    await expect(page.getByTestId("card-fly-edit")).toBeVisible();
+    expect((await page.getByTestId("card-fly-edit").boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await page.getByTestId("hud-card-open").tap();
-    // Along the bottom: the flight big, the rarer ones under More
-    await expect(page.getByTestId("hud-flyover")).toBeVisible();
-    await expect(page.getByTestId("hud-freecam")).toHaveCount(0);
-    await page.getByTestId("hud-more").tap();
-    await expect(page.getByTestId("hud-freecam")).toBeVisible();
-    await page.getByTestId("hud-more").tap();
+    // Along the bottom, one line of the map's glass bar: the hole's name, Play flyover, ✓; no row of
+    // settings, no Edit flyover or Export video on it; Tap mode just over it at the right
+    const bar = page.getByTestId("tee-bar");
+    await expect(bar.getByTestId("sheet-title")).toHaveText("Hole 1");
+    await expect(bar.getByTestId("hud-flyover")).toContainText("Play flyover");
+    await expect(bar.getByTestId("bar-row")).toHaveCount(0);
+    await expect(bar.getByTestId("fly-edit")).toHaveCount(0);
+    await expect(bar.getByTestId("fly-export")).toHaveCount(0);
+    await expect(page.getByTestId("tap-switch")).toBeVisible();
+    const sw = (await page.getByTestId("tap-switch").boundingBox())!, line = (await bar.getByTestId("hud-flyover").boundingBox())!;
+    expect(sw.y + sw.height).toBeLessThanOrEqual(line.y);
+    expect(sw.x + sw.width).toBeGreaterThan(page.viewportSize()!.width - 70);
+    // The hole's name opens its menu: Edit flyover (saying what the flyover is), help; no Export video
+    await expect(page.getByTestId("hud-edit")).toHaveCount(0);
+    await bar.getByTestId("pill-open").tap();
+    await expect(page.getByTestId("hud-edit")).toContainText("Automatic");
+    await expect(page.getByTestId("hud-help")).toContainText("Tee view help");
+    await expect(page.getByTestId("hud-record")).toHaveCount(0);
+    await bar.getByTestId("pill-open").tap();
+    await expect(page.getByTestId("pill-menu")).toHaveCount(0);
     // Immersive: no step bar or sheet
     await expect(page.getByTestId("bottom-nav")).toHaveCount(0);
     await expect(sheet(page)).toHaveCount(0);
-    const close = (await page.getByTestId("hud-close").boundingBox())!;
+    const close = (await bar.getByTestId("bar-done").boundingBox())!;
     expect(close.height).toBeGreaterThanOrEqual(44);
-    await page.getByTestId("hud-close").tap();
+    await bar.getByTestId("bar-done").tap();
     await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
+    // (back on the map with the hole still picked: its bar, the steps waiting till it's put down)
+    await expect(page.getByTestId("hole-strip")).toBeVisible();
+    await page.getByTestId("bar-done").tap();
     await expect(page.getByTestId("bottom-nav")).toBeVisible();
   });
 
-  test("the tee view's Flyover tile opens its settings on a phone, before and while it flies", async ({ page }) => {
+  test("the flyover's settings in the Flyover editor's bar on a phone; a thing selected in tee view, its bar in the flyover bar's place", async ({ page }) => {
     // (a flight's loading screen takes a while on a slow machine)
+    test.setTimeout(360_000);
+    await oneHole(page);
+    await tapPlan(page, 450, 500);
+    await page.getByTestId("pill-open").tap();
+    await page.getByTestId("menu-tee-view").tap();
+    const bar = page.getByTestId("tee-bar");
+    // Edit flyover, in the hole's menu: the editor's bar, the whole flyover's settings in its row
+    await bar.getByTestId("pill-open").tap();
+    await page.getByTestId("hud-edit").tap();
+    const ed = page.getByTestId("camera-bar");
+    await expect(ed.getByTestId("cam-pill")).toContainText("Flyover");
+    // A setting's dial grows out of its button: Altitude, one step up with the arrow key
+    const height = () => page.evaluate(() => (window as any).__dgCourse().flyover?.height ?? null);
+    const before = await height();
+    await ed.getByTestId("strip-altitude").tap();
+    const dial = page.getByTestId("bar-menu").getByTestId("dial");
+    await expect(dial).toBeVisible();
+    await dial.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(height).not.toBe(before);
+    // (a tap on the view closes it, and nothing else)
+    await page.getByTestId("bar-away").tap();
+    await expect(page.getByTestId("bar-menu")).toHaveCount(0);
+    // ✓: out of the editor, back in tee view
+    await ed.getByTestId("bar-done").tap();
+    await expect(page.getByTestId("camera-hud")).toHaveCount(0);
+    await expect(bar).toBeVisible();
+    // Tap mode Select: a thing selected brings its own bar in the flyover bar's place, the switch
+    // still over it; ✓ puts it down and the flyover bar is back
+    await page.getByTestId("tap-edit").tap();
+    await expect(page.getByTestId("tap-edit")).toHaveAttribute("aria-checked", "true");
+    await page.evaluate(() => { const c = (window as any).__dgCourse(); (window as any).__dgActions.select(c.items.find((i: any) => i.type === "tee").id); });
+    await expect(page.getByTestId("item-strip")).toBeVisible();
+    await expect(bar).toHaveCount(0);
+    await expect(page.getByTestId("tap-switch")).toBeVisible();
+    await page.getByTestId("item-strip").getByTestId("bar-done").tap();
+    await expect(bar).toBeVisible();
+    // ✓ goes back to the map
+    await bar.getByTestId("bar-done").tap();
+    await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
+  });
+
+  test("playing on a phone: tee view's bar folds to its timeline, a tap brings it back, Pause on the folded timeline pauses it", async ({ page }) => {
+    // (a flight's loading screen takes a while on a slow machine, and the flight is at its slowest)
+    test.setTimeout(600_000);
+    await oneHole(page);
+    // (Speed at its slowest, so the flyover is still under way when it's paused below)
+    await page.evaluate(() => (window as any).__dgActions.flyover({ speed: 0.25 }));
+    await tapPlan(page, 450, 500);
+    await page.getByTestId("pill-open").tap();
+    await page.getByTestId("menu-tee-view").tap();
+    const bar = page.getByTestId("tee-bar");
+    await expect(bar).toBeVisible();
+    // Playing: the card hides, Play flyover becomes the timeline with Stop at its start
+    const flying = () => page.evaluate(() => !!(window as any).__dgEditor().flyover);
+    // (while the flight gets ready, drawn in software, the page can be too busy to be asked for a
+    // while: a minute for each of these)
+    const busy = { timeout: 60_000 };
+    await bar.getByTestId("hud-flyover").tap();
+    await expect.poll(flying, busy).toBe(true);
+    await expect(page.getByTestId("tee-view-hud")).toBeHidden();
+    // (the flight's ready: its loading screen, over everything while it gets ready, out of the way)
+    // (the loading screen comes a moment after Play is tapped: waited for as done, not as not yet there)
+    await expect.poll(() => page.evaluate(() => { const ed = (window as any).__dgEditor(), el = document.querySelector('[data-testid="flyover-loading"]'); return !ed.flyover || (ed.flyLoading === null && (!el || getComputedStyle(el).pointerEvents === "none")); }), { timeout: 120_000 }).toBe(true);
+    if (!(await flying())) return;
+    await expect(page.getByTestId("fly-line")).toBeVisible();
+    await expect(page.getByTestId("tap-switch")).toHaveCount(0);
+    // Left alone, the bar folds to its timeline; a tap on the view brings it back, and only that
+    await expect(bar.locator("[data-tucked]")).toHaveCount(1, { timeout: 15_000 });
+    await expect(page.getByTestId("fly-line")).toBeVisible();
+    // (seen the moment it comes back: drawn in software, the page can be too busy to be asked
+    // before it folds again three seconds later)
+    await page.evaluate(() => {
+      const w = window as any, el = document.querySelector('[data-testid="tee-bar"]')!;
+      w.__barBack = false;
+      const mo = new MutationObserver(() => { if (!el.querySelector("[data-tucked]")) { w.__barBack = true; mo.disconnect(); } });
+      mo.observe(el, { subtree: true, attributes: true, childList: true });
+    });
+    await page.touchscreen.tap(200, 300);
+    await expect.poll(() => page.evaluate(() => (window as any).__barBack), busy).toBe(true);
+    await expect(page.getByTestId("bar-menu")).toHaveCount(0);
+    // Folded again, Pause on its timeline pauses it at once (the bar coming back as it does) and
+    // holds it on its moment, the bar staying up (it ends paused too, on its last picture)
+    // (folded all the way, the timeline settled at the foot, before the tap: not as it moves there)
+    await expect(bar.locator("[data-tucked]")).toHaveCount(1, { timeout: 15_000 });
+    await expect(bar.getByTestId("flyover-pill")).toBeHidden();
+    const paused = () => page.evaluate(() => !!(window as any).__dgEditor().flyPaused);
+    if (!(await paused())) await bar.getByTestId("hud-flyover").tap();
+    await expect.poll(paused, busy).toBe(true);
+    await expect(bar.locator("[data-tucked]")).toHaveCount(0);
+    expect(await flying()).toBe(true);
+    await expect(bar.getByTestId("hud-flyover")).toHaveAttribute("aria-label", "Play");
+    await page.waitForTimeout(3500);
+    await expect(bar.locator("[data-tucked]")).toHaveCount(0);
+    // ✓ goes back to the map
+    await bar.getByTestId("bar-done").tap();
+    await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
+  });
+
+  test("a custom camera path in the Flyover editor on a phone: the timeline across the bar; a keyframe tapped, its own bar; Add keyframe adds one after it; ✓ back to the whole flyover", async ({ page }) => {
     test.setTimeout(180_000);
     await oneHole(page);
     await tapPlan(page, 450, 500);
-    await page.getByTestId("selection-header").getByRole("button", { name: "View from the tee" }).tap();
-    const tile = page.getByTestId("hud-settings");
-    const open = () => page.evaluate(() => !!(window as any).__dgEditor().teeSettings);
-    const box = (await tile.boundingBox())!;
-    expect(box.height).toBeGreaterThanOrEqual(44);
-    // In the hole's card: a tap opens the settings, another closes them
-    await tile.tap();
-    await expect.poll(open).toBe(true);
-    await expect(tile).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("flyover-settings")).toBeVisible();
-    await tile.tap();
-    await expect.poll(open).toBe(false);
-    await expect(page.getByTestId("flyover-settings")).toHaveCount(0);
-    // One panel at the bottom at a time: a thing picked, its sheet in the settings' place; the
-    // tile brings them back, letting the thing go
-    await tile.tap();
-    await page.evaluate(() => { const c = (window as any).__dgCourse(); (window as any).__dgActions.select(c.items.find((i: any) => i.type === "tee").id); });
-    await expect(page.getByTestId("selection-header")).toBeVisible();
-    await expect(page.getByTestId("flyover-settings")).toHaveCount(0);
-    await expect(tile).toHaveAttribute("aria-pressed", "false");
-    await tile.tap();
-    await expect(page.getByTestId("flyover-settings")).toBeVisible();
-    await expect.poll(async () => (await editorState(page)).selectedId ?? null).toBeNull();
-    await tile.tap();
-    await expect.poll(open).toBe(false);
-    // Flying: the card hides, the tile stays in reach at the top right
-    await page.getByTestId("hud-flyover").tap();
-    await expect(page.getByTestId("hud-flyover")).toHaveText(/Stop/);
-    await expect(page.getByTestId("tee-view-hud")).toBeHidden();
-    // (the flight's ready: its loading screen, over everything while it gets ready, out of the way)
-    // (the loading screen comes a moment after Fly over is tapped: waited for as done, not as not yet there)
-    await expect.poll(() => page.evaluate(() => { const ed = (window as any).__dgEditor(), el = document.querySelector('[data-testid="flyover-loading"]'); return ed.flyover && ed.flyLoading === null && (!el || getComputedStyle(el).pointerEvents === "none"); }), { timeout: 120_000 }).toBe(true);
-    await page.waitForTimeout(400);
-    const flight = () => page.evaluate(() => { const e = (window as any).__dgEditor(); return JSON.stringify({ teeView: e.teeView, flyover: e.flyover, flyLoading: e.flyLoading, teeSettings: e.teeSettings, tiles: document.querySelectorAll('[data-testid="hud-settings"]').length }); });
-    // (drawn in software, a flight's frames take seconds each: a tap waits its turn)
-    await expect(async () => { await tile.tap({ timeout: 20_000 }); await expect.poll(open, { timeout: 10_000, message: await flight() }).toBe(true); }).toPass({ timeout: 90_000 });
-    await expect(page.getByTestId("flyover-settings")).toBeVisible();
-    await page.getByTestId("hud-close").tap();
-    await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
-    expect(await open()).toBe(false);
+    await page.getByTestId("pill-open").tap();
+    await page.getByTestId("menu-tee-view").tap();
+    await page.getByTestId("tee-bar").getByTestId("pill-open").tap();
+    await page.getByTestId("hud-edit").tap();
+    const bar = page.getByTestId("camera-bar");
+    const keys = () => page.evaluate(() => ((window as any).__dgCourse().holes[0].flyKeys ?? []).length);
+    await bar.getByTestId("fly-path").tap();
+    await page.getByTestId("bar-menu").getByRole("radio", { name: /Custom/ }).tap();
+    await expect.poll(keys).toBeGreaterThanOrEqual(2);
+    // (the whole flyover's bar: the timeline over the name, Add keyframe beside it)
+    await expect(bar.getByTestId("fly-line")).toBeVisible();
+    await expect(bar.getByTestId("cam-add")).toBeVisible();
+    await expect(bar.getByTestId("cam-pill")).toContainText("Flyover");
+    // A keyframe tapped: its own bar, the camera at its shot
+    await bar.getByTestId("fly-key").nth(1).tap();
+    await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().flyKey)).toBe(1);
+    await expect(bar.getByTestId("cam-pill")).toContainText("Keyframe 2");
+    await expect(bar.getByTestId("cam-add")).toContainText("after 2");
+    // Add keyframe: one more, after it, and it's the one selected
+    const n = await keys();
+    await bar.getByTestId("cam-add").tap();
+    await expect.poll(keys).toBe(n + 1);
+    await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().flyKey)).toBe(2);
+    await expect(bar.getByTestId("cam-pill")).toContainText("Keyframe 3");
+    // ✓: done with the keyframe, the whole flyover's bar again
+    await bar.getByTestId("bar-done").tap();
+    await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().flyKey)).toBeNull();
+    await expect(bar.getByTestId("cam-pill")).toContainText("Flyover");
   });
 
   test("the camera on a phone: the stick moves it, the arrows lift it, a drag turns it, a big button adds the keyframe", async ({ page }) => {
@@ -973,9 +1146,10 @@ test.describe("phone", () => {
     await oneHole(page);
     await tapPlan(page, 450, 500);
     // (the header's eye: the hole's panel under it has a View from the tee button too)
-    await page.getByTestId("selection-header").getByRole("button", { name: "View from the tee" }).tap();
-    await page.getByTestId("hud-more").tap();
-    await page.getByTestId("hud-freecam").tap();
+    await page.getByTestId("pill-open").tap();
+    await page.getByTestId("menu-tee-view").tap();
+    await page.getByTestId("tee-bar").getByTestId("pill-open").tap();
+    await page.getByTestId("hud-edit").tap();
     await expect(page.getByTestId("camera-hud")).toBeVisible();
     await expect(page.getByTestId("bottom-nav")).toHaveCount(0);
     const pose = () => page.evaluate(() => (window as any).__dgView.freeKey());
@@ -1007,17 +1181,22 @@ test.describe("phone", () => {
     const before = await pose();
     await touchDrag(page, { x: 190, y: 380 }, { x: 80, y: 400 });
     expect(Math.hypot((await pose()).lookX - before.lookX, (await pose()).lookY - before.lookY)).toBeGreaterThan(5);
-    // Big enough for a thumb; adds keyframe 1
+    // Big enough for a thumb; adds the shot as a keyframe (the camera path turns Custom)
     const add = (await page.getByTestId("cam-add").boundingBox())!;
     expect(add.height).toBeGreaterThanOrEqual(44);
     await page.getByTestId("cam-add").tap();
-    await expect.poll(async () => ((await course(page)).holes[0].flyKeys ?? []).length).toBe(1);
-    // (Done puts the camera away, standing on the tee again; Back goes to the map)
-    await page.getByTestId("cam-done").tap();
+    await expect.poll(async () => ((await course(page)).holes[0].flyKeys ?? []).length).toBeGreaterThanOrEqual(2);
+    // (✓ is done with the new keyframe; ✓ again puts the camera away, standing on the tee again; ✓
+    // there goes to the map)
+    await page.getByTestId("camera-bar").getByTestId("bar-done").tap();
+    await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().flyKey)).toBeNull();
+    await page.getByTestId("camera-bar").getByTestId("bar-done").tap();
     await expect(page.getByTestId("camera-hud")).toHaveCount(0);
     await expect(page.getByTestId("tee-view-hud")).toBeVisible();
     expect((await editorState(page)).teeView).not.toBeNull();
-    await page.getByTestId("hud-close").tap();
+    await page.getByTestId("tee-bar").getByTestId("bar-done").tap();
+    await expect(page.getByTestId("hole-strip")).toBeVisible();
+    await page.getByTestId("bar-done").tap();
     await expect(page.getByTestId("bottom-nav")).toBeVisible();
   });
 
@@ -1037,7 +1216,7 @@ test.describe("phone", () => {
 test.describe("phone on its side", () => {
   test.use(device("iPhone 13 landscape"));
 
-  test("a rail of steps on the left, the panel beside it (it folds away), the map on the right", async ({ page }) => {
+  test("a rail of steps on the left, the panel beside it (it folds away), the map on the right; a thing picked, its bar up the right edge", async ({ page }) => {
     await oneHole(page);
     await expect(page.getByTestId("nav-rail")).toBeVisible();
     await expect(page.getByTestId("bottom-nav")).toHaveCount(0);
@@ -1056,8 +1235,15 @@ test.describe("phone on its side", () => {
     // (the map back at its width before the hole is tapped where it shows)
     await expect.poll(mapW).toBeLessThan(w + 2);
     await page.waitForTimeout(300);
+    // A hole picked: its bar up the right edge, the panel out of the map's way
     await tapPlan(page, 450, 500);
-    await expect(side.getByTestId("inspector")).toBeVisible();
+    await expect(page.getByTestId("hole-strip")).toBeVisible();
+    await expect(side).toHaveCount(0);
+    const bar = (await page.getByTestId("hole-strip").boundingBox())!;
+    expect(bar.x).toBeGreaterThan(page.viewportSize()!.width - 130);
+    expect(bar.height).toBeGreaterThan(page.viewportSize()!.height * 0.8);
+    await page.getByTestId("bar-done").tap();
+    await expect(side).toBeVisible();
   });
 });
 

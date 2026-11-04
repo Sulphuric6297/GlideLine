@@ -23,8 +23,8 @@ export type GrassQuality = 0 | 1 | 2 | 3;
 /** Blades per square foot (inner patch, outer patch) and the patches' half-widths, per quality. */
 const LEVELS: Record<Exclude<GrassQuality, 0>, { inner: number; outer: number; innerR: number; outerR: number }> = {
   1: { inner: 6, outer: 0.6, innerR: 28, outerR: 90 },
-  2: { inner: 13, outer: 1.2, innerR: 36, outerR: 120 },
-  3: { inner: 24, outer: 2, innerR: 44, outerR: 150 }
+  2: { inner: 13, outer: 1.2, innerR: 36, outerR: 170 },
+  3: { inner: 24, outer: 2, innerR: 44, outerR: 210 }
 };
 /** Size of the repeating pattern of blade spots, ft (the patches move by this much). */
 const TILE = 8;
@@ -168,7 +168,7 @@ const bladeGeometry = () => {
 };
 
 /** Blade spots for a square patch `half` ft each way: the same jittered pattern in every tile. */
-const patchGeometry = (half: number, perSqFt: number) => {
+const patchGeometry = (half: number, perSqFt: number): { geo: THREE.InstancedBufferGeometry; spots: Float32Array; span: number; count: number } => {
   const n = Math.max(1, Math.round(TILE * TILE * perSqFt));
   let seed = 9173;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
@@ -196,10 +196,69 @@ const patchGeometry = (half: number, perSqFt: number) => {
   geo.setIndex(blade.index);
   geo.setAttribute("aSpot", new THREE.InstancedBufferAttribute(spots, 2));
   geo.instanceCount = tiles * tiles * n;
-  return { geo, span: tiles * TILE, count: tiles * tiles * n };
+  return { geo, spots, span: tiles * TILE, count: tiles * tiles * n };
 };
 
-type Patch = { mesh: THREE.Mesh; mat: THREE.MeshLambertMaterial; span: number; count: number; uniforms: Record<string, THREE.IUniform> };
+/**
+ * A patch's spots in square blocks, each its own draw with its own bounds, so what's out of sight
+ * (behind the camera, off to the sides), past the patch's reach or inside the patch within it is
+ * never drawn: the patch follows the camera as a whole (its origin), the blocks with it.
+ */
+export class SpotBlocks {
+  private blocks: { mesh: THREE.Mesh; cx: number; cz: number; count: number }[] = [];
+  private at = new THREE.Vector2(NaN, NaN);
+  /** Spots drawn in the last frame (in reach: the camera's own view culls more). */
+  count = 0;
+  constructor(group: THREE.Group, base: THREE.BufferGeometry, spots: Float32Array, span: number, private blockFt: number, make: (geo: THREE.InstancedBufferGeometry) => THREE.Mesh) {
+    const per = Math.max(1, Math.ceil(span / blockFt));
+    const lists: number[][] = Array.from({ length: per * per }, () => []);
+    for (let i = 0; i < spots.length; i += 2) {
+      const bx = Math.min(per - 1, Math.floor(spots[i] / blockFt)), bz = Math.min(per - 1, Math.floor(spots[i + 1] / blockFt));
+      lists[bz * per + bx].push(spots[i], spots[i + 1]);
+    }
+    lists.forEach((list, b) => {
+      if (!list.length) return;
+      const geo = new THREE.InstancedBufferGeometry();
+      geo.index = base.index;
+      for (const [name, a] of Object.entries(base.attributes)) geo.setAttribute(name, a);
+      geo.setAttribute("aSpot", new THREE.InstancedBufferAttribute(new Float32Array(list), 2));
+      geo.instanceCount = list.length / 2;
+      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), blockFt);
+      const mesh = make(geo);
+      mesh.frustumCulled = true;
+      group.add(mesh);
+      this.blocks.push({ mesh, cx: ((b % per) + 0.5) * blockFt, cz: (Math.floor(b / per) + 0.5) * blockFt, count: list.length / 2 });
+    });
+  }
+  /** The patch at origin (`ox`, `oz`): each block placed over the ground (`height`, `tall` ft of
+   * blades above it), drawn only where it can show between `hole` and `far` ft from the eye. */
+  update(ox: number, oz: number, eye: THREE.Vector3, far: number, hole: number, height: (x: number, z: number) => number, tall: number) {
+    const moved = ox !== this.at.x || oz !== this.at.y;
+    this.at.set(ox, oz);
+    const half = this.blockFt / 2, diag = half * Math.SQRT2;
+    this.count = 0;
+    for (const b of this.blocks) {
+      const x = ox + b.cx, z = oz + b.cz;
+      const d = Math.hypot(x - eye.x, z - eye.z);
+      b.mesh.visible = d - diag < far && d + diag > hole;
+      if (!b.mesh.visible) continue;
+      this.count += b.count;
+      if (!moved) continue;
+      // (its bounds round the ground under it, corners and middle)
+      const hs = [height(x, z), height(x - half, z - half), height(x + half, z - half), height(x - half, z + half), height(x + half, z + half)];
+      const lo = Math.min(...hs), hi = Math.max(...hs) + tall;
+      const s = b.mesh.geometry.boundingSphere!;
+      s.center.set(x, (lo + hi) / 2, z);
+      s.radius = Math.hypot(diag, (hi - lo) / 2) + 1;
+    }
+  }
+  dispose() {
+    for (const b of this.blocks) { b.mesh.geometry.dispose(); b.mesh.removeFromParent(); }
+    this.blocks = [];
+  }
+}
+
+type Patch = { blocks: SpotBlocks; mat: THREE.MeshLambertMaterial; span: number; count: number; uniforms: Record<string, THREE.IUniform>; far: number; hole: number };
 
 export class Grass implements GrassUniformSource {
   readonly group = new THREE.Group();
@@ -313,15 +372,14 @@ export class Grass implements GrassUniformSource {
 
   private build() {
     for (const p of this.patches) {
-      p.mesh.geometry.dispose();
+      p.blocks.dispose();
       p.mat.dispose();
-      this.group.remove(p.mesh);
     }
     this.patches = [];
     if (!this.quality) return;
     const lv = LEVELS[this.quality];
     const add = (half: number, perSqFt: number, width: number, near: number, far: number, hole: number) => {
-      const { geo, span, count } = patchGeometry(half, perSqFt);
+      const { geo, spots, span, count } = patchGeometry(half, perSqFt);
       const uniforms = this.uniformSet(near, far, hole, width);
       const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
       mat.onBeforeCompile = shader => {
@@ -340,14 +398,16 @@ export class Grass implements GrassUniformSource {
           .replace("#include <normal_fragment_begin>", "float faceDirection = 1.0;\nvec3 normal = normalize( vNormal );\nvec3 nonPerturbedNormal = normal;");
       };
       mat.customProgramCacheKey = () => "dg-grass";
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.frustumCulled = false;
-      mesh.receiveShadow = true;
-      mesh.castShadow = false;
-      mesh.name = "grass-patch";
-      mesh.raycast = () => {};
-      this.group.add(mesh);
-      this.patches.push({ mesh, mat, span, count, uniforms });
+      // (in blocks: close by small ones, the outer patch's bigger)
+      const blocks = new SpotBlocks(this.group, geo, spots, span, hole ? 40 : 24, g => {
+        const mesh = new THREE.Mesh(g, mat);
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        mesh.name = "grass-patch";
+        mesh.raycast = () => {};
+        return mesh;
+      });
+      this.patches.push({ blocks, mat, span, count, uniforms, far, hole });
     };
     add(lv.innerR, lv.inner, 0.06, 30, lv.innerR, 0);
     add(lv.outerR, lv.outer, 0.16, 18, lv.outerR, lv.innerR * 0.85);
@@ -357,7 +417,7 @@ export class Grass implements GrassUniformSource {
    * Moves the patches under the camera (in whole tiles) and shows them only when the ground is
    * close enough for blades to be seen. `time` sways them in the wind.
    */
-  update(eye: THREE.Vector3, groundY: number, time: number, wind: number) {
+  update(eye: THREE.Vector3, groundY: number, time: number, wind: number, height: (x: number, z: number) => number = () => groundY) {
     const above = eye.y - groundY;
     const show = this.quality > 0 && !!this.field && !!this.heights && above < 320;
     this.group.visible = show;
@@ -373,13 +433,14 @@ export class Grass implements GrassUniformSource {
       p.uniforms.uWind.value = wind;
       // Seen from higher up, fewer blades are needed
       p.uniforms.uDensity.value = above > 120 ? 0.5 : 1;
-      this.blades += p.count;
+      p.blocks.update(ox, oz, eye, p.far, p.hole, height, GRASS.max);
+      this.blades += p.blocks.count;
     }
   }
 
   dispose() {
     for (const p of this.patches) {
-      p.mesh.geometry.dispose();
+      p.blocks.dispose();
       p.mat.dispose();
     }
     this.patches = [];

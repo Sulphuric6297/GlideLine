@@ -14,7 +14,7 @@ import { rememberBoard } from "../printouts";
 import type { PaperSize } from "../../types";
 import { DesignPanel } from "../DesignPanel";
 import { InToolSheet, setToolOpen } from "../pageToolState";
-import { SHEET, SheetFold, tileCls, useUnfold } from "./SheetFold";
+import { Disc, SHEET, SheetFold, tileCls, useUnfold } from "./SheetFold";
 import { Field, OnlyGroup, Select } from "../ui";
 
 type Tool = { id: string; label: string; icon: LucideIcon };
@@ -76,12 +76,12 @@ export function PageTools() {
   const tool = tools.find(t => t.id === shownId);
   return (
     <div className={`relative z-30 ${SHEET}`} data-testid="page-tools">
-      <div role="toolbar" aria-label="Page settings" className="flex gap-1 px-2 pt-2.5 pb-2 overflow-x-auto dg-noscrollbar touch-pan-x">
+      <div role="toolbar" aria-label="Page settings" className="flex gap-1 px-1.5 py-[7px] overflow-x-auto dg-noscrollbar touch-pan-x">
         {tools.map(t => {
           const on = open === t.id;
           return (
             <button key={t.id} onClick={() => setOpen(on ? null : t.id)} aria-pressed={on} data-testid={`page-tool-${t.id}`} className={tileCls(on)}>
-              <t.icon size={20} />
+              <Disc on={on}><t.icon size={18} /></Disc>
               <span className="text-[11px] leading-none font-semibold whitespace-nowrap">{t.label}</span>
             </button>
           );

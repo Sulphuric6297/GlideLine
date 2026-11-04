@@ -36,8 +36,13 @@ test("a bridge drawn with the Build tool; the inspector sets its width, height a
   await expect(page.getByTestId("inspector-title")).toHaveText("Bridge");
   await expect(page.getByTestId("structure-size")).toHaveText(/^\d+ ft long$/);
   expect(Math.hypot(bridge.points[1].x - bridge.points[0].x, bridge.points[1].y - bridge.points[0].y)).toBeCloseTo(50, -1);
-  // A real model: deck boards, timber rails and beams, stone abutments
+  // A real model: deck boards, timber rails and beams, stone abutments; selected, it's see-through
+  // (to see the map under it while it's reshaped), casting no shadow; let go of, solid again
+  await expect.poll(() => model(page, bridge.id)).toEqual({ kind: "bridge", parts: ["deck", "stone", "timber"], cast: false });
+  await page.evaluate(() => (window as any).__dgActions.select(null));
   await expect.poll(() => model(page, bridge.id)).toEqual({ kind: "bridge", parts: ["deck", "stone", "timber"], cast: true });
+  await page.evaluate(id => (window as any).__dgActions.select(id), bridge.id);
+  await expect(page.getByTestId("inspector-title")).toHaveText("Bridge");
   // Inspector edits, one undo step each
   await page.getByRole("slider", { name: "Width" }).fill("8");
   await expect.poll(async () => (await structures(page))[0].width).toBe(8);

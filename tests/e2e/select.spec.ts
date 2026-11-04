@@ -196,7 +196,8 @@ test.describe("touch", () => {
     await expect.poll(async () => (await group(page)).length).toBe(3);
     await page.touchscreen.tap(third.x + third.width / 2, third.y + third.height / 2);
     await expect.poll(async () => (await group(page)).length).toBe(2);
-    await page.getByTestId("selection-delete").tap();
+    // (Delete all 2, at the end of the things picked's bar)
+    await page.getByTestId("group-strip").getByTestId("menu-delete").tap();
     await expect.poll(async () => (await course(page)).items.filter((i: any) => i.type === "amenity").length).toBe(1);
   });
 });

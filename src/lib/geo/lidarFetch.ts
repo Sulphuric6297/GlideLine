@@ -9,6 +9,7 @@ import { claim, findTrees, flownOn, gather, gatherer, leafOnAt, measureSite, rea
 import type { GeoBounds } from "./core";
 import { allBuildings } from "./buildings";
 import type { LidarJob } from "./lidarWorker";
+import { demHeights, ugDem, ugFeed, ugGatherer, ugSurvey, type UgSurvey } from "../undergrowth";
 
 /** A survey read for a site: its name on AWS, the year it was flown, when it flew over the site
  * (from its points' own times) and whether the trees were in leaf then. */
@@ -24,6 +25,8 @@ export type LidarSite = {
   trees: LidarTree[];
   /** The ground, the canopy and what stands on a fine grid (see measureSite). */
   measured: Measured;
+  /** What grows low, for the brush (see lib/undergrowth; null without the USGS ground). */
+  undergrowth: UgSurvey | null;
 };
 
 export type LidarOptions = {
@@ -34,6 +37,8 @@ export type LidarOptions = {
    * buildings (traced from the air, and OpenStreetMap's) are looked up here anyway. */
   outlines?: P[][] | Promise<P[][]>;
   signal?: AbortSignal;
+  /** Each tile's points as they're read, for a closer look than the trees (the undergrowth). */
+  onPoints?: (p: TilePoints) => void;
 };
 
 /** The local list of surveys: [name, west, south, east, north, year?, in leaf? (1, 0, null)]. */
@@ -183,6 +188,10 @@ export const fetchLidar = async (ref: GeoRef, onProgress: (fraction: number) => 
   const pool = workers();
   try {
     const g = gatherer(ref.width, ref.height);
+    // (the low growth, for the brush: heights from the USGS ground, once it's in)
+    const ug = ugGatherer(ref.width, ref.height);
+    const demIn = Promise.resolve(opts.dem ?? null).catch(() => null);
+    void demIn.then(d => { if (d) ugDem(ug, demHeights(d, ref.width, ref.height)); });
     const used: SurveyUsed[] = [];
     let open = { x0: 0, y0: 0, x1: ref.width, y1: ref.height };
     for (const row of rows) {
@@ -215,6 +224,8 @@ export const fetchLidar = async (ref: GeoRef, onProgress: (fraction: number) => 
           };
           const pts = await pool.tile(await get(), ref, box).catch(async () => pool.tile(await get(), ref, box));
           gather(g, pts, k);
+          ugFeed(ug, pts);
+          opts.onPoints?.(pts);
           got += pts.n;
           done += tile.points;
           // (the first survey's points most of the way, any after it the rest)
@@ -245,7 +256,8 @@ export const fetchLidar = async (ref: GeoRef, onProgress: (fraction: number) => 
       label: surveyLabel(used[0].year),
       surveys: used,
       trees,
-      measured
+      measured,
+      undergrowth: ugSurvey(ug)
     };
   } finally {
     pool.close();

@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { test as plain, expect as plainExpect, type Page } from "@playwright/test";
-import { test, expect, addHole, blankCourse, course, editorState } from "./fixtures";
+import { test, expect, addHole, blankCourse, course, editorState, teeCard } from "./fixtures";
 import { VIDEO_HOLD, avcCodec, videoBitrate, videoSuffix, videoTimeline, vp9Codec } from "../../src/lib/video";
 import { flightClock } from "../../src/lib/flight";
 
@@ -57,7 +57,7 @@ test("record a hole's flyover from the Export step: progress, then a real video 
   await page.getByRole("button", { name: "4 Export" }).click();
   const section = page.getByTestId("video-export");
   await section.getByTestId("video-holes").selectOption({ label: "Hole 1" });
-  await expect(section.getByTestId("video-record")).toHaveText(/Record hole 1/);
+  await expect(section.getByTestId("video-record")).toHaveText(/Export video of hole 1/);
   const downloading = page.waitForEvent("download", { timeout: 380_000 });
   await section.getByTestId("video-record").click();
   // The progress bar (in the banner at the top of the step) moves while the frames are made, and
@@ -88,18 +88,19 @@ test("record a hole's flyover from the Export step: progress, then a real video 
   expect((await editorState(page)).teeView).toBeNull();
 });
 
-test("from the Export step's video: Fly over flies the hole picked, the camera's settings open in its view from the tee", async ({ page }) => {
+test("from the Export step's video: Play flyover flies the hole picked, Edit flyover opens the Flyover editor on it", async ({ page }) => {
   test.setTimeout(180_000);
   await twoHoles(page, [160, 90]);
   const second = (await course(page)).holes[1].id;
-  const tee = () => page.evaluate(() => { const e = (window as any).__dgEditor(); return [e.teeView, e.flyover, !!e.teeSettings]; });
+  const tee = () => page.evaluate(() => { const e = (window as any).__dgEditor(); return [e.teeView, e.flyover, !!e.flyCam]; });
   await page.getByRole("button", { name: "4 Export" }).click();
   const section = page.getByTestId("video-export");
   await section.getByTestId("video-holes").selectOption({ label: "Hole 2" });
   await section.getByTestId("video-camera-settings").click();
   await expect.poll(tee).toEqual([second, false, true]);
-  await expect(page.getByTestId("flyover-settings")).toBeVisible();
-  await page.evaluate(() => (window as any).__dgEditor().set({ teeView: null }));
+  await expect(page.getByTestId("cam-panel").getByTestId("flyover-settings")).toBeVisible();
+  // (Done: back where it was opened, off the tee)
+  await page.getByTestId("cam-done").click();
   await expect.poll(tee).toEqual([null, false, false]);
   await page.getByTestId("video-export").getByTestId("video-fly").click();
   await expect.poll(tee).toEqual([second, true, false]);
@@ -112,7 +113,7 @@ test("cancel stops a recording, and leaving the Export step doesn't", async ({ p
   let downloads = 0;
   page.on("download", () => downloads++);
   await page.getByRole("button", { name: "4 Export" }).click();
-  await expect(page.getByTestId("video-record")).toHaveText(/Record the course/);
+  await expect(page.getByTestId("video-record")).toHaveText(/Export video of the course/);
   await page.getByTestId("video-record").click();
   await expect.poll(async () => Number(await page.getByTestId("video-progress").getAttribute("aria-valuenow")), { timeout: 60_000 }).toBeGreaterThan(1);
   // Off to another step: the recording goes on, shown over the map
@@ -134,30 +135,31 @@ test("cancel stops a recording, and leaving the Export step doesn't", async ({ p
   await page.getByRole("button", { name: "2 Design" }).click();
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("tee-view").click();
-  await expect(page.getByTestId("tee-view-hud")).toContainText("Par 3 · 250 ft");
+  await expect(teeCard(page)).toContainText("Par 3 · 250 ft");
   await expect(page.getByTestId("pov-basket")).toContainText("250 ft");
 });
 
-test("the Record button over a flyover records that hole", async ({ page }) => {
-  test.setTimeout(180_000);
+test("Export video in the Flyover editor records that hole", async ({ page }) => {
+  // (the recording and the flight on screen at once, drawn in software)
+  test.setTimeout(600_000);
   await twoHoles(page, [160, 90]);
   // (small, so it is quick: the size is the Export step's choice, tested there)
   await page.evaluate(() => (window as any).__dgVideo().set({ size: { width: 320, height: 180 } }));
   await page.getByTestId("hole-row").nth(1).click();
-  await page.getByTestId("flyover").click();
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Stop/);
-  const downloading = page.waitForEvent("download", { timeout: 150_000 });
-  await page.getByTestId("hud-record").click();
-  // (Recording… until the frames start coming, then how far along it is)
-  await expect(page.getByTestId("hud-record")).toHaveText(/Recording( \d+%|…)/);
-  await expect(page.getByTestId("hud-record")).toHaveText(/Recording \d+%/, { timeout: 60_000 });
+  // (the hole's flyover, in its editor: Export video in its panel; tee view has none)
+  await page.getByTestId("flyover-row").getByTestId("fly-edit").click();
+  await expect(page.getByTestId("camera-hud")).toBeVisible();
+  const downloading = page.waitForEvent("download", { timeout: 540_000 });
+  const record = page.getByTestId("cam-panel").getByTestId("fly-export");
+  await record.click();
+  // (Exporting… until the frames start coming, then how far along it is)
+  await expect(record).toHaveText(/Exporting( \d+%|…)/);
+  await expect(record).toHaveText(/Exporting \d+%/, { timeout: 60_000 });
   await expect(page.getByTestId("export-progress-pill")).toContainText("Recording hole 2");
-  // The flight on screen goes on by itself, separate from the recording, and lands
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Fly over/, { timeout: 60_000 });
   const download = await downloading;
   expect(download.suggestedFilename()).toMatch(/^new-disc-golf-course-hole-2-flyover\.(mp4|webm)$/);
   expect(kindOf(readFileSync((await download.path())!))).not.toBe("?");
-  await expect(page.getByTestId("hud-record")).toHaveText("Record");
+  await expect(record).toHaveText("Export video");
   await expect(page.getByTestId("export-progress-pill")).toBeHidden();
   // Still looking at hole 2
   expect((await editorState(page)).teeView).toBe(await page.evaluate(() => (window as any).__dgCourse().holes[1].id));
@@ -168,11 +170,13 @@ test("while a video records, the view from the tee holds still (the recording's 
   await twoHoles(page, [320, 180]);
   await page.getByTestId("hole-row").nth(1).click();
   await page.getByTestId("tee-view").click();
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect(teeCard(page)).toBeVisible();
   expect(await page.evaluate(() => (window as any).__dgEditor().wind)).toBe(true);
   const info = () => page.evaluate(() => (window as any).__dgView.drawInfo() as { frames: number; recording: boolean });
   const downloading = page.waitForEvent("download", { timeout: 150_000 });
-  await page.getByTestId("hud-record").click();
+  // (Export video: the Flyover editor's, opened from the hole's card)
+  await teeCard(page).getByTestId("card-fly-edit").click();
+  await page.getByTestId("cam-panel").getByTestId("fly-export").click();
   await expect.poll(async () => (await info()).recording).toBe(true);
   await page.waitForTimeout(300);
   // Nothing moves on screen but the breeze: it waits (it once kept redrawing the screen and took

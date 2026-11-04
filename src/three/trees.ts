@@ -80,6 +80,9 @@ export const create3dTree = (item: TreeItem, look?: TreeLook): THREE.Group => {
   lod.addLevel(treeMeshes(shape, variant, height, w, tint, "mid", false, spec), mid);
   lod.addLevel(treeMeshes(shape, variant, height, w, tint, "far", false, spec), far);
   lod.userData.tree = true;
+  // (a tree grown from the pool's shapes, nothing of its own: it can be drawn with the others,
+  // standing and flying, see CourseView.syncPlacedBatch)
+  if (!spec) lod.userData.pool = { shape, variant, height };
   // Its lean: tilted over about its foot (the map's north is -z; the turn is undone so the lean
   // keeps its compass direction whichever way the tree is turned)
   const tilt = new THREE.Group();

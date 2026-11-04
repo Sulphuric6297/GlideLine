@@ -1,5 +1,6 @@
 // Talking to the GlideLine Studio server, when the app is built for one (VITE_SERVER=1). Without it the
 // app is the browser-only demo and none of this runs.
+import { placeBefore } from "../state/tabPlace";
 import { create } from "zustand";
 
 export const SERVER = import.meta.env.VITE_SERVER === "1";
@@ -46,7 +47,8 @@ export const useAuth = create<{
 }>((set, get) => ({
   session: null,
   dialog: null,
-  home: true,
+  // (a tab refreshed in a course: back in it, not on the list)
+  home: !placeBefore,
   showHome: home => set({ home, dialog: null }),
   listVersion: 0,
   bump: () => set({ listVersion: get().listVersion + 1 }),

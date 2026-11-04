@@ -251,6 +251,12 @@ export const paintBatch = (p: Gpu, m: GpuMap, data: Float32Array, count: number)
   return !gl.isContextLost();
 };
 
+/** A painting stopped part way: its tiles let go, nothing laid on the map. */
+export const dropMap = (p: Gpu, m: GpuMap) => {
+  for (const t of m.tiles) { p.gl.deleteTexture(t.tex); p.gl.deleteFramebuffer(t.fb); }
+  m.tiles = [];
+};
+
 /** The painting laid on the map (`g`), tile by tile, once; its tiles let go. */
 export const endMap = (p: Gpu, m: GpuMap, g: CanvasRenderingContext2D) => {
   const { gl } = p;

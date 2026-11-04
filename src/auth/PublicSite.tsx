@@ -269,7 +269,7 @@ export function PublicSite({ children }: { children: ReactNode }) {
                   <div className="flex gap-2.5 items-center">
                     {sign && files[sign] && <button className="shrink-0 rounded-[10px] overflow-hidden ring-1 ring-white/20" onClick={() => setBigSign(signs.indexOf(sign))} aria-label={`Tee sign, hole ${h.label}, bigger`}><img src={files[sign]} alt="" className="w-[104px] h-[70px] object-cover" /></button>}
                     <div className="flex flex-col gap-1.5 flex-1 min-w-0">
-                      {flies && h.id && <button className="inline-flex items-center justify-center gap-1 rounded-full px-3 py-1.5 text-[12.5px] font-semibold bg-[#a7d46f] hover:bg-[#b6dd83] text-[#14230d]" onClick={() => void open3d(h.id)} data-testid="fly-hole"><Play size={12} fill="currentColor" /> Fly over it</button>}
+                      {flies && h.id && <button className="inline-flex items-center justify-center gap-1 rounded-full px-3 py-1.5 text-[12.5px] font-semibold bg-[#a7d46f] hover:bg-[#b6dd83] text-[#14230d]" onClick={() => void open3d(h.id)} data-testid="fly-hole"><Play size={12} fill="currentColor" /> Play flyover</button>}
                       {sign && files[sign] && <button className={`${PILL} !py-1.5 !text-[12.5px]`} onClick={() => setBigSign(signs.indexOf(sign))}>Tee sign</button>}
                     </div>
                   </div>

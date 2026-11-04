@@ -45,7 +45,7 @@ export function ViewerPanelBody() {
         <Section testid="viewer-views">
           <div className="flex flex-wrap gap-2">
             {may3d && <button className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 touch:py-2.5 text-sm font-semibold bg-white/[0.07] hover:bg-white/[0.13] text-zinc-100 border border-white/[0.12]" onClick={() => useEditor.getState().set({ teeView: picked.holeId, flyover: false })} data-testid="viewer-tee">From the tee</button>}
-            {mayFly && <button className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 touch:py-2.5 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-zinc-950" onClick={() => useEditor.getState().set({ view: "3d", teeView: picked.holeId, flyover: true })} data-testid="viewer-fly">▶ Fly over</button>}
+            {mayFly && <button className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 touch:py-2.5 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-zinc-950" onClick={() => useEditor.getState().set({ view: "3d", teeView: picked.holeId, flyover: true })} data-testid="viewer-fly">▶ Play flyover</button>}
           </div>
         </Section>
       )}

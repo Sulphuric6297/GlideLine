@@ -58,7 +58,7 @@ export const itemActions = (itemId: string, ground: P | null, named = false): It
     // (a tee: the view from that one, whatever color the layout plays)
     const tee = item?.type === "tee";
     a.push({ label: tee ? "View from this tee" : "View from the tee", icon: Eye, run: () => set({ teeView: holeId, teeViewTee: tee ? item.id : null, flyover: false }), testid: "menu-tee-view" });
-    a.push({ label: "Fly over the hole", icon: Plane, run: () => set({ teeView: holeId, flyover: true }) });
+    a.push({ label: "Play flyover", icon: Plane, run: () => set({ teeView: holeId, flyover: true }) });
   }
   a.push({ label: hole ? "Zoom to this hole" : "Zoom to it", icon: Maximize2, run: () => (hole ? getView()?.fitHole(hole.id) : getView()?.zoomTo(itemId)), testid: "menu-zoom" });
   // (a comment on it: a point thing's pin moves with it; on a hole, a shape or a line, on the spot)

@@ -1,7 +1,8 @@
 // The Export step: printable maps, tee signs, scorecards and hole sheets, hole-by-hole pages and
 // GPS files, flyover videos, GPS and data files, and the parts list.
 import { useEffect, useState, type ReactNode } from "react";
-import { Box, ChevronRight, Clapperboard, Crop, FileDown, FileJson, Image as ImageIcon, Link2, Map as MapIcon, Plane, Settings2, Signpost, Table2, Users } from "lucide-react";
+import { Box, ChevronRight, Clapperboard, Crop, FileDown, FileJson, Image as ImageIcon, Link2, Map as MapIcon, Plane, Signpost, Table2, Users, Video } from "lucide-react";
+import { editFlyover } from "./FlyoverSettings";
 import { LockedRow } from "./DemoNote";
 import { SERVER, useAuth } from "../auth/api";
 import { useServerCourse } from "../auth/courses";
@@ -116,10 +117,11 @@ export function ExportPanel() {
     const raf = requestAnimationFrame(() => { try { setThumb(getView()?.capture(480, 270) ?? null); } catch { setThumb(null); } });
     return () => cancelAnimationFrame(raf);
   }, []);
-  /** The hole's flyover, or its view from the tee with the flyover's settings open over it. */
-  const fromTee = (settings: boolean) => {
+  /** The hole's flyover, or the Flyover editor on it. */
+  const fromTee = (edit: boolean) => {
     const id = videoHoles[0];
-    if (id) useEditor.getState().set({ teeView: id, teeViewTee: null, flyCam: false, flyover: !settings, teeSettings: settings });
+    if (id && edit) editFlyover(id);
+    else if (id) useEditor.getState().set({ teeView: id, teeViewTee: null, flyCam: false, flyover: true });
   };
 
   // (a QR code on what's printed with no link yet: said, the export goes ahead)
@@ -432,11 +434,11 @@ export function ExportPanel() {
         </Field>
         {/* (the camera is set where its flight is seen: the view from the tee, its Settings) */}
         <div className="flex flex-wrap gap-1.5 mb-3" data-testid="video-camera">
-          <Button small onClick={() => fromTee(false)} disabled={nothing} testid="video-fly"><Plane size={13} /> Fly over</Button>
-          {!readOnly && <Button small onClick={() => fromTee(true)} disabled={nothing} testid="video-camera-settings"><Settings2 size={13} /> Flyover settings</Button>}
+          <Button small onClick={() => fromTee(false)} disabled={nothing} testid="video-fly"><Plane size={13} /> Play flyover</Button>
+          {!readOnly && <Button small onClick={() => fromTee(true)} disabled={nothing} testid="video-camera-settings"><Video size={13} /> Edit flyover</Button>}
         </div>
         {/* (its progress and Cancel: in the bar at the top of the step) */}
-        <Button tone="primary" full onClick={() => void recordVideo(videoHoles)} disabled={busy || nothing} testid="video-record"><Clapperboard size={15} /> Record {videoHoles.length === 1 ? `hole ${holeLabel(doc, videoHoles[0])}` : "the course"}</Button>
+        <Button tone="primary" full onClick={() => void recordVideo(videoHoles)} disabled={busy || nothing} testid="video-record"><Clapperboard size={15} /> Export video of {videoHoles.length === 1 ? `hole ${holeLabel(doc, videoHoles[0])}` : "the course"}</Button>
         {!nothing && <p className="text-[11px] text-zinc-500 mt-1.5">About {minSec(videoSeconds(doc, videoHoles))} of video.</p>}
         </div>
       </Section>

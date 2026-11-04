@@ -32,6 +32,8 @@ import type { PhotoSourceId } from "./geo/photoSources";
 import { reframe, toPlanXY, type GeoRef } from "./geoRef";
 import { boxOutline, orientedBox, roofOf } from "./structures";
 import { treeFree } from "./treeFree";
+import { underbrushChance, type Underbrush } from "./undergrowth";
+import { seasonsFromSpace } from "./geo/sentinel";
 
 export type ImportedSite = {
   canvas: { width: number; height: number };
@@ -57,10 +59,12 @@ export type ImportedSite = {
    * water where the government's maps of water came, and all of FEMA's buildings (those
    * OpenStreetMap has too among them). */
   alternates?: { photoWater: CourseItem[]; fema: CourseItem[] };
+  /** Where brush grows (the chance in each block; the areas made as the import asks). */
+  underbrush?: Underbrush;
 };
 
 /** The sources a site comes from, each with its own progress. */
-export type SourceId = "photo" | "elevation" | "lidar" | "osm" | "buildings" | "photoTrees" | "gov";
+export type SourceId = "photo" | "elevation" | "lidar" | "osm" | "buildings" | "photoTrees" | "gov" | "seasons";
 /** Not started, under way, in, not to be had at this spot (no survey covers it, say), or failed. */
 export type SourceState = "waiting" | "coming" | "done" | "not-here" | "failed";
 export type SourceStatus = {
@@ -598,7 +602,7 @@ export const OSM_BUSY = "OpenStreetMap is busy: asking another server…";
 
 /** How much of the whole each source is (LiDAR's the longest), and how long one that can't say
  * how far along it is usually takes, ms (its bar eases toward the end meanwhile). */
-const WEIGHT: Record<SourceId, number> = { photo: 2, elevation: 1, lidar: 4, osm: 2, buildings: 1, photoTrees: 2, gov: 1 };
+const WEIGHT: Record<SourceId, number> = { photo: 2, elevation: 1, lidar: 4, osm: 2, buildings: 1, photoTrees: 2, gov: 1, seasons: 1 };
 const USUAL_MS: Partial<Record<SourceId, number>> = { elevation: 2500, osm: 8000, buildings: 4000 };
 
 /** Each source's state, said to `onProgress` (and `onStatus`) as it changes, and twice a second
@@ -656,7 +660,7 @@ class Progress {
       if (id === "buildings") return "Looking up buildings traced from the air…";
     }
     if (!coming.length) return Object.values(this.sources).some(s => s.state === "waiting") ? "Finding woods, trees and water on the photo…" : "Putting it together…";
-    const names: Record<SourceId, string> = { photo: this.photoName, elevation: "elevation", lidar: "measured trees", osm: "OpenStreetMap", buildings: "traced buildings", photoTrees: "", gov: "the US maps" };
+    const names: Record<SourceId, string> = { photo: this.photoName, elevation: "elevation", lidar: "measured trees", osm: "OpenStreetMap", buildings: "traced buildings", photoTrees: "", gov: "the US maps", seasons: "satellite seasons" };
     const list = coming.map(id => names[id]);
     return `Bringing in the ${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}…`;
   }
@@ -708,7 +712,8 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     ...(opts.lidar ? ["lidar" as const] : []),
     ...(opts.osm ? ["osm" as const, "buildings" as const] : []),
     ...(wantsPhotoTrees ? ["photoTrees" as const] : []),
-    ...(wantsGov ? ["gov" as const] : [])
+    ...(wantsGov ? ["gov" as const] : []),
+    ...(opts.trees ? ["seasons" as const] : [])
   ];
   const progress = new Progress(opts, ids, satellite ? "satellite photo" : "map");
   const layer = (l: ImportLayer) => { if (!signal?.aborted) opts.onLayer?.(l); };
@@ -838,7 +843,16 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
 
     // OpenStreetMap: waited for a little longer while the rest is still coming
     // (the rest given 45 s at most: one that stalls doesn't hold OpenStreetMap up)
-    const restIn = Promise.race([Promise.allSettled([photoJob, elevationJob, lidarJob, tracedJob, natureJob, govJob]), new Promise(r => setTimeout(r, 45000))]);
+    // The satellite's seasons, for the brush (Sentinel-2: how green each spot is in winter, spring
+    // and summer)
+    const seasonsJob = !opts.trees ? Promise.resolve(null) : soft("seasons", async () => {
+      progress.set("seasons", { state: "coming" });
+      const got = cached("seasons", here, () => seasonsFromSpace(bounds, signal), { signal });
+      const s = await untilAborted(got.value, signal);
+      progress.set("seasons", s ? { state: "done", source: "Sentinel-2", cached: got.hit } : { state: "not-here", cached: got.hit });
+      return s;
+    });
+    const restIn = Promise.race([Promise.allSettled([photoJob, elevationJob, lidarJob, tracedJob, natureJob, govJob, seasonsJob]), new Promise(r => setTimeout(r, 45000))]);
     const osmJob = !opts.osm ? Promise.resolve(null) : soft("osm", async () => {
       progress.set("osm", { state: "coming" });
       const got = fetchOsm(bounds, { signal, settle: restIn, onBusy: () => progress.set("osm", { busy: true }), onTiles: () => progress.set("osm", { busy: false }) });
@@ -850,7 +864,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       return { answer, items, counts, parks };
     });
 
-    const [map, ground, measured, traced, nature, osm, gov] = await untilAborted(Promise.all([photoJob, elevationJob, lidarJob, tracedJob, natureJob, osmJob, govJob]), signal);
+    const [map, ground, measured, traced, nature, osm, gov, seasons] = await untilAborted(Promise.all([photoJob, elevationJob, lidarJob, tracedJob, natureJob, osmJob, govJob, seasonsJob]), signal);
 
     // ------------------------------------------------------------ put together
     const background = map?.url ?? null;
@@ -1003,6 +1017,17 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     const counted = [[photo("area", "woods"), "wooded area", "wooded areas"], [photo("tree"), "tree", "trees"], [photo("area", "water"), "water area", "water areas"]] as const;
     const said = counted.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`);
     if (said.length) notes.push(`On the photo: ${said.join(", ")}.`);
+    // Where brush grows: the chance of it in each 10 ft block, from the survey and the satellite's
+    // seasons (the areas themselves made as the import's How much and How thick ask)
+    const m = measured?.lidar.measured;
+    const underbrush = underbrushChance(width, height, measured?.lidar.undergrowth ?? null, seasons, {
+      areas: all.filter((i): i is AreaItem => i.type === "area" && i.kind === "water").map(i => i.points),
+      lines: all.filter(i => i.type === "line" && i.kind === "stream").map(i => (i as { points: P[] }).points)
+    }, treeFree(all), m ? { nx: m.nx, ny: m.ny, cell: m.cell, roofs: m.roofs } : undefined);
+    if (underbrush) {
+      underbrush.surveyYear = measured ? surveyYear(measured.lidar.source) || undefined : undefined;
+      underbrush.seenFrom = seasons?.dates.length ? `${seasons.dates[0].slice(0, 4)}${seasons.dates[seasons.dates.length - 1].slice(0, 4) !== seasons.dates[0].slice(0, 4) ? `-${seasons.dates[seasons.dates.length - 1].slice(2, 4)}` : ""}` : undefined;
+    }
     all = all.map(signed);
     const trees = all.filter((i): i is TreeItem => i.type === "tree");
     mapped = all.filter(i => i.type !== "tree");
@@ -1035,6 +1060,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       lidar,
       standing,
       alternates,
+      underbrush: underbrush ?? undefined,
       course,
       sources: progress.sources
     };

@@ -1,4 +1,4 @@
-import type { FieldKind, AreaKind, CourseDoc, LineKind, P, ToolMode, DrawShape, StructureKind, TreeKind, FieldPart } from "../types";
+import type { FieldKind, AreaKind, CourseDoc, CourseItem, LineKind, P, ToolMode, DrawShape, StructureKind, TreeKind, FieldPart } from "../types";
 import type { HoleStats, SafetyIssue } from "../lib/holeStats";
 
 export type { P };
@@ -55,6 +55,12 @@ export type ViewTool = {
   treeKind?: TreeKind;
   /** The brush (the ground tool, and painting areas): its radius (ft), how strong, what it does to the ground. */
   brush?: { size: number; strength: number; ground: "raise" | "lower" | "flatten" | "smooth" | "restore" };
+  /** A stand of this kind of tree drawn as woods (a stand of bushes: underbrush). */
+  standOf?: string | null;
+  /** Painting areas: what the brush does (add, remove, a level thinner or thicker, back as found). */
+  areaBrush?: "add" | "remove" | "thinner" | "thicker" | "restore";
+  /** Painting just this area (Reshape with the brush, from its panel). */
+  reshape?: string | null;
 };
 
 export type ViewInfo = {
@@ -75,6 +81,8 @@ export type LocationMark = { at: P; acc: number; facing: number | null; dim: boo
 export type ViewCallbacks = {
   /** The ground painted with the ground tool: all its heights (live while painting; `done` once let go). */
   onTerrain?: (heights: Record<string, number>, done: boolean, original?: Record<string, number>) => void;
+  /** The areas as a brush stroke leaves them, live as it goes (`done`: let go, one undo step). */
+  onAreas?: (items: CourseItem[], done: boolean) => void;
   /** A thing picked (or nothing); `add`: Shift+click, into or out of the things picked together. */
   onSelect: (id: string | null, add?: boolean) => void;
   /** A tree that isn't an item (measured, a sapling, planted in a wood) clicked: made the course's

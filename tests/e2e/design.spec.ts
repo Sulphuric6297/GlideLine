@@ -649,10 +649,11 @@ test("elevation on the Forest map: hills shade the painting, each Elevation look
   for (const look of ["cliffs", "contours", "terraces"]) {
     await page.getByTestId(`elevation-${look}`).click();
     await expect.poll(async () => (await course(page)).style.reliefLook).toBe(look);
+    // (a picture of its own: waited for, as on a slow machine the last look's can still be up as
+    // the new one starts painting)
+    await expect.poll(async () => seen.has(await painting.getAttribute("href")), { timeout: 60_000 }).toBe(false);
     await painted(page);
-    const href = await painting.getAttribute("href");
-    expect(seen.has(href)).toBe(false);
-    seen.add(href);
+    seen.add(await painting.getAttribute("href"));
   }
   await page.getByTestId("elevation-shaded").click();
   await expect.poll(async () => (await course(page)).style.reliefLook).toBeUndefined();
@@ -1122,6 +1123,21 @@ plain("tee sign extras: text filled in for each hole, a picture, the hole's spon
   plainExpect(s2).toContain("RIVER BANK");
   plainExpect(s1).not.toContain("Second only");
   plainExpect(s2).toContain("Second only");
+});
+
+plain("a QR code (or anything added) hidden in Layers leaves the page: the course map and the tee signs", () => {
+  const doc = sample();
+  const art = { contours: null, hillshade: null };
+  const qr = { id: "q", kind: "qr" as const, x: 0.8, y: 0.05, w: 0.1, url: "https://example.org/course" };
+  doc.style.theme = "forest";
+  doc.style.mapExtras = [qr];
+  doc.style.sign = { extras: [qr] };
+  plainExpect(renderPoster(doc, art).svg).toContain('data-el="x:q"');
+  plainExpect(renderTeeSign(doc, doc.holes[0].id, "18x12", art)!.svg).toContain('data-el="x:q"');
+  doc.style.mapExtras = [{ ...qr, hidden: true }];
+  doc.style.sign = { extras: [{ ...qr, hidden: true }] };
+  plainExpect(renderPoster(doc, art).svg).not.toContain('data-el="x:q"');
+  plainExpect(renderTeeSign(doc, doc.holes[0].id, "18x12", art)!.svg).not.toContain('data-el="x:q"');
 });
 
 plain("one sponsor on its own: placed by itself, only on its own holes", () => {

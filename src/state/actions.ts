@@ -277,7 +277,7 @@ const addField = (item: AreaItem) => {
 const standOf = (k: TreeKind): Partial<AreaItem> => ({ pines: k === "conifer" ? 1 : 0, bushes: k === "bush" ? 1 : undefined });
 
 /** An area, line or built thing (bridge, building...) drawn with the drawing tools. */
-export const addDrawn = (kind: "area" | "line" | "structure", points: P[], opts: { straight?: boolean } = {}) => {
+export const addDrawn = (kind: "area" | "line" | "structure", points: P[], opts: { straight?: boolean; pick?: boolean } = {}) => {
   const ed = editor();
   // (a field by its corners: the Park tool's kind; fields are straight between their corners anyway)
   if (kind === "area" && ed.areaKind === "field") return addField(createField(ed.fieldKind, points));
@@ -288,7 +288,8 @@ export const addDrawn = (kind: "area" | "line" | "structure", points: P[], opts:
   // (a building, road, parking or water drawn over trees: those standing in it go, the same step)
   const under = keepsTreesOut(item) ? new Set(getDoc().items.filter(i => i.type === "tree" && !i.locked && treeFree([item])(i)).map(i => i.id)) : new Set<string>();
   changeDoc(d => ({ items: [...d.items.filter(i => !under.has(i.id)), item] }));
-  select(item.id);
+  // (painted: not picked, the brush still in hand)
+  if (opts.pick !== false) select(item.id);
   if (under.size) toast(`Took out ${under.size} tree${under.size === 1 ? "" : "s"} standing in it.`, "info", true);
 };
 
@@ -694,7 +695,7 @@ export const layoutTee = (holeId: string) => {
 export const withCentroid = <T extends { points: P[] }>(item: T): T & P => ({ ...item, ...centroid(item.points) });
 
 // For the automated tests and screenshots: build a course quickly without clicking every spot.
-if (typeof window !== "undefined") (window as any).__dgActions = { addHole, addDrawn, placeAt, select, pickGroup, updateItem, style: (patch: Partial<CourseDoc["style"]>) => changeDoc(d => ({ style: { ...d.style, ...patch } })), site: (patch: Partial<CourseDoc["site"]>) => changeDoc(d => ({ site: { ...d.site, ...patch } })), lidar: (patch: Partial<NonNullable<CourseDoc["lidar"]>>) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {})) };
+if (typeof window !== "undefined") (window as any).__dgActions = { addHole, addDrawn, placeAt, select, pickGroup, updateItem, style: (patch: Partial<CourseDoc["style"]>) => changeDoc(d => ({ style: { ...d.style, ...patch } })), site: (patch: Partial<CourseDoc["site"]>) => changeDoc(d => ({ site: { ...d.site, ...patch } })), lidar: (patch: Partial<NonNullable<CourseDoc["lidar"]>>) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {})), flyover: (patch: Partial<NonNullable<CourseDoc["flyover"]>>) => changeDoc(d => ({ flyover: { ...d.flyover, ...patch } as CourseDoc["flyover"] })) };
 
 /**
  * An OB line for a hole, ready to fine-tune with its handles: along the left or right of the

@@ -115,12 +115,93 @@ test("picking in 3D: a roof in front of a tree picks the house; the path in fron
   expect(await pickAt(await at(page, BEHIND.x, BEHIND.y, 36))).toBe("t-behind");
 });
 
+test("only what's drawn is picked: no tree with the trees hidden, no underbrush past where it's drawn; an area's edge picks the area, the pointer over it outlines and names it, and a picked area moves only from its edge", async () => {
+  await draw(page, false);
+  const sweep = () => page.evaluate(() => {
+    const v = (window as any).__dgView, doc = (window as any).__dgCourse(), r = v.container.getBoundingClientRect(), cam = v.mainEye().cam.position;
+    const out = { trees: 0, farBrush: 0, edges: 0, inside: 0, edge: null as null | { x: number; y: number; id: string } };
+    for (let y = r.top + 40; y < r.bottom - 40; y += 22) for (let x = r.left + 40; x < r.right - 40; x += 22) {
+      const t = v.clickTarget(x, y);
+      if (t.tree) { out.trees++; if (t.tree.kind === "spot" && t.tree.height < 9 && Math.hypot(t.tree.x - cam.x, t.tree.y - cam.z) > 420) out.farBrush++; }
+      else if (t.id && doc.items.find((i: any) => i.id === t.id)?.type === "area") {
+        if (v.pickedEdge) { out.edges++; out.edge ??= { x, y, id: t.id }; } else out.inside++;
+      }
+    }
+    return out;
+  });
+  const shown = await sweep();
+  console.log("picks over the view:", JSON.stringify({ ...shown, edge: !!shown.edge }));
+  expect(shown.trees, "trees picked over the view").toBeGreaterThan(0);
+  expect(shown.farBrush, "underbrush picked past where it's drawn").toBe(0);
+  expect(shown.edges, "area edges picked").toBeGreaterThan(0);
+  expect(shown.inside, "insides of areas picked").toBeGreaterThan(0);
+  // (the trees hidden: none of them picked)
+  await page.evaluate(() => (window as any).__dgView.setTreesHidden(true));
+  await draw(page, false);
+  const hidden = await sweep();
+  await page.evaluate(() => (window as any).__dgView.setTreesHidden(false));
+  expect(hidden.trees, "trees picked with the trees hidden").toBe(0);
+  // (the pointer resting on an edge: that area outlined, and its name beside it)
+  const e = shown.edge!;
+  await page.mouse.move(e.x - 3, e.y);
+  await page.mouse.move(e.x, e.y);
+  await expect.poll(() => page.evaluate(() => (window as any).__dgView.hoverId)).toBe(e.id);
+  await expect(page.getByTestId("stand-tip")).toContainText(/edge$/, { timeout: 3000 });
+  await page.mouse.move(5, 5);
+  // (an area picked, then a drag from inside it, here from a tree standing in it: the map moves,
+  // not the area; then a drag from its edge: the area moves) (a wood framed, so trees stand in it)
+  const woodBox = await page.evaluate(() => {
+    const d = (window as any).__dgCourse(), size = (pts: any[]) => { let s = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; s += p.x * q.y - q.x * p.y; } return Math.abs(s); };
+    const w = d.items.filter((i: any) => i.type === "area" && i.kind === "woods" && !i.locked && !(i.bushes >= 1)).sort((a: any, b: any) => size(b.points) - size(a.points))[0];
+    const xs = w.points.map((p: any) => p.x), ys = w.points.map((p: any) => p.y);
+    return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+  });
+  await frame(page, woodBox);
+  await draw(page, false);
+  const onTree = await page.evaluate(() => {
+    const v = (window as any).__dgView, doc = (window as any).__dgCourse(), r = v.container.getBoundingClientRect();
+    for (let y = r.top + 80; y < r.bottom - 80; y += 9) for (let x = r.left + 80; x < r.right - 80; x += 9) {
+      const t = v.clickTarget(x, y);
+      if (!t.tree) continue;
+      const under = v.pick(x, y), it = doc.items.find((i: any) => i.id === under);
+      if (it?.type === "area" && !v.pickedEdge && !it.locked) return { x, y, id: under };
+    }
+    return null;
+  });
+  expect(onTree, "a tree standing in an area, in view").not.toBeNull();
+  await page.evaluate(id => (window as any).__dgActions.select(id), onTree!.id);
+  const before = JSON.stringify((await course(page)).items.find((i: any) => i.id === onTree!.id).points);
+  await page.mouse.move(onTree!.x, onTree!.y);
+  await page.mouse.down();
+  await page.mouse.move(onTree!.x + 40, onTree!.y + 25, { steps: 6 });
+  await page.mouse.up();
+  expect(JSON.stringify((await course(page)).items.find((i: any) => i.id === onTree!.id).points), "the picked area, after a drag from a tree in it").toBe(before);
+  const edgeAt = await page.evaluate(id => {
+    const v = (window as any).__dgView, r = v.container.getBoundingClientRect();
+    for (let y = r.top + 80; y < r.bottom - 80; y += 3) for (let x = r.left + 80; x < r.right - 80; x += 3) if (v.pick(x, y) === id && v.pickedEdge && !v.clickTarget(x, y).tree) return { x, y };
+    return null;
+  }, onTree!.id);
+  expect(edgeAt, "the picked area's edge, in view").not.toBeNull();
+  await page.mouse.move(edgeAt!.x, edgeAt!.y);
+  await page.mouse.down();
+  await page.mouse.move(edgeAt!.x + 40, edgeAt!.y + 25, { steps: 6 });
+  await page.mouse.up();
+  expect(JSON.stringify((await course(page)).items.find((i: any) => i.id === onTree!.id).points), "the picked area, after a drag from its edge").not.toBe(before);
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => JSON.stringify((await course(page)).items.find((i: any) => i.id === onTree!.id).points)).toBe(before);
+  await page.keyboard.press("Escape");
+});
+
 test("dragging a house: each step quick, letting go quick, back with one undo", async () => {
   await draw(page, false);
   const was = (await course(page)).items.find((i: any) => i.id === "t-house").points[0];
   await page.evaluate(() => (window as any).__dgActions.select("t-house"));
+  // (the house framed, wherever the checks before left the map: clear of the panels over it)
+  await frame(page, { minX: was.x - 150, minY: was.y - 150, maxX: was.x + 150, maxY: was.y + 150 });
+  await frames(page);
   // (off the middle of the roof: its height handle is there in 3D)
   const c = await at(page, 1612, 242, 12);
+  expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName, [c.x, c.y]), "the roof, on the map").toBe("CANVAS");
   await page.mouse.move(c.x, c.y);
   await page.mouse.down();
   const steps: number[] = [];
@@ -255,25 +336,53 @@ test("a flyover's keyframes: two set, the timeline scrubbed (the camera follows 
   await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "select" }));
   const hole = (await course(page)).holes[0];
   await page.evaluate(id => (window as any).__dgActions.select(id), hole.id);
-  await page.getByTestId("hole-flight").getByTestId("fly-camera").click();
+  await page.getByTestId("flyover-row").getByTestId("fly-edit").click();
   await expect(page.getByTestId("camera-hud")).toBeVisible();
   const keys = async () => ((await course(page)).holes.find((h: any) => h.id === hole.id).flyKeys ?? []) as any[];
-  const had = (await keys()).length;
-  await page.keyboard.press("Enter");
+  // (an Automatic path: the first keyframe added turns it Custom, from the path it flew by itself)
   await page.keyboard.down("w");
   await page.waitForTimeout(900);
   await page.keyboard.up("w");
   await page.keyboard.press("Enter");
-  await expect.poll(async () => (await keys()).length).toBe(had + 2);
-  await expect(page.getByTestId("cam-timeline")).toBeVisible();
-  // (half way through the flight: the camera there, the status says so)
-  const end = Number(await page.getByTestId("cam-scrub").getAttribute("max"));
-  await page.getByTestId("cam-scrub").fill(String(Math.round((end / 2) * 20) / 20));
-  await expect(page.getByTestId("cam-status")).toContainText("At ");
+  await expect.poll(async () => (await keys()).length).toBeGreaterThanOrEqual(2);
+  const had = (await keys()).length;
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("camera-bar").getByTestId("fly-line")).toBeVisible();
+  // (half way through the flyover: the camera there, Add keyframe saying it goes in at that moment)
+  const end = Number(await page.getByTestId("fly-scrub").getAttribute("max"));
+  await page.getByTestId("fly-scrub").fill(String(Math.round((end / 2) * 20) / 20));
+  await expect(page.getByTestId("cam-add")).toContainText(/at \d/i);
   await page.keyboard.press("Enter");
-  await expect.poll(async () => (await keys()).length).toBe(had + 3);
-  expect((await editor(page)).flyKey).toBe(had + 1);
+  await expect.poll(async () => (await keys()).length).toBe(had + 1);
+  expect((await editor(page)).flyKey).not.toBeNull();
   await page.getByTestId("cam-done").click();
+});
+
+test("from the tee and flying, only what can be seen is drawn: the placed trees drawn together, the trees out of sight left out, the shadows from their own set; the flight's quality held", async () => {
+  await draw(page, false);
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "select", selectedId: null }));
+  const hole = (await course(page)).holes[0];
+  const stats = () => page.evaluate(() => (window as any).__dgView.forestStats());
+  // From the tee, walking (nothing to pick): the placed trees in one batch, each of them hidden as
+  // itself; fewer trees in the picture than there are, and some in the shadows' set
+  await page.evaluate(id => (window as any).__dgEditor().set({ teeView: id, teeViewTee: null, teeStand: null, flyover: false, standTap: "walk" }), hole.id);
+  await expect.poll(async () => (await stats()).placed, { timeout: 30_000 }).toBeGreaterThan(100);
+  const a = await stats();
+  expect(a.placedApart).toBe(0);
+  expect(a.seen).toBeLessThan(a.trees * 0.8);
+  expect(a.shadow).toBeGreaterThan(0);
+  // Select on (each tree picked as itself): the batch let go, every tree itself again
+  await page.evaluate(() => (window as any).__dgEditor().set({ standTap: "edit" }));
+  await expect.poll(async () => (await stats()).placed).toBe(0);
+  await page.evaluate(() => (window as any).__dgEditor().set({ standTap: "walk" }));
+  // Flying: the batch again, and the quality held once under way (a run of slow frames changes nothing)
+  await page.evaluate(() => (window as any).__dgEditor().set({ flyover: true, flyPaused: false }));
+  await expect.poll(async () => (await stats()).placed, { timeout: 30_000 }).toBeGreaterThan(100);
+  await page.waitForTimeout(3500);
+  const tier = await page.evaluate(() => (window as any).__dgView.qualityInfo().tier);
+  await page.evaluate(() => { const v = (window as any).__dgView; v.forceAdaptive(); for (let i = 0; i < 30; i++) v.perfSample(200); v.forceAdaptive(false); });
+  expect(await page.evaluate(() => (window as any).__dgView.qualityInfo().tier)).toBe(tier);
+  await page.evaluate(() => (window as any).__dgEditor().set({ flyover: false, teeView: null, standTap: "walk" }));
 });
 
 test("on a phone, the Trees tool has the same kinds, woods included, and the ways to plant a stand", async ({ browser }) => {
@@ -285,22 +394,248 @@ test("on a phone, the Trees tool has the same kinds, woods included, and the way
   const back = phone.getByTestId("back-to-course");
   if (await back.isVisible().catch(() => false)) await back.click();
   await phone.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "add-tree" }));
-  for (const t of ["tree-kind-deciduous", "tree-kind-conifer", "tree-kind-bush", "area-kind-woods", "line-kind-hedge"]) await expect(phone.getByTestId(t)).toBeAttached();
-  await expect(phone.getByTestId("area-kind-woods")).toBeVisible();
-  await expect(phone.getByTestId("draw-shape-points")).toBeAttached();
+  // (the tool's bar: Kind opens the kinds just above it, Plant the ways to plant a stand)
+  await phone.getByTestId("tool-options").click();
+  for (const t of ["tree-kind-deciduous", "tree-kind-conifer", "tree-kind-bush", "area-kind-woods", "line-kind-hedge"]) await expect(phone.getByTestId(t)).toBeVisible();
+  await phone.getByTestId("tool-shapes").click();
+  for (const w of ["one", "points", "box", "circle", "freehand", "paint"]) await expect(phone.getByTestId(`draw-shape-${w}`)).toBeVisible();
   await phone.close();
 });
 
 test("the painted map: Where to paint the woods is there with measured trees, and the map paints in time", async () => {
-  await page.evaluate(() => (window as any).__dgEditor().set({ step: "map", tool: "select" }));
-  const trees = page.getByTestId("part-trees");
-  if ((await trees.getAttribute("aria-expanded")) !== "true") await trees.click();
+  // (where the woods grow is the place's: the Site step's Trees, which the map draws the same)
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "site", tool: "select" }));
+  const trees = page.getByTestId("site-trees").locator("summary");
+  if (!(await page.getByTestId("forest-options").isVisible())) await trees.click();
   await expect(page.getByTestId("forest-options")).toBeVisible();
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "map", tool: "select" }));
   const s = Date.now();
   await page.waitForFunction(() => !(window as any).__dgPainting(), null, { timeout: 150_000 });
   console.log("map painted in", Math.round((Date.now() - s) / 1000), "s");
   await page.waitForTimeout(1500);
   await expect(page.getByTestId("design-page").first()).toHaveScreenshot("painted-map.png");
+});
+
+test("the painted map past the measured ground: level, never the edge's hills drawn on outward in stripes", async () => {
+  await page.waitForFunction(() => typeof (window as any).__dgMapDiff === "function", null, { timeout: 60_000 });
+  const d = await page.evaluate(async () => {
+    const w = window as any, doc = w.__dgCourse();
+    // (stretches well past the site's east and west edges: the Hills setting changes nothing there)
+    const out: number[] = [];
+    for (const cx of [doc.canvas.width + 700, -700]) out.push(await w.__dgMapDiff(doc, { ...doc.style, reliefScale: 1 }, { ...doc.style, reliefScale: 2.5 }, { cx, cy: doc.canvas.height / 2, rotation: 0, scale: 0.5, width: 240, height: 400 }));
+    return out;
+  });
+  expect(Math.max(...d)).toBeLessThan(0.2);
+});
+
+test("the course map comes in close: every tee, basket and amenity on the page and clear of its pieces, little of it past the site", async () => {
+  await page.waitForFunction(() => typeof (window as any).__dgPosterFit === "function", null, { timeout: 60_000 });
+  const fits = await page.evaluate(() => {
+    const w = window as any, doc = w.__dgCourse();
+    // (turned every which way, on a poster and on letter paper)
+    return [0, 45, 90, 135, 180, 225, 270, 315].flatMap(rotation => ["36x48", "letter"].map(paper => ({ rotation, paper, ...w.__dgPosterFit({ ...doc, style: { ...doc.style, rotation, paper } }) })));
+  });
+  for (const f of fits) {
+    expect(f.under, `${f.rotation}° on ${f.paper}: under ${f.under.join(", ")}`).toEqual([]);
+    expect(f.nearest, `${f.rotation}° on ${f.paper}`).toBeGreaterThan(0);
+  }
+  // (north up, the site holds nearly all the poster)
+  expect(fits.find(f => f.rotation === 0 && f.paper === "36x48")!.offSite).toBeLessThan(0.05);
+});
+
+test("a new color or tone is painted again only where it reaches: the same pixels as a whole new painting, and quicker", async () => {
+  await page.waitForFunction(() => typeof (window as any).__dgPaintAgain === "function", null, { timeout: 60_000 });
+  const runs = await page.evaluate(async () => {
+    const w = window as any, doc = w.__dgCourse(), s = doc.style;
+    const view = { cx: doc.canvas.width / 2, cy: doc.canvas.height / 2, rotation: 0, scale: 0.6, width: 1200, height: 1000 };
+    const out: Record<string, { differ: number; fastMs: number; wholeMs: number }> = {};
+    for (const [name, patch] of [["water", { water: "#7a2a8a" }], ["fairway", { fairway: "#d9f07a" }], ["path", { path: "#d23c3c" }], ["grass", { rough: "#9a7a3a" }], ["light", { light: 0.12 }], ["contrast and water", { contrast: 0.2, water: "#2a6a9a" }], ["brushwork", { paint: 0.3 }]] as const)
+      out[name] = await w.__dgPaintAgain(doc, s, { ...s, ...patch }, view);
+    return out;
+  });
+  console.log("painted again:", JSON.stringify(runs));
+  for (const [name, r] of Object.entries(runs)) expect(r.differ, `${name}: pixels unlike a whole new painting`).toBe(0);
+  for (const name of ["water", "path", "light"]) expect(runs[name].fastMs, `${name}: ${runs[name].fastMs} ms against ${runs[name].wholeMs}`).toBeLessThan(runs[name].wholeMs * 0.6);
+});
+
+test("a whole new painting shared out among workers on a computer: the same pixels as painted on the page alone", async () => {
+  await page.waitForFunction(() => typeof (window as any).__dgPaintBands === "function", null, { timeout: 60_000 });
+  const r = await page.evaluate(async () => {
+    const w = window as any, doc = w.__dgCourse();
+    return w.__dgPaintBands(doc, { cx: doc.canvas.width / 2, cy: doc.canvas.height / 2, rotation: 30, scale: 0.9, width: 1600, height: 1200 });
+  });
+  console.log("painted in bands:", JSON.stringify(r));
+  expect(r.differ, "pixels unlike the page's own painting").toBe(0);
+});
+
+test("underbrush from the import: more with How much, heavier with How thick, never on buildings, roads, paths, parking or water; a tap steps a patch lighter, then gone, then back; painted alike in workers", async () => {
+  await page.waitForFunction(() => typeof (window as any).__dgBrush === "function", null, { timeout: 60_000 });
+  const r = await page.evaluate(() => { const w = window as any; return w.__dgBrush(w.__dgCourse()); });
+  console.log("underbrush:", JSON.stringify({ ...r, areas: r.areas.length }));
+  expect(r.much[0], "acres at Only the surest").toBeGreaterThan(0);
+  for (let k = 1; k < 5; k++) expect(r.much[k], `acres at step ${k} of How much`).toBeGreaterThanOrEqual(r.much[k - 1]);
+  expect(r.much[4], "Every hint against Only the surest").toBeGreaterThan(r.much[0]);
+  expect(r.heavy[2], "heavy acres at Much thicker against Much thinner").toBeGreaterThan(r.heavy[0]);
+  expect(r.onNever, "blocks of brush on a building, road, path, parking or water").toBe(0);
+  expect(r.overBuilt, "brush areas over a building, a parking lot or a road").toBe(0);
+  // (heavy, medium, light, gone, then heavy again)
+  expect(r.taps).toEqual([...Array.from({ length: r.startsAt }, (_, k) => r.startsAt - 1 - k), r.startsAt]);
+  // (its bushes painted the same shared out among workers as on the page alone)
+  const p = await page.evaluate(async areas => {
+    const w = window as any, doc = w.__dgCourse();
+    return w.__dgPaintBands({ ...doc, items: [...doc.items, ...areas] }, { cx: doc.canvas.width * 0.7, cy: doc.canvas.height / 2, rotation: 0, scale: 1.2, width: 900, height: 700 });
+  }, r.areas);
+  console.log("underbrush painted:", JSON.stringify(p));
+  expect(p.differ, "pixels unlike the page's own painting").toBe(0);
+});
+
+test("painting areas: Remove cuts a wood drawn by points (a stroke across splits it, every corner it misses stays put), Add from inside grows it, underbrush steps a level a pass, a locked area never changes; Reshape with the brush is one undo", async () => {
+  await page.waitForFunction(() => typeof (window as any).__dgAreaBrush === "function" || typeof (window as any).__dgAreaBrush === "object", null, { timeout: 60_000 });
+  const r = await page.evaluate(() => {
+    const w = window as any, B = w.__dgAreaBrush, doc = w.__dgCourse();
+    const area = (pts: any[]) => { let s = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; s += p.x * q.y - q.x * p.y; } return Math.abs(s / 2); };
+    const inside = (p: any, pts: any[]) => { let c = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const a = pts[i], b = pts[j]; if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c; } return c; };
+    // (a wood drawn corner by corner: the biggest one that isn't underbrush)
+    const woods = doc.items.filter((i: any) => i.type === "area" && i.kind === "woods" && !(i.bushes >= 1) && !i.locked).sort((a: any, b: any) => area(b.points) - area(a.points))[0];
+    const xs = woods.points.map((p: any) => p.x), ys = woods.points.map((p: any) => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), midY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const across = B.strokeOutline([{ x: minX - 40, y: midY }, { x: maxX + 40, y: midY }], 12);
+    const cut = B.brushStroke(doc.items, { kind: "woods", brush: false }, "remove", across, { x: minX - 40, y: midY }, woods.id, []);
+    const after = B.applyEdit(doc.items, cut);
+    const pieces = after.filter((i: any) => i.id === woods.id || cut.add.some((a: any) => a.id === i.id));
+    const kept = new Set(pieces.flatMap((i: any) => i.points.map((p: any) => `${p.x},${p.y}`)));
+    const far = woods.points.filter((p: any) => Math.abs(p.y - midY) > 20);
+    // (Add from inside: the same wood, bigger)
+    const c = { x: woods.points.reduce((s: number, p: any) => s + p.x, 0) / woods.points.length, y: woods.points.reduce((s: number, p: any) => s + p.y, 0) / woods.points.length };
+    const out = woods.points.reduce((b: any, p: any) => (Math.hypot(p.x - c.x, p.y - c.y) > Math.hypot(b.x - c.x, b.y - c.y) ? p : b), woods.points[0]);
+    // (from just inside its edge, toward its farthest corner, out past it)
+    const along = (t: number) => ({ x: c.x + (out.x - c.x) * t, y: c.y + (out.y - c.y) * t });
+    let lastIn = 0;
+    for (let t = 0; t <= 1.2; t += 0.01) if (inside(along(t), woods.points)) lastIn = t;
+    const start = along(Math.max(0, lastIn - 0.03)), end = along(lastIn + 0.3);
+    const grow = B.brushStroke(doc.items, { kind: "woods", brush: false }, "add", B.strokeOutline([start, end], 15), start, null, []);
+    const grown = grow?.update.find((a: any) => a.id === woods.id);
+    // (underbrush: a level a pass, at a spot inside the heaviest patch)
+    const lvAt = (items: any[], p: any) => { let m = 0; for (const i of items) if (i.type === "area" && i.bushes >= 1 && inside(p, i.points)) m = Math.max(m, i.density === 0.5 ? 1 : i.density === 2 ? 3 : 2); return m; };
+    const brush = doc.items.filter((i: any) => i.type === "area" && i.bushes >= 1).sort((a: any, b: any) => (b.density ?? 1) - (a.density ?? 1) || area(b.points) - area(a.points))[0];
+    const bp = brush.points.reduce((s: any, p: any) => ({ x: s.x + p.x / brush.points.length, y: s.y + p.y / brush.points.length }), { x: 0, y: 0 });
+    const spot = inside(bp, brush.points) ? bp : brush.points[0];
+    const dab = B.strokeOutline([spot], 10);
+    let items = doc.items;
+    const steps = [lvAt(items, spot)];
+    for (const m of ["thinner", "thinner", "thicker"]) { const e = B.brushStroke(items, { kind: "woods", brush: true }, m, dab, spot, null, []); if (e) items = B.applyEdit(items, e); steps.push(lvAt(items, spot)); }
+    // (a locked wood: nothing)
+    const locked = B.brushStroke(doc.items.map((i: any) => (i.id === woods.id ? { ...i, locked: true } : i)), { kind: "woods", brush: false }, "remove", across, { x: minX - 40, y: midY }, null, []);
+    // (where the real stroke goes: well inside the wood, which needn't hold its box's middle, with
+    // 40 ft of wood either side)
+    const edgeGap = (p: any) => { let d = Infinity; for (let i = 0; i < woods.points.length; i++) { const a = woods.points[i], b = woods.points[(i + 1) % woods.points.length], dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1))); d = Math.min(d, Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy)); } return d; };
+    let deep: any = null;
+    for (let y = Math.min(...ys); y <= Math.max(...ys); y += 10) for (let x = minX; x <= maxX; x += 10) {
+      const p = { x, y };
+      if (inside(p, woods.points) && inside({ x: x - 40, y }, woods.points) && inside({ x: x + 40, y }, woods.points)) { const g = edgeGap(p); if (!deep || g > deep.g) deep = { ...p, g }; }
+    }
+    return {
+      pieces: pieces.length, before: Math.round(area(woods.points)), afterArea: Math.round(pieces.reduce((s: number, i: any) => s + area(i.points), 0)),
+      farKept: far.filter((p: any) => kept.has(`${p.x},${p.y}`)).length, far: far.length,
+      grown: !!grown && area(grown.points) > area(woods.points), sameId: !!grown,
+      steps, lockedTouched: !!locked && (locked.update.some((a: any) => a.id === woods.id) || locked.remove.includes(woods.id)),
+      woodsId: woods.id, mid: deep ? { x: deep.x, y: deep.y } : { x: (minX + maxX) / 2, y: midY }, box: { minX, minY: Math.min(...ys), maxX, maxY: Math.max(...ys) }
+    };
+  });
+  console.log("painting areas:", JSON.stringify({ ...r, mid: undefined, box: undefined }));
+  expect(r.pieces, "a stroke right across: two woods").toBeGreaterThanOrEqual(2);
+  expect(r.afterArea, "less wood after the cut").toBeLessThan(r.before);
+  expect(r.farKept, "corners the stroke didn't reach, still exactly where they were").toBe(r.far);
+  expect(r.grown && r.sameId, "Add from inside: the same wood, bigger").toBe(true);
+  const [s0, s1, s2, s3] = r.steps;
+  expect(s1, "a Thinner pass").toBe(Math.max(0, s0 - 1));
+  expect(s2, "another").toBe(Math.max(0, s0 - 2));
+  expect(s3, "a Thicker pass").toBe(Math.min(3, s2 + 1));
+  expect(r.lockedTouched, "a locked wood, changed").toBe(false);
+  // (Reshape with the brush, from the wood's panel, and a real drag across it: one undo puts it back)
+  // (on the Design step, where the panel is: the checks before leave the map on the Map step)
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "select" }));
+  await frame(page, r.box);
+  await draw(page, false);
+  await page.evaluate(id => (window as any).__dgActions.select(id), r.woodsId);
+  await page.getByTestId("reshape-brush").click();
+  await page.getByTestId("area-brush-remove").click();
+  const before = JSON.stringify((await course(page)).items.find((i: any) => i.id === r.woodsId).points);
+  const a = await at(page, r.mid.x - 30, r.mid.y, 0), b = await at(page, r.mid.x + 30, r.mid.y, 0);
+  expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName, [a.x, a.y]), "the stroke's start, on the map").toBe("CANVAS");
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(b.x, b.y, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => JSON.stringify((await course(page)).items.find((i: any) => i.id === r.woodsId)?.points), { message: "the wood after a stroke" }).not.toBe(before);
+  await page.getByTestId("reshape-done").click();
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => JSON.stringify((await course(page)).items.find((i: any) => i.id === r.woodsId)?.points), { message: "after one undo" }).toBe(before);
+});
+
+test("a refresh in a course comes back to it, on its step and printout; on the course list, to the list", async () => {
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "map", designTab: "sign", tool: "select" }));
+  await page.waitForTimeout(400);
+  const id = await page.evaluate(() => (window as any).__dgServer.state().id);
+  await page.reload();
+  await page.waitForFunction(() => (window as any).__dgCourse?.()?.holes?.length > 0 && !!(window as any).__dgServer?.state().id, null, { timeout: 60_000 });
+  await expect(page.getByTestId("home")).toBeHidden();
+  expect(await page.evaluate(() => [(window as any).__dgServer.state().id, (window as any).__dgEditor().step, (window as any).__dgEditor().designTab])).toEqual([id, "map", "sign"]);
+  // (on the list, refreshed: the list)
+  await page.getByTestId("logo-home").click();
+  await expect(page.getByTestId("home")).toBeVisible();
+  await page.reload();
+  await expect(page.getByTestId("home")).toBeVisible({ timeout: 30_000 });
+  // (back in the course for the checks after)
+  await page.getByTestId("back-to-course").click();
+  await expect(page.getByTestId("home")).toBeHidden();
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "select" }));
+});
+
+test("the browser's Back and Forward go through the steps, and between a course and Courses", async () => {
+  const step = () => page.evaluate(() => (window as any).__dgEditor().step);
+  for (const s of ["design", "map", "export"]) {
+    await page.evaluate(to => (window as any).__dgEditor().set({ step: to, tool: "select" }), s);
+    await page.waitForTimeout(150);
+  }
+  await page.goBack();
+  await expect.poll(step).toBe("map");
+  await page.goBack();
+  await expect.poll(step).toBe("design");
+  await page.goForward();
+  await expect.poll(step).toBe("map");
+  await page.getByTestId("logo-home").click();
+  await expect(page.getByTestId("home")).toBeVisible();
+  await page.goBack();
+  await expect(page.getByTestId("home")).toBeHidden();
+  await expect.poll(step).toBe("map");
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "select" }));
+});
+
+test("Hand painted's trees on the graphics chip: two paintings at once, and one stopped part way, each whole, as if painted alone", async () => {
+  test.setTimeout(300_000);
+  // (a browser of its own with an emulated graphics chip, as the check below has: the trees are
+  // painted on the chip only where there is one)
+  const b = await chromium.launch({ args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+  const ctx = await b.newContext({ baseURL: "http://localhost:4176", viewport: { width: 1280, height: 820 }, storageState: await page.context().storageState() });
+  const p2 = await ctx.newPage();
+  try {
+    await p2.goto("/");
+    const demo = await (await p2.request.get("/example/course.json")).json();
+    await p2.evaluate(d => (window as any).__dgServer.start(d), demo);
+    await p2.waitForFunction(() => (window as any).__dgCourse?.()?.holes?.length > 0 && typeof (window as any).__dgPaintTogether === "function", null, { timeout: 60_000 });
+    const r = await p2.evaluate(async () => {
+      const w = window as any, doc = w.__dgCourse();
+      const s = { ...doc.style, mapLook: "handpainted", lookParts: { ...doc.style.lookParts, trees: { ...doc.style.lookParts?.trees, style: "brushed" } } };
+      const mid = { cx: doc.canvas.width / 2, cy: doc.canvas.height / 2, rotation: 0 };
+      // (a stretch of woods, small: the emulated chip is slow)
+      return w.__dgPaintTogether({ ...doc, style: s }, { ...mid, scale: 1.2, width: 300, height: 240 }, { ...mid, scale: 1.5, width: 240, height: 300 });
+    });
+    console.log("painted together:", JSON.stringify(r));
+    expect(r.a, "the first of two at once").toBe(0);
+    expect(r.b, "the second of two at once").toBe(0);
+    expect(r.afterStopped, "after one stopped part way").toBe(0);
+  } finally { await b.close(); }
 });
 
 test("Hand painted: the demo (made before) stays Classic, a new course starts in Hand painted, and its map paints in time", async () => {

@@ -3,7 +3,7 @@
 import { PlaceByGps } from "./PlaceByGps";
 import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, Plane, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
+import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES } from "../constants";
 import { areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
@@ -25,7 +25,7 @@ import type { AmenityKind, AreaItem, CourseDoc, CourseItem, FenceStyle, FieldKin
 import { fieldInks, fieldPlan, LEAGUE_ORDER, LEAGUES } from "../lib/fieldPlan";
 import { ElevationProfile } from "./ElevationProfile";
 import { TreeSettings } from "./TreeSettings";
-import { HoleFlight } from "./FlyoverSettings";
+import { FlyoverRow } from "./FlyoverSettings";
 import { HoleChips } from "./ApplyToHoles";
 import { HoleSteps } from "./HoleSteps";
 import { getView } from "../state/view";
@@ -40,7 +40,7 @@ const commit = () => useCourse.getState().commit();
 
 /** A gentle curve for a hole: one turn halfway along, off to the left (-1) or right (1) by a
  * sixth of its length (its handle drags it on from there). */
-const bendHole = (line: P[], side: 1 | -1): P[] => {
+export const bendHole = (line: P[], side: 1 | -1): P[] => {
   const a = line[0], b = line[line.length - 1];
   const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
   const off = (len / 6) * side;
@@ -48,7 +48,7 @@ const bendHole = (line: P[], side: 1 | -1): P[] => {
 };
 
 /** A hole's number in its badge, typed in (kept on Enter or when the field is left; Esc puts it back). */
-function HoleNumberInput({ holeId, value }: { holeId: string; value: string }) {
+export function HoleNumberInput({ holeId, value }: { holeId: string; value: string }) {
   const [text, setText] = useState(value);
   // (Esc: the field is left without keeping what was typed)
   const cancelled = useRef(false);
@@ -179,7 +179,7 @@ const GrowButton = ({ mark, title, onClick, testid }: { mark: ReactNode; title: 
 /** How many times, in words: "once", "twice", "3 times". */
 const times = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} times`);
 
-function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
+export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
   const doc = useCourse(s => s.doc);
   const s = useMemo(() => holeStats(doc, hole), [doc, hole]);
   const label = holeLabel(doc, hole.id);
@@ -217,14 +217,21 @@ function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
             <Stat label="Plays like" value={fmtDist(s.playsLike, u)} />
           </div>
         )}
-        <div className="grid grid-cols-3 gap-1.5 mt-2">
+        {/* (Play flyover is in its Flyover row, with Edit flyover) */}
+        <div className="grid grid-cols-2 gap-1.5 mt-2">
           {s.complete && <Button small full onClick={() => useEditor.getState().set({ teeView: hole.id, flyover: false })} testid="tee-view"><Eye size={14} /> Tee view</Button>}
-          {s.complete && <Button small full onClick={() => useEditor.getState().set({ teeView: hole.id, flyover: true })} testid="flyover"><Plane size={14} /> Fly over</Button>}
           <Button small full onClick={() => getView()?.fitHole(hole.id)} testid="zoom-hole"><Maximize2 size={14} /> Zoom to it</Button>
-          <OnSiteButton holeId={hole.id} className="col-span-3 w-full" />
+          <OnSiteButton holeId={hole.id} className="col-span-2 w-full" />
         </div>
         {doc.lidar && s.complete && <HoleTrees hole={hole} line={s.line} />}
       </Section>
+      {/* (first, under the hole's name: the flyover is the hole's, and Edit flyover is never a scroll
+          away) */}
+      {s.complete && (
+        <Section title="Flyover" help="flyover" testid="sec-flyover">
+          <FlyoverRow hole={hole} />
+        </Section>
+      )}
       <HoleParts hole={hole} part={part}>
         {(() => {
           // (the layout worked on, on a hole with no tee of its color: played from the nearest)
@@ -271,7 +278,7 @@ function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
           <Segmented label="Foliage" value={hole.foliage ?? "auto"} onChange={v => set({ foliage: v === "auto" ? undefined : (v as "light" | "heavy") })} options={[{ value: "auto", label: auto(`Auto · ${s.foliage}`) }, { value: "light", label: "Light" }, { value: "heavy", label: "Heavy" }]} />
         </Field>
       </Section>
-      <Section title="Fairway and line of play" help="fairway">
+      <Section title="Fairway and line of play" help="fairway" testid="sec-fairway">
         <Toggle label="Draw the fairway" checked={hole.fairway} onChange={v => set({ fairway: v })} />
         {hole.fairway && (
           <>
@@ -305,7 +312,7 @@ function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
         )}
       </Section>
       {s.complete && (
-        <Section title="In play" help="in-play">
+        <Section title="In play" help="in-play" testid="sec-inplay">
           <ul className="text-xs text-zinc-300 space-y-1" data-testid="hole-in-play">
             <li>{s.treesOnLine ? `${s.treesOnLine} tree${s.treesOnLine === 1 ? "" : "s"} on the throw line` : "Clear throw line"} · {s.treesInFairway} tree{s.treesInFairway === 1 ? "" : "s"} in the fairway</li>
             <li>{s.obInPlay ? `OB in play${s.obCrossed ? `: the throw line crosses it ${times(s.obCrossed)}` : ""}` : "No OB in play"}{s.obNearBasket ? ` · OB within ${fmtDist(CIRCLE_ONE_FT, u)} of the basket` : ""}</li>
@@ -323,11 +330,6 @@ function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
         <Field label="Name (optional)"><TextInput label="Hole name" value={hole.name ?? ""} placeholder="e.g. The Gauntlet" onChange={v => set({ name: v || undefined }, false)} onDone={commit} /></Field>
         <Field label="Notes and hole rules"><TextInput area label="Hole notes" value={hole.notes ?? ""} placeholder="e.g. OB left of the path. Mando right of the big oak; drop zone by the bench." onChange={v => set({ notes: v || undefined }, false)} onDone={commit} /></Field>
       </Section>
-      {s.complete && (
-        <Section title="Flyover" help="flyover">
-          <HoleFlight hole={hole} />
-        </Section>
-      )}
     </>
   );
 }
@@ -379,7 +381,7 @@ export function GrowsPick({ item, row = false }: { item: AreaItem; row?: boolean
 }
 
 /** A stand's species, when it grows only leafy trees or only pines: any of the course's kinds, or one. */
-function StandSpecies({ item }: { item: AreaItem }) {
+export function StandSpecies({ item }: { item: AreaItem }) {
   const shape = standShape(item);
   if (!shape) return null;
   const list = SPECIES[shape];
@@ -431,9 +433,8 @@ export const homeText = (a: AreaItem) => (a.plate ? "Placed by hand" : `Corner $
 /** A line's height, named for what it is (its panel and a phone's strip). */
 export const heightLabel = (k: LineKind) => (k === "power" ? "Wire height" : "Height");
 
-/** A field, court or play area's own settings: in or out of play, its markings turned, a ball
- * field's home plate. */
-function FieldSettings({ item, kind }: { item: AreaItem; kind: FieldKind }) {
+/** A field's or court's size, how many courts and their colors (its panel and a phone's bar). */
+export function FieldLooks({ item, kind }: { item: AreaItem; kind: FieldKind }) {
   const set = (patch: Partial<AreaItem>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
   const league = useMemo(() => (isBallField(kind) ? fieldPlan(item)?.league : undefined), [item, kind]);
   const n = courtCount(kind, item.points);
@@ -454,6 +455,20 @@ function FieldSettings({ item, kind }: { item: AreaItem; kind: FieldKind }) {
           <ChipPick label="Colors" testid="field-colors" value={item.courtColors ?? "blue"} onChange={v => set({ courtColors: v === "blue" ? undefined : v })} options={[{ value: "blue", label: "Blue in green" }, { value: "green", label: "All green" }, { value: "red", label: "Red and green" }]} />
         </Field>
       )}
+    </>
+  );
+}
+/** Whether a field has any of those. */
+export const hasFieldLooks = (kind: FieldKind) => isBallField(kind) || kind === "tennis" || kind === "pickleball" || kind === "basketball";
+
+/** A field, court or play area's own settings: in or out of play, its markings turned, a ball
+ * field's home plate. */
+function FieldSettings({ item, kind }: { item: AreaItem; kind: FieldKind }) {
+  const set = (patch: Partial<AreaItem>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
+  const league = useMemo(() => (isBallField(kind) ? fieldPlan(item)?.league : undefined), [item, kind]);
+  return (
+    <>
+      <FieldLooks item={item} kind={kind} />
       <FieldParts item={item} kind={kind} league={league} />
       <Field label="Play" help="park">
         <Segmented label="Play" value={item.outOfPlay ? "out" : "in"} onChange={v => setFieldPlay(item.id, v === "out")} options={[...PLAY_OPTIONS]} />
@@ -595,7 +610,7 @@ export const obOptions = (item: AreaItem | LineItem): { value: ObChoice; label: 
 
 /** Whether water, a creek, a road, a fence or a path is out of bounds (and shown so on the map);
  * a line OB beyond it too, and along all of it or stretches of it. */
-function ObPick({ item }: { item: AreaItem | LineItem }) {
+export function ObPick({ item }: { item: AreaItem | LineItem }) {
   const doc = useCourse(s => s.doc);
   const units = doc.units;
   const line = item.type === "line" ? item : null;
@@ -862,6 +877,13 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
             </Field>
           )}
           {fk && <FieldSettings item={item} kind={fk} />}
+          {/* (its shape painted: added to or taken from with the brush, this one only) */}
+          {!fk && item.kind !== "building" && !item.locked && (
+            <Button small full testid="reshape-brush" title="Paint this area bigger or smaller, or a section thinner or thicker, with the brush" onClick={() => {
+              const brush = item.kind === "woods" && (item.bushes ?? 0) >= 1;
+              useEditor.getState().set({ tool: "draw-area", areaKind: item.kind, standOf: brush ? "bush" : null, ...(brush ? { treeKind: "bush" as const } : {}), drawShape: "paint", reshapeId: item.id, areaBrush: "add" });
+            }}><Brush size={14} /> Reshape with the brush</Button>
+          )}
           {(item.kind === "woods" || item.kind === "rough") && <WoodsSettings item={item} />}
           {hasObChoice(item) && <ObPick item={item} />}
           {item.kind === "ob" && holePicker("OB for", "All holes")}
@@ -992,8 +1014,8 @@ export function useSelection() {
   const selectedId = useEditor(e => e.selectedId);
   const teeView = useEditor(e => e.teeView);
   // (tee view, editing: what's picked there has its panel too; not the hole, which has its card
-  // and its Flyover settings in the view already)
-  const teeEditing = useEditor(e => !e.flyover);
+  // in the view already; none in the Flyover editor, whose panel is its own)
+  const teeEditing = useEditor(e => !e.flyover && !e.flyCam);
   const tool = useEditor(e => e.tool);
   const ids = useEditor(e => e.group);
   const hole = doc.holes.find(h => h.id === selectedId);
@@ -1095,10 +1117,12 @@ export function SelectionHeader({ back }: { back?: string }) {
 /** What's picked, on Design: down the map's left side next to the hole list (slim while this
  * shows), so the map's middle and right stay clear to work on. (On Site it takes the step's panel.) */
 export function Inspector() {
-  const { open } = useSelection();
-  if (!open) return null;
+  const { open, hole, item, group } = useSelection();
+  const teeView = useEditor(e => !!e.teeView);
+  // (tee view: the hole is in its Flyover panel; a thing selected there, its panel at the left edge)
+  if (!open || (teeView && hole && !item && !group.length)) return null;
   return (
-    <aside className="absolute top-3 left-[76px] w-[300px] max-h-[calc(100%-24px)] flex flex-col glass rounded-[22px] shadow-xl shadow-black/40 z-20" data-testid="inspector" aria-label="Selection">
+    <aside className={`absolute top-3 ${teeView ? "left-3" : "left-[76px]"} w-[300px] max-h-[calc(100%-24px)] flex flex-col glass rounded-[22px] shadow-xl shadow-black/40 z-20`} data-testid="inspector" aria-label="Selection">
       <SelectionHeader />
       <div className="overflow-y-auto min-h-0">
         <InspectorBody />

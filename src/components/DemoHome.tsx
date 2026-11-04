@@ -7,6 +7,7 @@
 // The back door (#example-admin on the address): the open course made the example everyone gets,
 // cleaned of where it is, published to the demo's code with a GitHub key typed in then and there
 // (never kept), or saved as files.
+import { placeBefore } from "../state/tabPlace";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
 import { ArrowLeft, BookOpen, Compass, Download, FolderOpen, Loader2, Plus, RotateCcw, Search, Trash2, Upload } from "lucide-react";
@@ -27,7 +28,8 @@ import { useTouch } from "./useLayout";
 import { Woods } from "./Woods";
 import { DEMO_ADDS, REPO } from "./DemoNote";
 
-export const useDemoHome = create<{ open: boolean }>(() => ({ open: !SERVER && !startsBlank() }));
+// (a tab refreshed in the course: back in it, not on the home page)
+export const useDemoHome = create<{ open: boolean }>(() => ({ open: !SERVER && !startsBlank() && !placeBefore }));
 /** Back to the demo's Courses page. */
 export const goDemoHome = () => useDemoHome.setState({ open: true });
 const close = () => useDemoHome.setState({ open: false });

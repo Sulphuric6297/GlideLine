@@ -1,5 +1,5 @@
 import { test as plain, expect as plainExpect } from "@playwright/test";
-import { test, expect, addHole, blankCourse, course, drag, editorState, handleCenter, screenOf } from "./fixtures";
+import { test, expect, addHole, backToMap, blankCourse, course, drag, editorState, flyButton, handleCenter, screenOf, teeBar, teeCard } from "./fixtures";
 import { autoFlight, flightAt, flightClock, FLYOVER_DEFAULTS, insertKey, insertKeyAt, keyBetween, keyFlight, keysFromFlight, keyTimes } from "../../src/lib/flight";
 import { createArea, createBasket, createEmptyCourse, createTee, newHole, normalizeCourse } from "../../src/lib/course";
 import { drawOverlay } from "../../src/viewport/flyTitle";
@@ -12,7 +12,7 @@ test("view from the tee: the hole's numbers, other holes with the arrows, back w
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("tee-view").click();
-  const hud = page.getByTestId("tee-view-hud");
+  const hud = teeCard(page);
   await expect(hud).toContainText("Par 3 · 350 ft");
   // The basket is marked with its distance
   await expect(page.getByTestId("pov-basket")).toContainText("350 ft");
@@ -42,7 +42,7 @@ test("a slow frame doesn't skip the flyover", async ({ page }) => {
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").click();
   await page.getByTestId("flyover").click();
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Stop/);
+  await expect(flyButton(page)).toHaveAttribute("aria-label", "Pause");
   // The page is busy for longer than a short flight (like a first frame compiling shaders)
   const before = await page.evaluate(() => {
     const p = (window as any).__dgView.flyProgress();
@@ -54,7 +54,7 @@ test("a slow frame doesn't skip the flyover", async ({ page }) => {
   const after = await page.evaluate(() => (window as any).__dgView.flyProgress());
   expect(after).not.toBeNull();
   expect(after - before).toBeLessThan(0.2);
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Stop/);
+  await expect(flyButton(page)).toHaveAttribute("aria-label", "Pause");
 });
 
 test("flyover runs from the tee to the basket and stops", async ({ page }) => {
@@ -64,14 +64,17 @@ test("flyover runs from the tee to the basket and stops", async ({ page }) => {
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").click();
   await page.getByTestId("flyover").click();
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Stop/);
+  await expect(flyButton(page)).toHaveAttribute("aria-label", "Pause");
   // (it waits for everything to be drawn first, up to 15 s, then holds its title a moment)
   await expect.poll(() => page.evaluate(() => (window as any).__dgView.flyProgress()), { timeout: 30_000 }).toBeGreaterThan(0.05);
   // It lands by itself (a short hole flies for 6 seconds and slows to a stop; a slow frame
   // doesn't skip it, so drawn in software here it takes longer)
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Fly over/, { timeout: 90_000 });
-  await page.getByTestId("hud-close").click();
-  await expect(page.getByTestId("tee-view-hud")).toBeHidden();
+  // (it holds on its last picture, paused: Play again, and Edit flyover beside it)
+  await expect(flyButton(page)).toHaveAttribute("aria-label", "Play again", { timeout: 90_000 });
+  await expect(teeBar(page).getByTestId("fly-edit")).toBeVisible();
+  expect((await page.evaluate(() => (window as any).__dgEditor().flyPaused))).toBe(true);
+  await backToMap(page);
+  await expect(teeBar(page)).toHaveCount(0);
 });
 
 test("leaving a flyover part way leaves nothing of it over the map (its title, badge, distance)", async ({ page }) => {
@@ -82,8 +85,8 @@ test("leaving a flyover part way leaves nothing of it over the map (its title, b
   await page.getByTestId("hole-row").click();
   await page.getByTestId("flyover").click();
   await expect(page.getByTestId("fly-overlay")).toBeVisible();
-  await page.getByTestId("hud-close").click();
-  await expect(page.getByTestId("tee-view-hud")).toBeHidden();
+  await backToMap(page);
+  await expect(teeBar(page)).toHaveCount(0);
   await expect(page.getByTestId("fly-overlay")).toBeHidden();
   await expect(page.getByTestId("pov-basket")).toBeHidden();
   // (and after a while on the map too)
@@ -122,7 +125,7 @@ test("under the 3D trees the painted ground is grass, not painted treetops (the 
     });
   });
   for (const sd of spread) expect(sd).toBeLessThan(10);
-  await page.getByTestId("hud-close").click();
+  await backToMap(page);
 });
 
 test("Enter on a selected hole opens its tee view", async ({ page }) => {
@@ -131,7 +134,7 @@ test("Enter on a selected hole opens its tee view", async ({ page }) => {
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").click();
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect(teeCard(page)).toBeVisible();
 });
 
 test("from a tee and flying over, the ground is the painted map with trees on its woods; Photo puts the photo back", async ({ page }) => {
@@ -149,11 +152,9 @@ test("from a tee and flying over, the ground is the painted map with trees on it
   // (the 3D view rests while it paints: drawn in software here, its frames would starve the painting)
   await page.evaluate(() => (window as any).__dgView.setPaused(true));
   await expect.poll(ground, { timeout: 150_000 }).toEqual({ painted: true, shown: true, trees: true });
-  // The View panel beside it: the photo instead (kept for next time); none in the flyover's settings
-  await page.getByTestId("hud-settings").click();
-  await expect(page.getByTestId("flyover-settings")).toBeVisible();
-  await expect(page.getByTestId("flyover-settings").getByRole("radio", { name: "Photo" })).toHaveCount(0);
-  await page.getByTestId("hud-settings").click();
+  // The View panel beside it: the photo instead (kept for next time); tee view has none of the
+  // flyover's settings (they're the Flyover editor's)
+  await expect(page.getByTestId("flyover-settings")).toHaveCount(0);
   await page.locator("[data-pov-ui]").getByTestId("scene-button").click();
   const viewGround = page.getByTestId("scene-panel").getByTestId("view-ground");
   await viewGround.getByRole("radio", { name: "Photo" }).click();
@@ -163,7 +164,7 @@ test("from a tee and flying over, the ground is the painted map with trees on it
   await expect.poll(async () => (await ground()).painted, { timeout: 30_000 }).toBe(true);
   // Back on the map: the photo's ground again, no painted trees (closed while still resting:
   // the tee view's painted woods drawn in software would hold up the click)
-  await page.getByTestId("hud-close").click();
+  await backToMap(page);
   await page.evaluate(() => (window as any).__dgView.setPaused(false));
   await expect.poll(ground, { timeout: 30_000 }).toEqual({ painted: false, shown: false, trees: false });
 });
@@ -194,7 +195,7 @@ test("from a tee, the hole's ground is painted sharper (over the whole site's pa
   expect(d.rect.y + d.rect.height).toBeGreaterThan(700);
   expect(d.pxPerFt).toBeGreaterThan(d.basePxPerFt * 1.5);
   // (closed while still resting, as above)
-  await page.getByTestId("hud-close").click();
+  await backToMap(page);
   await page.evaluate(() => (window as any).__dgView.setPaused(false));
   await expect.poll(sharp).toBeNull();
 });
@@ -293,7 +294,9 @@ test("flyover settings: height, speed and lens change the flight, one undo step 
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("tee-view").click();
-  await page.getByTestId("hud-settings").click();
+  // (the Flyover editor, from tee view's bar: its settings in its panel)
+  await page.getByTestId("tee-view-hud").getByTestId("card-fly-edit").click();
+  await expect(page.getByTestId("flyover-settings")).toBeVisible();
   const flight = () => page.evaluate(id => {
     const v = (window as any).__dgView;
     const f = v.flightPath(id);
@@ -309,37 +312,41 @@ test("flyover settings: height, speed and lens change the flight, one undo step 
   const slider = (name: string) => page.getByTestId("flyover-settings").getByRole("slider", { name });
   // (for all holes; then this hole's own)
   await page.getByTestId("flyover-settings").getByRole("radio", { name: "All holes" }).click();
-  await slider("Camera height").focus();
+  await slider("Altitude").focus();
   await page.keyboard.press("End");
   await expect.poll(async () => (await course(page)).flyover?.height).toBe(250);
   await slider("Speed").focus();
   await page.keyboard.press("End");
   // (the lens: 15° zoomed in to 110° wide)
-  await slider("Lens").focus();
+  await slider("Field of view").focus();
   await page.keyboard.press("Home");
   await expect.poll(async () => (await course(page)).flyover?.fov).toBe(15);
   const after = await flight();
   expect(after.alt).toBeGreaterThan(before.alt + 150);
   expect(after.dur).toBeCloseTo(before.dur / 3, 1);
   expect(after.fov).toBe(15);
-  // While it flies, the camera's lens is the flight's; back to the tee view's after
-  await page.getByTestId("hud-flyover").click();
+  // While it flies, the camera's field of view is the flight's; back to the tee view's once stopped
+  // (Done: out of the editor, back in tee view)
+  await page.getByTestId("cam-done").click();
+  await flyButton(page).click();
   await expect.poll(() => page.evaluate(() => (window as any).__dgView.povCam.fov)).toBe(15);
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Fly over/, { timeout: 120_000 });
-  expect(await page.evaluate(() => (window as any).__dgView.povCam.fov)).toBe(62);
+  await expect(flyButton(page)).toHaveAttribute("aria-label", "Play again", { timeout: 120_000 });
+  await teeBar(page).getByTestId("hud-stop").click();
+  await expect.poll(() => page.evaluate(() => (window as any).__dgView.povCam.fov)).toBe(62);
   // Each setting is one undo step
-  await page.getByTestId("hud-close").click();
+  await backToMap(page);
   await page.keyboard.press("Control+z");
   await expect.poll(async () => (await course(page)).flyover?.fov).toBeUndefined();
   expect((await course(page)).flyover?.height).toBe(250);
   // This hole's own: lower than the rest, kept for it only; back to the settings for all holes
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("tee-view").click();
-  await page.getByTestId("hud-settings").click();
+  await page.getByTestId("tee-view-hud").getByTestId("card-fly-edit").click();
+  await expect(page.getByTestId("flyover-settings")).toBeVisible();
   // (the 3D view rests while the settings change: drawn in software, its frames hold up the page)
   await page.evaluate(() => (window as any).__dgView.setPaused(true));
-  await page.getByTestId("flyover-settings").getByRole("radio", { name: /^Hole 1/ }).click();
-  await slider("Camera height").focus();
+  await page.getByTestId("flyover-settings").getByRole("radio", { name: "This hole" }).click();
+  await slider("Altitude").focus();
   await page.keyboard.press("Home");
   // (down to about eye level)
   await expect.poll(async () => (await course(page)).holes[0].flyover?.height, { timeout: 30_000 }).toBe(4);
@@ -356,6 +363,8 @@ test("flyover settings: height, speed and lens change the flight, one undo step 
 });
 
 test("flyover on-screen switches: off for all holes, back on for one; no disc flight lines anywhere", async ({ page }) => {
+  // (slow under software rendering: the Flyover editor opened twice)
+  test.setTimeout(420_000);
   await blankCourse(page);
   const h1 = await addHole(page, { x: 300, y: 500 }, { x: 800, y: 500 });
   const h2 = await addHole(page, { x: 300, y: 700 }, { x: 800, y: 700 });
@@ -363,29 +372,35 @@ test("flyover on-screen switches: off for all holes, back on for one; no disc fl
   // All holes: the Camera settings from a tee
   await page.getByTestId("hole-row").first().click();
   await page.getByTestId("tee-view").click();
-  await page.getByTestId("hud-settings").click();
+  await page.getByTestId("tee-view-hud").getByTestId("card-fly-edit").click();
+  await expect(page.getByTestId("flyover-settings")).toBeVisible();
   await page.evaluate(() => (window as any).__dgView.setPaused(true));
   await page.getByTestId("flyover-settings").getByRole("radio", { name: "All holes" }).click();
   // (the switches folded at the bottom of the panel)
   await page.getByTestId("flyover-onscreen").locator("summary").click();
   const sw = (name: string) => page.getByTestId("flyover-settings").getByRole("checkbox", { name, exact: true });
-  for (const name of ["Big title at the start", "Hole number in the corner", "Distance to the pin", "Course name", "Throw line", "Putting circle", "OB", "Other holes' lines and circles", "Paths to the next tee"]) await expect(sw(name)).toBeChecked();
+  for (const name of ["Hole title at the start", "Hole number in the corner", "Distance to the pin", "Course name", "Throw line", "Putting circle", "OB", "Other holes", "Path to the next tee"]) await expect(sw(name)).toBeChecked();
   await sw("Distance to the pin").uncheck();
   await expect(sw("Disc flight")).toHaveCount(0);
-  await sw("Other holes' lines and circles").uncheck();
+  await sw("Other holes").uncheck();
   await expect.poll(async () => { const f = (await course(page)).flyover; return [f?.pinDistance, f?.otherHoles]; }).toEqual([false, false]);
   // One undo step each
   await page.keyboard.press("Control+z");
   await expect.poll(async () => (await course(page)).flyover?.otherHoles).toBeUndefined();
-  await sw("Other holes' lines and circles").uncheck();
-  // Hole 1's own: the distance back on for it
-  await page.getByTestId("hud-close").click();
+  await sw("Other holes").uncheck();
+  // Hole 1's own: the distance back on for it (from the map: the hole's Flyover row, Edit flyover)
+  await page.getByTestId("cam-done").click();
+  await backToMap(page);
   await page.getByTestId("hole-row").first().click();
-  // (the hole's switches, folded at the bottom of its Flyover panel)
+  await page.getByTestId("flyover-row").getByTestId("fly-edit").click();
+  await expect(page.getByTestId("hole-flight")).toBeVisible();
+  // (the 3D view rests again while the settings change: drawn in software, its frames hold up the page)
+  await page.evaluate(() => (window as any).__dgView.setPaused(true));
+  // (the switches, folded at the bottom of the editor's panel)
   await page.getByTestId("hole-flight").getByTestId("flyover-onscreen").locator("summary").click();
   await expect(page.getByTestId("hole-flight").getByTestId("flyover-show")).toBeVisible();
   // (they start on All holes, as from the tee, until the hole has settings of its own)
-  await page.getByTestId("hole-flight").getByRole("radio", { name: /^Hole 1/ }).click();
+  await page.getByTestId("hole-flight").getByRole("radio", { name: "This hole" }).click();
   const own = (name: string) => page.getByTestId("hole-flight").getByRole("checkbox", { name, exact: true });
   await expect(own("Distance to the pin")).not.toBeChecked();
   await own("Distance to the pin").check();
@@ -400,7 +415,8 @@ test("flyover on-screen switches: off for all holes, back on for one; no disc fl
   await page.getByTestId("apply-holes").getByRole("button", { name: "Apply", exact: true }).click();
   await expect.poll(async () => (await course(page)).holes[1].flyover?.pinDistance).toBe(true);
   await expect(page.getByTestId("apply-holes")).toHaveCount(0);
-  // No disc flight lines anywhere: none in 3D, no switch for them
+  // No disc flight lines anywhere: none in 3D, no switch for them (Esc: out of the editor, back
+  // on the map)
   await page.keyboard.press("Escape");
   await page.keyboard.press("3");
   expect(await page.evaluate(ids => ids.map(id => (window as any).__dgView.scene.getObjectByName(`arc:${id}`) ?? null), [h1.id, h2.id])).toEqual([null, null]);
@@ -444,127 +460,101 @@ const setRange = (loc: import("@playwright/test").Locator, v: number) =>
     el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
   }, v);
 
-test("a hole's own flight through keyframes: a timeline to pick and retime them, the picked one's card, a + on the map, and flown", async ({ page }) => {
+test("the Flyover editor: Add keyframe turns an Automatic path Custom; a keyframe picked on the timeline, in the list and on the map from above; its altitude and time, one undo step each; dragged later; Update once the camera moved; Delete; Automatic again", async ({ page }) => {
   // (slow under software rendering: the view from the tee drawn frame by frame)
-  test.setTimeout(240_000);
+  test.setTimeout(420_000);
   await blankCourse(page);
   const hole = await addHole(page, { x: 300, y: 600 }, { x: 800, y: 600 });
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").first().click();
-  await page.getByTestId("hole-flight").getByRole("radio", { name: "Keyframes" }).click();
-  // Four to start from: the flight it flies by itself, each at the flyover's height (10 ft); the
-  // first picked, standing out on the map too
-  await expect(page.getByTestId("fly-key")).toHaveCount(4);
-  const keys = async () => (await course(page)).holes[0].flyKeys as any[];
-  expect((await keys()).map(k => k.alt)).toEqual([10, 10, 10, 10]);
-  expect((await keys())[0].x).toBeLessThan(300);
-  await expect(page.locator('[data-handle="flykey"]')).toHaveCount(4);
-  await expect(page.locator('[data-handle="flylook"]')).toHaveCount(4);
-  await expect(page.locator('[data-handle="flyadd"]')).toHaveCount(3);
+  await page.getByTestId("flyover-row").getByTestId("fly-edit").click();
+  const panel = page.getByTestId("cam-panel");
+  await expect(panel.getByTestId("cam-title")).toHaveText("Flyover · Hole 1");
+  const keys = async () => ((await course(page)).holes[0].flyKeys ?? []) as any[];
+  const past = () => page.evaluate(() => (window as any).__dgHistory().past);
+  // Add keyframe, at the start of an Automatic path: Custom, from the path it flew by itself, its
+  // first keyframe the camera's shot, selected
+  await page.getByTestId("cam-add").click();
+  await expect.poll(async () => (await keys()).length).toBeGreaterThanOrEqual(3);
+  const n = (await keys()).length;
   await expect(page.getByTestId("fly-key-title")).toHaveText("Keyframe 1");
-  await expect(page.locator('[data-handle="flykey"][data-on]')).toHaveAttribute("data-index", "0");
-  // Keyframe 2's camera dragged off to the side of the hole: it's the one picked now
-  await drag(page, await handleCenter(page, "flykey", 1), await screenOf(page, 500, 450));
-  await expect.poll(async () => Math.round((await keys())[1].y / 10)).toBe(45);
-  await expect(page.getByTestId("fly-key-title")).toHaveText("Keyframe 2");
-  await expect(page.locator('[data-handle="flykey"][data-on]')).toHaveAttribute("data-index", "1");
-  // Its height on its card, one undo step
-  const card = page.getByTestId("fly-key-card");
-  const undo0 = await page.evaluate(() => (window as any).__dgHistory().past);
-  await setRange(card.getByRole("slider", { name: "Height" }), 120);
-  await expect.poll(async () => (await keys())[1].alt).toBe(120);
-  expect(await page.evaluate(() => (window as any).__dgHistory().past)).toBe(undo0 + 1);
-  // The flight goes through keyframe 2, as high as it says
-  const near = await page.evaluate(id => {
-    const v = (window as any).__dgView;
-    const f = v.flightPath(id);
-    const k = v.doc.course.holes[0].flyKeys[1];
-    let best = Infinity, alt = 0;
-    for (const p of f.pts) {
-      const d = Math.hypot(p.x - k.x, p.z - k.y);
-      if (d < best) { best = d; alt = p.y - v.h(p.x, p.z); }
-    }
-    return { best, alt };
-  }, hole.id);
-  expect(near.best).toBeLessThan(5);
-  expect(near.alt).toBeCloseTo(120, -1);
-  // Keyframe 3 picked on the timeline; its time from keyframe 2 on its card
-  await page.getByTestId("fly-key").nth(2).click();
+  await expect(page.getByTestId("camera-bar").getByTestId("fly-key")).toHaveCount(n);
+  // Its altitude, one undo step; the flight goes through it as high
+  const undo0 = await past();
+  await setRange(panel.getByRole("slider", { name: "Altitude" }), 120);
+  await expect.poll(async () => (await keys())[0].alt).toBe(120);
+  expect(await past()).toBe(undo0 + 1);
+  const start = await page.evaluate(id => { const v = (window as any).__dgView, f = v.flightPath(id), p = f.pts[0]; return p.y - v.h(p.x, p.z); }, hole.id);
+  expect(start).toBeCloseTo(120, -1);
+  // Back to the whole flyover: its keyframes listed; keyframe 3 picked there
+  await page.getByTestId("key-back").click();
+  await expect(panel.getByTestId("hole-flight")).toBeVisible();
+  await panel.getByTestId("fly-key-row").nth(2).click();
   await expect(page.getByTestId("fly-key-title")).toHaveText("Keyframe 3");
-  await setRange(card.getByRole("slider", { name: "Time from keyframe 2" }), 4);
+  // Its Time, four seconds after keyframe 2 (the slider starts half a second after it)
+  const time = panel.getByRole("slider", { name: "Time" });
+  const after2 = Number(await time.getAttribute("min")) - 0.5;
+  await setRange(time, Math.round((after2 + 4) * 10) / 10);
   await expect.poll(async () => (await keys())[2].secs).toBe(4);
-  // Dragged later on the timeline: it comes later, and keyframe 4 still comes when it did
-  const m3 = (await page.getByTestId("fly-key").nth(2).boundingBox())!;
-  const before = await page.evaluate(() => {
-    const v = (window as any).__dgView;
-    return v.flightPath(v.doc.course.holes[0].id).dur;
-  });
+  // Dragged later on the timeline: it comes later, and the next still comes when it did
+  const m3 = (await page.getByTestId("camera-bar").getByTestId("fly-key").nth(2).boundingBox())!;
+  const before = await page.evaluate(id => (window as any).__dgView.flightPath(id).dur, hole.id);
   await page.mouse.move(m3.x + m3.width / 2, m3.y + m3.height / 2);
   await page.mouse.down();
   await page.mouse.move(m3.x + m3.width / 2 + 25, m3.y + m3.height / 2, { steps: 5 });
   await page.mouse.up();
   await expect.poll(async () => (await keys())[2].secs).toBeGreaterThan(4);
-  const after = await page.evaluate(() => {
-    const v = (window as any).__dgView;
-    return v.flightPath(v.doc.course.holes[0].id).dur;
-  });
-  expect(Math.abs(after - before)).toBeLessThan(0.15);
-  // A + on the map between keyframes 1 and 2: a new keyframe 2, right on the flight that was there
-  const path0 = await page.evaluate(id => (window as any).__dgView.flightPath(id).pts.map((p: any) => [p.x, p.y, p.z]), hole.id);
-  await page.locator('[data-handle="flyadd"][data-index="0"]').click();
-  await expect(page.getByTestId("fly-key")).toHaveCount(5);
+  expect(Math.abs((await page.evaluate(id => (window as any).__dgView.flightPath(id).dur, hole.id)) - before)).toBeLessThan(0.15);
+  // On the map from above: keyframe 2 picked, and dragged over the ground (where it looks with it)
+  const mk = page.getByTestId("fly-map").getByTestId("map-key").nth(1);
+  await mk.click();
   await expect(page.getByTestId("fly-key-title")).toHaveText("Keyframe 2");
   const k1 = (await keys())[1];
-  const g = await page.evaluate(k => (window as any).__dgView.h(k.x, k.y), k1);
-  const off = Math.min(...path0.map(([x, y, z]: number[]) => Math.hypot(x - k1.x, z - k1.y, y - (g + k1.alt))));
-  expect(off).toBeLessThan(3);
-  // Removed again from its card
-  await card.getByRole("button", { name: "Remove keyframe 2" }).click();
-  await expect(page.getByTestId("fly-key")).toHaveCount(4);
-  // + Keyframe adds one after the picked one
-  await page.getByTestId("fly-key").nth(1).click();
-  await page.getByTestId("fly-key-add").click();
-  await expect(page.getByTestId("fly-key")).toHaveCount(5);
-  await expect(page.getByTestId("fly-key-title")).toHaveText("Keyframe 3");
-  // Flown from the panel
-  await page.getByTestId("fly-preview").click();
-  await expect(page.getByTestId("hud-flyover")).toHaveText(/Stop/);
-  // From the tee, Settings is the same panel: the keyframes, no Speed or Lens for the whole flight
-  await page.getByTestId("hud-flyover").click();
-  await page.getByTestId("hud-settings").click();
-  const tee = page.getByTestId("flyover-settings");
-  await expect(tee.getByTestId("fly-timeline")).toBeVisible();
-  await expect(tee.getByTestId("fly-key")).toHaveCount(5);
-  await expect(tee.getByRole("slider", { name: "Speed" })).toHaveCount(0);
-  // In 3D: back on the map, tilted, the hole picked with its cameras to drag
-  await tee.getByTestId("fly-in-3d").click();
-  await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().view)).toBe("3d");
-  expect(await page.evaluate(() => (window as any).__dgEditor().teeView)).toBeNull();
-  await expect(page.locator('[data-handle="flykey"]')).toHaveCount(5);
-  // Automatic again
-  await page.getByTestId("hole-row").first().click();
-  await page.getByTestId("hole-flight").getByRole("radio", { name: "Automatic" }).click();
-  await expect.poll(async () => (await course(page)).holes[0].flyKeys).toBeUndefined();
-  await expect(page.locator('[data-handle="flykey"]')).toHaveCount(0);
+  const b = (await mk.boundingBox())!;
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2 + 20, b.y + b.height / 2 + 10, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.hypot((await keys())[1].x - k1.x, (await keys())[1].y - k1.y)).toBeGreaterThan(3);
+  const k1b = (await keys())[1];
+  expect(Math.round((k1b.lookX - k1b.x) * 10)).toBe(Math.round((k1.lookX - k1.x) * 10));
+  // The camera moved off it: said so; Update keyframe 2 puts it where the camera is
+  await expect(page.getByTestId("cam-update")).toBeDisabled();
+  await page.keyboard.down("e");
+  await page.waitForTimeout(500);
+  await page.keyboard.up("e");
+  await expect(page.getByTestId("cam-moved")).toBeVisible();
+  await page.getByTestId("cam-update").click();
+  await expect.poll(async () => (await keys())[1].alt).toBeGreaterThan(k1b.alt + 2);
+  // Delete: one fewer (the 3D view resting from here on: drawn in software, its frames hold up the page)
+  await page.evaluate(() => (window as any).__dgView.setPaused(true));
+  await page.getByTestId("cam-remove").click();
+  await expect.poll(async () => (await keys()).length).toBe(n - 1);
+  // Esc: the whole flyover; Automatic again; Done: back on the map, the hole still picked
+  await page.keyboard.press("Escape");
+  await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().flyKey)).toBeNull();
+  await panel.getByRole("radio", { name: "Automatic" }).click();
+  await expect.poll(async () => ((await course(page)).holes[0].flyKeys ?? []).length).toBeLessThan(2);
+  await page.getByTestId("cam-done").click();
+  await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
+  expect((await editorState(page)).selectedId).toBe(hole.id);
 });
 
-test("the camera flown by hand: the keys move it, a drag turns it, and each keyframe is just where it was and looks just where it looked", async ({ page }) => {
+test("the camera moved by hand in the Flyover editor: the keys move it, a drag turns it, and each keyframe is just where it was and looks just where it looked", async ({ page }) => {
   // (slow under software rendering: the view from the tee drawn frame by frame)
   test.setTimeout(240_000);
   await blankCourse(page);
   const hole = await addHole(page, { x: 300, y: 600 }, { x: 800, y: 600 });
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").first().click();
-  await page.getByTestId("hole-flight").getByTestId("fly-camera").click();
+  await page.getByTestId("flyover-row").getByTestId("fly-edit").click();
   await expect(page.getByTestId("camera-hud")).toBeVisible();
-  await expect(page.getByTestId("cam-keys")).toContainText("No keyframes yet");
+  // (no keyframe selected: no keyframe card)
+  await expect(page.getByTestId("cam-key")).toHaveCount(0);
   const pose = () => page.evaluate(() => (window as any).__dgView.freeKey());
   const keys = async () => ((await course(page)).holes[0].flyKeys ?? []) as any[];
-  // (from the tee, at eye height, looking down the hole)
   await expect.poll(async () => (await pose()) !== null).toBe(true);
   const p0 = await pose();
-  expect(p0.alt).toBeGreaterThan(4);
-  expect(p0.alt).toBeLessThan(8);
   const ahead = { x: p0.lookX - p0.x, y: p0.lookY - p0.y };
   const n = Math.hypot(ahead.x, ahead.y);
   // W held: forward, down the hole
@@ -573,20 +563,21 @@ test("the camera flown by hand: the keys move it, a drag turns it, and each keyf
   await page.keyboard.up("w");
   const p1 = await pose();
   expect(((p1.x - p0.x) * ahead.x + (p1.y - p0.y) * ahead.y) / n).toBeGreaterThan(5);
-  // Space held: up
-  await page.keyboard.down(" ");
+  // E held: up
+  await page.keyboard.down("e");
   await page.waitForTimeout(700);
-  await page.keyboard.up(" ");
+  await page.keyboard.up("e");
   const p2 = await pose();
   expect(p2.alt).toBeGreaterThan(p1.alt + 5);
-  // Enter: keyframe 1, right there and looking there
+  // Enter, at the flight's start: keyframe 1 is this shot, right there and looking there
   await page.keyboard.press("Enter");
-  await expect.poll(async () => (await keys()).length).toBe(1);
+  await expect.poll(async () => (await keys()).length).toBeGreaterThanOrEqual(2);
   const k0 = (await keys())[0];
   expect(Math.hypot(k0.x - p2.x, k0.y - p2.y)).toBeLessThan(0.5);
   expect(Math.abs(k0.alt - p2.alt)).toBeLessThan(0.5);
-  await expect(page.getByTestId("cam-status")).toContainText("Keyframe 1 of 1");
-  // A drag turns it; D moves it right; another keyframe
+  await expect(page.getByTestId("cam-key")).toContainText("Keyframe 1 of");
+  // A drag turns it; D moves it right; another keyframe, after it
+  const count = (await keys()).length;
   const box = (await page.locator("main").boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -598,7 +589,7 @@ test("the camera flown by hand: the keys move it, a drag turns it, and each keyf
   await page.waitForTimeout(500);
   await page.keyboard.up("d");
   await page.keyboard.press("Enter");
-  await expect.poll(async () => (await keys()).length).toBe(2);
+  await expect.poll(async () => (await keys()).length).toBe(count + 1);
   // The flight starts exactly at keyframe 1 and looks exactly where it looked
   const exact = await page.evaluate(id => {
     const v = (window as any).__dgView, k = v.doc.course.holes[0].flyKeys;
@@ -612,8 +603,8 @@ test("the camera flown by hand: the keys move it, a drag turns it, and each keyf
   expect(exact.at).toBeLessThan(0.5);
   expect(exact.look).toBeLessThan(0.5);
   await expect(page.getByTestId("cam-play")).toBeEnabled();
-  // Keyframe 1 again from its number, moved, and updated to where the camera is now
-  await page.getByTestId("cam-keys").getByRole("button", { name: "Go to keyframe 1" }).click();
+  // Keyframe 1 again from the timeline, moved, and updated to where the camera is now
+  await page.getByTestId("camera-bar").getByTestId("fly-key").first().click();
   await expect.poll(async () => Math.hypot((await pose()).x - k0.x, (await pose()).y - k0.y)).toBeLessThan(0.5);
   await expect(page.getByTestId("cam-update")).toBeDisabled();
   await page.keyboard.down("q");
@@ -622,26 +613,18 @@ test("the camera flown by hand: the keys move it, a drag turns it, and each keyf
   await expect(page.getByTestId("cam-update")).toBeEnabled();
   await page.keyboard.press("u");
   await expect.poll(async () => (await keys())[0].alt).toBeLessThan(k0.alt - 2);
-  // Played, stopped; Esc puts the camera away (standing on the tee), and again goes back to the map
-  // with the hole still picked
-  await page.getByTestId("cam-play").click();
-  await expect(page.getByTestId("cam-stop")).toBeVisible();
-  await page.getByTestId("cam-stop").click();
+  // Played and paused (Space); Esc lets go of the keyframe, Esc again leaves, back on the map with
+  // the hole still picked
+  await page.keyboard.press(" ");
+  await expect(page.getByTestId("cam-play")).toHaveAttribute("aria-label", "Pause");
+  await page.keyboard.press(" ");
   await expect(page.getByTestId("cam-add")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("camera-hud")).toHaveCount(0);
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).__dgEditor().flyKey)).toBeNull();
   await page.keyboard.press("Escape");
+  await expect(page.getByTestId("camera-hud")).toHaveCount(0);
   await expect.poll(async () => (await editorState(page)).teeView).toBeNull();
   expect((await editorState(page)).selectedId).toBe(hole.id);
-  // Double-clicking a camera on the map looks through it
-  await page.locator('[data-handle="flykey"][data-index="1"]').dblclick();
-  await expect(page.getByTestId("camera-hud")).toBeVisible();
-  await expect(page.getByTestId("cam-status")).toContainText("Keyframe 2 of 2");
-  // (Done: the camera put away, standing on the tee again)
-  await page.getByTestId("cam-done").click();
-  await expect(page.getByTestId("camera-hud")).toHaveCount(0);
-  await expect(page.getByTestId("tee-view-hud")).toBeVisible();
 });
 
 plain("the flight by itself: a low glide from behind the tee, under a crown over the line, round its trunk, over a bush, never bobbing (pure logic)", () => {

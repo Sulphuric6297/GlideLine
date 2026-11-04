@@ -8,9 +8,10 @@
 // buttons over the map (there is no Enter, Backspace or Esc on a phone), and holding a finger on
 // a thing opens its menu (the right-click), or on open ground what can start there.
 import { Woods } from "../Woods";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
-import { Axe, Compass, LayoutGrid, Menu, ChevronDown, ListChecks, ChevronLeft, Copy, Ellipsis, Eye, FilePlus, FolderOpen, HelpCircle, LocateFixed, PanelLeftClose, PanelLeftOpen, Redo2, Save, Search, Trash2, TreeDeciduous, Undo2, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type UIEvent } from "react";
+import { Axe, Circle, Compass, Flag, Gauge, LayoutGrid, Menu, ChevronDown, ListChecks, ChevronLeft, Copy, Ellipsis, Eye, FilePlus, FolderOpen, HelpCircle, LocateFixed, PanelLeftClose, PanelLeftOpen, Redo2, Save, Search, Trash2, TreeDeciduous, Undo2, X } from "lucide-react";
 import { holeLabel } from "../../lib/course";
+import { AREA_KINDS } from "../../constants";
 import { EXAMPLE_ID } from "../../lib/example";
 import { courseIssues, courseStats, courseTotals, holeStats, openIssues, playsOf } from "../../lib/holeStats";
 import { fmtArea, fmtDist, fmtElev } from "../../lib/units";
@@ -18,8 +19,8 @@ import { deleteSelection, duplicateSelection, select } from "../../state/actions
 import { getDoc, useCourse, useEditor, type Step } from "../../state/course";
 import { deleteRecent, newCourse, openCourseFile, openRecent, recentCourses, saveCourseFile } from "../../state/files";
 import type { PlanMeta } from "../../lib/storage";
-import type { P } from "../../types";
-import { HoleSteps } from "../HoleSteps";
+import type { CourseItem, Hole, P } from "../../types";
+import { HoleSteps, stepHole } from "../HoleSteps";
 import { InspectorBody, groupSummary, itemTitle, useSelection } from "../Inspector";
 import { MapViewport } from "../MapViewport";
 import { getView } from "../../state/view";
@@ -30,12 +31,15 @@ import { TeeViewHud } from "../TeeViewHud";
 import { OnSite } from "../OnSite";
 import { useOnSite } from "../../state/onSite";
 import { CameraHud } from "../CameraHud";
-import { STEP_TOOLS, TOOLS, pickTool, toolHelp, toolHint, toolOf, toolOptions, toolShapes } from "../Toolbar";
+import { STEP_TOOLS, TOOLS, phoneToolSettings, pickTool, toolHelp, toolHint, toolOf, toolOptions, toolShapes } from "../Toolbar";
 import { ExportProgressPill } from "../ExportProgress";
 import { ActionSheet, type SheetAction } from "./ActionSheet";
 import { BottomSheet, type Detent } from "./BottomSheet";
 import { PageTools } from "./PageTools";
-import { HoleStrip, ItemStrip } from "./HoleStrip";
+import { useHoleSettings, useItemSettings } from "./HoleStrip";
+import { Disc } from "./SheetFold";
+import { ActRow, EdgeSlider, GlassBar, useBarNav, type BarSetting } from "./GlassBar";
+import { MoveCornerHere } from "../PlaceByGps";
 import { GettingStarted, openGettingStarted } from "../GettingStarted";
 import { accountActions, CourseChip, SaveAlert } from "../../auth/AccountMenu";
 import { LOCKED, LockBadge, showLocked, type LockedId } from "../DemoNote";
@@ -44,7 +48,7 @@ import { useExportJob } from "../../state/exportJob";
 import { ViewToggle } from "../ViewToggle";
 import { groupActions, groundActions, itemActions, type ItemAction } from "../itemActions";
 import { treeActions, treesAt, treeTitle, underAction } from "../treeActions";
-import { HelpLink } from "../ui";
+import { HelpLink, askHelp } from "../ui";
 import { ago } from "../../auth/Home";
 import { goDemoHome } from "../DemoHome";
 import { startTour } from "../Tour";
@@ -147,10 +151,16 @@ function goStep(id: Step, setDetent: (d: Detent) => void, toggle: () => void) {
   setDetent(STEP_DETENT[id]);
 }
 
-function BottomNav({ onStep }: { onStep: (s: Step) => void }) {
+/** Whether each step's own panel is out when the step opens: Site's and Export's are what those
+ * steps are for; Design and Map are about the map and the page, their tools in the row. */
+const STEP_OPEN: Record<Step, boolean> = { site: true, design: false, map: false, export: true };
+
+function BottomNav({ onStep, motion = null }: { onStep: (s: Step) => void; motion?: "out" | "in" | null }) {
   const step = useEditor(e => e.step);
+  // (the checks on Design's tab, as a count: its panel has the list)
+  const issues = useSummary().issues;
   return (
-    <nav aria-label="Steps" className="glass shrink-0 relative z-40 mx-2 mt-1.5 mb-[max(8px,env(safe-area-inset-bottom))] rounded-[30px]" data-testid="bottom-nav">
+    <nav aria-label="Steps" className={`glass shrink-0 relative z-40 mx-2 mt-1.5 mb-[max(8px,env(safe-area-inset-bottom))] rounded-[30px] ${motion === "out" ? "!absolute inset-x-0 bottom-0 !z-20 dg-tuck pointer-events-none" : motion === "in" ? "dg-untuck" : ""}`} data-testid={motion === "out" ? "bottom-nav-leaving" : "bottom-nav"}>
       <ol className="flex px-1">
         {STEPS.map((s, i) => {
           const Icon = STEP_ICONS[s.id];
@@ -162,7 +172,9 @@ function BottomNav({ onStep }: { onStep: (s: Step) => void }) {
                 aria-current={on ? "step" : undefined}
                 className="w-full h-[60px] flex flex-col items-center justify-center gap-1 focus:outline-none focus-visible:bg-white/[0.08] rounded-[26px]"
               >
-                <span className={`flex items-center justify-center w-[52px] h-[30px] rounded-full transition-colors ${on ? "bg-white/[0.12] text-orange-300" : "text-zinc-400"}`}><Icon size={21} strokeWidth={on ? 2.4 : 2} /></span>
+                <span className={`relative flex items-center justify-center w-[52px] h-[30px] rounded-full transition-colors ${on ? "bg-white/[0.12] text-orange-300" : "text-zinc-400"}`}><Icon size={21} strokeWidth={on ? 2.4 : 2} />
+                  {s.id === "design" && issues > 0 && <span className="absolute -top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[11px] font-bold leading-[18px] text-center tabular-nums" aria-label={`${issues} checks`} data-testid="design-checks-badge">{issues}</span>}
+                </span>
                 <span className={`text-[12px] leading-none font-semibold tracking-tight ${on ? "text-zinc-50" : "text-zinc-400"}`}><span className="sr-only">Step {i + 1}: </span>{s.label}</span>
               </button>
             </li>
@@ -303,6 +315,61 @@ function Tools() {
   );
 }
 
+// (where the step's row was left, slid sideways: it opens there again)
+const stepRowAt: Partial<Record<Step, number>> = {};
+
+/** A step's tools on a phone, in the glass bar's row just over the steps (the look of a tool's
+ * settings: a word under each), the rest past the edge with +N. A tool tapped rises into its bar's
+ * pill (`onPick` with where it was); `back`, the tool coming back down into its place from the
+ * pill, its neighbours sliding back in. */
+function StepTools({ onPick, back }: { onPick: (from: DOMRect) => void; back: { tool: string; from: DOMRect } | null }) {
+  const step = useEditor(e => e.step);
+  const main = STEP_TOOLS[step] ?? STEP_TOOLS.design;
+  // (no Select: outside a tool, a tap picks; the step's own tools first, then the rest)
+  const list = [...TOOLS.filter(t => t.id !== "select" && main.includes(t.id)), ...TOOLS.filter(t => t.id !== "select" && !main.includes(t.id))];
+  const row = useRef<HTMLDivElement>(null);
+  const [past, setPast] = useState(0);
+  const count = useCallback(() => {
+    const r = row.current;
+    if (!r) return;
+    const edge = r.getBoundingClientRect().right;
+    let n = 0;
+    r.querySelectorAll<HTMLElement>("[data-tool]").forEach(b => { if (b.getBoundingClientRect().right > edge + 2) n++; });
+    setPast(n);
+    stepRowAt[step] = r.scrollLeft;
+  }, [step]);
+  useLayoutEffect(() => {
+    const r = row.current;
+    if (!r) return;
+    r.scrollLeft = stepRowAt[step] ?? 0;
+    // (coming back from a tool: it drops from the pill into its place, the rest sliding back in)
+    const b = back && r.querySelector<HTMLElement>(`[data-tool="${back.tool}"]`);
+    if (b) {
+      b.scrollIntoView?.({ inline: "nearest", block: "nearest" });
+      const to = b.getBoundingClientRect();
+      b.animate?.([{ transform: `translate(${back.from.left - to.left}px, ${back.from.top - to.top}px)` }, { transform: "none" }], { duration: 260, easing: "cubic-bezier(0.2, 0.9, 0.3, 1)" });
+      r.animate?.([{ transform: "translateX(-36px)", opacity: 0.2 }, { transform: "none", opacity: 1 }], { duration: 260, easing: "cubic-bezier(0.2, 0.9, 0.3, 1)" });
+    }
+    count();
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+  const more = () => row.current?.scrollBy({ left: row.current.clientWidth * 0.8, behavior: "smooth" });
+  return (
+    <div className="absolute left-2.5 right-2.5 bottom-2 z-30 flex items-center gap-1 h-[64px] px-1.5 rounded-[26px] glass border border-white/10 shadow-2xl" data-testid="tool-strip">
+      <div ref={row} onScroll={count} role="toolbar" aria-label="Tools" className={`flex-1 min-w-0 flex gap-1 overflow-x-auto dg-noscrollbar touch-pan-x ${past ? "dg-fade-r" : ""}`}>
+        {list.map(t => (
+          <button key={t.id} data-tool={t.id} data-testid={`tool-${t.id}`} aria-label={touchWords(t.label)}
+            onClick={e => { onPick(e.currentTarget.getBoundingClientRect()); stopDrawing(); pickTool(t); }}
+            className="group shrink-0 min-w-[62px] h-[56px] px-1.5 rounded-[18px] flex flex-col items-center justify-center gap-[3px] text-zinc-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">
+            <Disc>{t.icon}</Disc>
+            <span className="text-[11.5px] leading-none font-semibold whitespace-nowrap">{t.short}</span>
+          </button>
+        ))}
+      </div>
+      {past > 0 && <button className="shrink-0 h-[30px] min-w-[34px] px-2 rounded-full bg-white/[0.13] text-[13px] font-bold text-zinc-100 tabular-nums" aria-label={`${past} more tools`} onClick={more} data-testid="tools-more">+{past}</button>}
+    </div>
+  );
+}
+
 /** A row of chips that scrolls sideways (a phone has no room to wrap them). */
 const ChipRow = ({ children, testid }: { children: ReactNode; testid?: string }) => (
   <div className="mt-2 px-4 flex gap-1.5 overflow-x-auto dg-noscrollbar dg-fade-r touch-pan-x touch-pan-y" data-testid={testid}>{children}<span className="shrink-0 w-4" aria-hidden /></div>
@@ -318,8 +385,11 @@ function ToolHeader() {
   const all = [...(toolOptions(ed) ?? []), ...(toolShapes(ed) ?? [])];
   const isBrush = (o: ReactNode) => (o as { key?: string } | null)?.key === "brush";
   const isSpecies = (o: ReactNode) => (o as { key?: string } | null)?.key === "species";
+  // (what the brush does to areas: a row of its own, over the brush's size)
+  const isModes = (o: ReactNode) => (o as { key?: string } | null)?.key === "modes";
   const kinds = (toolOptions(ed) ?? []).filter(o => !isBrush(o));
-  const shapes = (toolShapes(ed) ?? []).filter(o => !isBrush(o) && !isSpecies(o));
+  const shapes = (toolShapes(ed) ?? []).filter(o => !isBrush(o) && !isSpecies(o) && !isModes(o));
+  const modes = (toolShapes(ed) ?? []).filter(isModes);
   const species = (toolShapes(ed) ?? []).filter(isSpecies);
   const brush = all.find(isBrush);
   return (
@@ -334,6 +404,7 @@ function ToolHeader() {
       {kinds.length > 0 && <ChipRow testid="tool-options">{kinds}</ChipRow>}
       {shapes.length > 0 && <ChipRow testid="tool-shapes">{shapes}</ChipRow>}
       {species.length > 0 && <ChipRow testid="tool-species">{species}</ChipRow>}
+      {modes.length > 0 && <ChipRow testid="tool-modes">{modes}</ChipRow>}
       {brush && <div className="mt-2 px-4 flex">{brush}</div>}
     </div>
   );
@@ -441,6 +512,186 @@ export function GroundMenu({ info, onClose }: { info: MenuInfo; onClose: () => v
   return <ActionSheet title={here ? "This spot" : "Trees here"} subtitle={ground?.hole} actions={a} onClose={onClose} testid={here ? "map-menu-here" : "map-menu"} />;
 }
 
+// ---------------------------------------------------------------------------------- the glass bar
+
+/** Every tool, as a tool's pill opens them: the one in use lit, its help at the foot. */
+function ToolGrid() {
+  const ed = useEditor();
+  const nav = useBarNav();
+  const t = toolOf(ed);
+  const help = toolHelp(ed);
+  // (the step's own tools, and whichever is in use)
+  const main = STEP_TOOLS[ed.step] ?? STEP_TOOLS.design;
+  const list = TOOLS.filter(x => x.id !== "select" && (ed.step !== "site" || main.includes(x.id) || x.id === t?.id));
+  return (
+    <div className="p-1">
+      <div className="grid grid-cols-4 gap-1.5" role="menu" aria-label="Tools" data-testid="tool-grid">
+        {list.map(x => {
+          const on = x.id === t?.id;
+          return (
+            <button key={x.id} role="menuitem" aria-current={on || undefined} aria-label={touchWords(x.label)} data-testid={`tool-${x.id}`}
+              onClick={() => { if (!on) { stopDrawing(); pickTool(x); } nav.close(); }}
+              className={`min-h-[66px] px-1 rounded-[18px] flex flex-col items-center justify-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${on ? "bg-orange-300 text-zinc-950" : "bg-white/[0.07] text-zinc-200 active:bg-white/[0.13]"}`}>
+              {x.icon}
+              <span className="text-[11.5px] leading-tight font-semibold text-center">{x.short}</span>
+            </button>
+          );
+        })}
+      </div>
+      {help && t && <div className="mt-1.5"><ActRow icon={<HelpCircle size={18} />} label={`Help on ${toolTitle(t).toLowerCase()}`} hint="How it works, step by step" onClick={() => askHelp(help)} testid="tool-help" /></div>}
+    </div>
+  );
+}
+
+/** A thing's or a hole's own rows in its pill's menu: the same as holding a finger on it. */
+const PillActions = ({ id }: { id: string }) => (
+  <div className="flex flex-col gap-0.5">
+    {itemActions(id, null).map(a => <ActRow key={a.label} label={a.label} icon={a.icon ? <a.icon size={18} /> : undefined} danger={a.danger} onClick={a.run} testid={a.testid} />)}
+  </div>
+);
+
+/** What a finger working on the map does to the bar: it fades almost away, after a moment (a quick
+ * tap doesn't flicker it), and comes back when the finger lifts. */
+function useFingerDown(on: boolean) {
+  const [down, setDown] = useState(false);
+  useEffect(() => {
+    if (!on) { setDown(false); return; }
+    let t = 0;
+    const map = () => document.querySelector<HTMLElement>('[data-testid="plan"]');
+    const press = (e: PointerEvent) => {
+      const el = map();
+      if (!el || !el.contains(e.target as Node)) return;
+      window.clearTimeout(t);
+      t = window.setTimeout(() => setDown(true), 140);
+    };
+    const lift = () => { window.clearTimeout(t); setDown(false); };
+    window.addEventListener("pointerdown", press, true);
+    window.addEventListener("pointerup", lift, true);
+    window.addEventListener("pointercancel", lift, true);
+    return () => { window.clearTimeout(t); window.removeEventListener("pointerdown", press, true); window.removeEventListener("pointerup", lift, true); window.removeEventListener("pointercancel", lift, true); };
+  }, [on]);
+  return down;
+}
+
+type BarProps = { faded: boolean; side?: boolean; onHeight: (px: number) => void; mainH: number; from?: DOMRect | null };
+
+/** The tool in use: its pill (every tool from it), its settings, the brush's size (and the ground
+ * brush's strength) on the edge, and its hint for a few seconds as it starts. */
+function PhoneToolBar({ faded, side, onHeight, mainH, from }: BarProps) {
+  const ed = useEditor();
+  const units = useCourse(s => s.doc.units);
+  const t = toolOf(ed);
+  const { settings, edge } = phoneToolSettings(ed);
+  const drawing = ed.drawPoints > 0;
+  const own = useCourse(s => (ed.reshapeId ? s.doc.items.find(i => i.id === ed.reshapeId) : undefined));
+  // The hint: for a few seconds as the tool, or how it draws, changes (not over an open menu)
+  const [hint, setHint] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const said = toolHint(ed, true) ?? null;
+  const changed = `${ed.tool}|${t?.id}|${ed.drawShape}|${ed.areaBrush}|${ed.groundBrush}|${ed.reshapeId}`;
+  useEffect(() => {
+    setHint(said);
+    if (!said) return;
+    const tm = window.setTimeout(() => setHint(null), 4500);
+    return () => window.clearTimeout(tm);
+  }, [changed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const kind = own && own.type === "area" ? (own.kind === "woods" ? ((own.bushes ?? 0) >= 1 ? "underbrush" : "wood") : AREA_KINDS[own.kind].label.toLowerCase()) : "";
+  const pill = own
+    ? { name: "Reshaping", small: `just this ${kind}`, icon: t?.icon }
+    : { name: t ? t.short : "", icon: t?.icon, small: drawing ? `${ed.drawPoints} ${ed.drawPoints === 1 ? "point" : "points"}` : undefined };
+  const done = () => { stopDrawing(); ed.set({ tool: "select", reshapeId: null }); };
+  // (the sliders between the top bar and the bar, on the left)
+  // (upright, the bar along the foot; sideways, up the right edge, the sliders the whole height)
+  const top = side ? 76 : 128, room = Math.max(160, mainH - top - (side ? 16 : 160));
+  const sizeH = Math.min(250, edge.strength ? room * 0.55 : room * 0.8);
+  const ring = (v: number | null) => getView()?.previewBrush(v);
+  // (the room kept for the drawing's buttons in the row's place: as tall as they are, two rows
+  // while a line is walked, so the pill stays clear above them)
+  const [drawH, setDrawH] = useState(64);
+  useEffect(() => {
+    if (!drawing) return;
+    const el = document.querySelector<HTMLElement>('[data-testid="draw-bar"]');
+    if (!el) return;
+    const ro = new ResizeObserver(() => setDrawH(Math.max(64, Math.round(el.getBoundingClientRect().height))));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [drawing]);
+  return (
+    <>
+      {hint && !drawing && !faded && !menuOpen && <div className="absolute left-1/2 -translate-x-1/2 z-[33] max-w-[calc(100%-24px)] px-4 py-2 rounded-full glass border border-white/10 shadow-xl text-[13.5px] font-semibold text-zinc-50 text-center pointer-events-none dg-fade-in" style={side ? { bottom: 16, left: "calc(50% - 60px)" } : { bottom: 146 }} data-testid="tool-hint">{hint}</div>}
+      {edge.size && (
+        <EdgeSlider testid="brush-size" label="Brush size" value={ed.brushSize} min={4} max={150} step={1} format={v => fmtDist(v * 2, units)} icon={<Circle size={18} />}
+          top={top} height={sizeH} faded={faded} onChange={v => { ed.set({ brushSize: v }); ring(v); }} onSlide={on => ring(on ? useEditor.getState().brushSize : null)} />
+      )}
+      {edge.strength && (
+        <EdgeSlider testid="brush-strength" label="Brush strength" value={ed.brushStrength} min={1} max={10} step={1} format={v => `${v * 10}%`} icon={<Gauge size={18} />}
+          top={top + sizeH + 16} height={Math.min(200, room - sizeH - 16)} faded={faded} onChange={v => ed.set({ brushStrength: v })} />
+      )}
+      <GlassBar remember={`tool:${t?.id ?? ed.tool}`} pill={pill} pillMenu={own ? undefined : <ToolGrid />} pillWide settings={drawing ? [] : settings} onDone={done} doneLabel={own ? "Done reshaping" : "Done: back to Select"}
+        replace={drawing ? <div style={{ height: drawH }} aria-hidden /> : undefined} faded={faded} side={side} onHeight={onHeight} onOpen={id => setMenuOpen(!!id)} from={from} testid="tool-bar" />
+    </>
+  );
+}
+
+/** A hole picked: its pill (with the holes either side), every setting it has, and ✓. Its Flyover
+ * opens the Flyover editor. */
+function PhoneHoleBar({ hole, faded, side, onHeight }: BarProps & { hole: Hole }) {
+  const doc = useCourse(s => s.doc);
+  const s = holeStats(doc, hole);
+  const settings = useHoleSettings(hole);
+  const many = doc.holes.length > 1;
+  const pill = { name: `Hole ${holeLabel(doc, hole.id)}`, small: s.complete ? `${fmtDist(s.length, doc.units)} · Par ${s.par}` : s.teeId ? "Needs a basket" : "Needs a tee", prev: many ? () => stepHole(-1) : undefined, next: many ? () => stepHole(1) : undefined, testid: "selection-header" };
+  return <GlassBar remember="hole" pill={pill} pillMenu={<PillActions id={hole.id} />} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
+}
+
+/** Anything else picked: its pill (its hole, and what can be done with it), every setting it has. */
+function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: CourseItem }) {
+  const doc = useCourse(s => s.doc);
+  const settings = useItemSettings(item);
+  const holeId = "holeId" in item ? item.holeId : undefined;
+  const kind = item.type === "area" || item.type === "line" || item.type === "structure" ? `${item.type}:${item.kind}` : item.type;
+  const pill = { name: itemTitle(item), small: holeId ? `Hole ${holeLabel(doc, holeId)}` : item.locked ? "Locked in place" : undefined, testid: "selection-header" };
+  // (a height opened in 3D: the camera looks at it from the side, close up, and back after; not as
+  // the thing is picked, only when the setting is tapped)
+  const [opened, setOpened] = useState<string | null>(null);
+  const threeD = useEditor(e => e.view === "3d");
+  const sideOn = threeD && (opened === "height" || opened === "raised");
+  useEffect(() => {
+    if (!sideOn) return;
+    getView()?.lookAtHeight(item.id);
+    return () => getView()?.lookAtHeight(null);
+  }, [sideOn, item.id]);
+  // (a part of a field tapped on the map: its Parts open)
+  const part = useEditor(e => e.fieldPart);
+  const menu = (
+    <div className="flex flex-col gap-0.5">
+      {holeId && <ActRow icon={<Flag size={18} />} label={`Hole ${holeLabel(doc, holeId)}`} hint="Its par, fairway, tees and pins" onClick={() => select(holeId)} testid="pill-hole" />}
+      {(item.type === "area" || item.type === "line") && <div className="px-1.5 py-1 empty:hidden"><MoveCornerHere item={item} /></div>}
+      <PillActions id={item.id} />
+    </div>
+  );
+  return <GlassBar remember={kind} pill={pill} pillMenu={menu} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} onOpen={setOpened} want={part ? "parts" : null} testid="item-strip" />;
+}
+
+/** Things picked together: what they are, and what can be done with them all. */
+function PhoneGroupBar({ group, faded, side, onHeight }: BarProps & { group: CourseItem[] }) {
+  const doc = useCourse(s => s.doc);
+  const parts = groupSummary(doc, group);
+  const settings: BarSetting[] = groupActions().map((a, i) => ({ id: `g${i}`, name: `All ${group.length}`, value: a.label.replace(/ \d+$/, ""), icon: a.icon ? <a.icon size={16} /> : undefined, run: a.run, testid: a.testid }));
+  return <GlassBar remember="group" pill={{ name: `${group.length} selected`, small: parts.slice(0, 2).join(" · "), testid: "selection-header" }} settings={settings} onDone={() => select(null)} doneLabel="Done: put them down" faded={faded} side={side} onHeight={onHeight} testid="group-strip" />;
+}
+
+/** The bar for what the screen is on: the tool in use, or what's picked. */
+function PhoneBar(props: BarProps) {
+  const mode = useMode();
+  const { hole, item, group } = useSelection();
+  if (mode === "tool") return <PhoneToolBar {...props} />;
+  if (hole) return <PhoneHoleBar key={hole.id} hole={hole} {...props} />;
+  if (item) return <PhoneItemBar key={item.id} item={item} {...props} />;
+  if (group.length) return <PhoneGroupBar group={group} {...props} />;
+  return null;
+}
+
 // ---------------------------------------------------------------------------------- app menu
 
 function AppMenu({ onClose, onHelp, onGoTo, onOpenFile }: { onClose: () => void; onHelp: () => void; onGoTo: () => void; onOpenFile: () => void }) {
@@ -544,22 +795,17 @@ function usePanel({ onFindSite, onMore, phone = false }: { onFindSite: () => voi
   const tool = useEditor(e => e.tool);
   const selectedId = useEditor(e => e.selectedId);
   const meta = STEPS.find(s => s.id === step)!;
-  // (a hole picked: its strip of settings in the tools' place, the hole kept in view above it)
-  const { hole: pickedHole, item: pickedItem, group: pickedGroup } = useSelection();
-  // (a phone only: a tablet's side panel has the room for all of it, beside the map)
-  const strip = phone && mode === "selection" && !!pickedHole && !readOnly;
-  // (anything else picked, on its own: its strip too)
-  const itemStrip = phone && mode === "selection" && !pickedHole && !!pickedItem && !pickedGroup.length && !readOnly;
+  // (a phone: the tool in use and what's picked are on its glass bar instead, PhoneBar, and the
+  // step's tools in the row over the steps, StepTools; a tablet's side panel has the room for all
+  // of it, beside the map)
   // (the checks, opened from Design's panel: the panel's page of their own, as a computer's panel over the map)
   const checks = useEditor(e => e.problemsOpen && e.step === "design") && mode === "step";
   // (the Site step has the tools too, as on a computer)
-  const tools = (step === "design" || step === "site" || mode === "tool") && !strip && !itemStrip && !checks;
+  const tools = (step === "design" || step === "site" || mode === "tool") && !checks && !phone;
   const header = (
     <>
       {tools && <ToolStrip />}
       {mode === "tool" ? <ToolHeader /> : mode === "selection" ? <SelectionHeader onMore={onMore} /> : checks ? <ChecksHeader /> : <StepHeader onFindSite={onFindSite} />}
-      {strip && <HoleStrip hole={pickedHole} />}
-      {itemStrip && <ItemStrip key={pickedItem.id} item={pickedItem} />}
     </>
   );
   const body = mode === "selection" ? (
@@ -644,8 +890,44 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
   const pageTools = ed.step === "map" && !immersive && !readOnly;
   // (standing in 3D with a thing picked: its usual sheet, over the tee view's bar)
   const pickedInTee = immersive && !onSite && !readOnly && !ed.flyover && !ed.flyCam && !!ed.selectedId && getDoc().items.some(i => i.id === ed.selectedId);
-  const sheet = (!immersive || pickedInTee) && !welcome && !pageTools;
-  const sheetH = sheet ? restH : 0;
+  // (a tool in use, or a thing picked: the glass bar over a whole-screen map, not the sheet; view
+  // only, a thing's numbers are in the sheet as before)
+  const bar = !readOnly && !welcome && !pageTools && (panel.mode === "tool" || panel.mode === "selection") && (!immersive || pickedInTee);
+  // (the step's own panel, out of its tab or back in it; view only, it's the course's numbers, out)
+  const [panelOpen, setPanelOpen] = useState(() => STEP_OPEN[useEditor.getState().step]);
+  const stepOnly = panel.mode === "step" && !readOnly;
+  const sheet = (!immersive || pickedInTee) && !welcome && !pageTools && !bar && (!stepOnly || panelOpen);
+  // (the step's tools in the row over the steps, the panel in its tab)
+  const stepRow = stepOnly && !sheet && !welcome && !immersive && (ed.step === "design" || ed.step === "site");
+  const [barH, setBarH] = useState(132);
+  const sheetH = bar ? barH + 18 : sheet ? restH : stepRow ? 72 : 0;
+  // Going into a tool and out again as one motion: the tool tapped rises into the bar's pill, the
+  // steps tuck away under it; out, the tool drops back into its place and the steps come up
+  const [from, setFrom] = useState<DOMRect | null>(null);
+  const [back, setBack] = useState<{ tool: string; from: DOMRect } | null>(null);
+  const [navMotion, setNavMotion] = useState<"out" | "in" | null>(null);
+  const wasBar = useRef(bar);
+  useLayoutEffect(() => {
+    if (bar === wasBar.current) return;
+    wasBar.current = bar;
+    setNavMotion(bar ? "out" : "in");
+    const t = window.setTimeout(() => setNavMotion(null), 280);
+    if (!bar) {
+      // (the pill's last place, for the tool to drop from; the tool it was)
+      const pill = document.querySelector<HTMLElement>('[data-testid="bar-pill"], [data-testid="selection-header"]');
+      const was = lastTool.current;
+      setBack(pill && was ? { tool: was, from: pill.getBoundingClientRect() } : null);
+      setFrom(null);
+    }
+    return () => window.clearTimeout(t);
+  }, [bar]);
+  const lastTool = useRef<string | null>(null);
+  const toolNow = toolOf(ed)?.id ?? null;
+  useEffect(() => { if (panel.mode === "tool") lastTool.current = toolNow; else if (panel.mode === "selection") lastTool.current = null; }, [panel.mode, toolNow]);
+  // (the steps: shown with the step's row or panel; tucking away under a bar as it comes)
+  const navShown = !immersive && !readOnly && (!bar || navMotion === "out");
+  // (a tool's bar only: a picked thing's stays, its numbers following its handles as they're dragged)
+  const faded = useFingerDown(bar && panel.mode === "tool");
 
   useEffect(() => {
     const el = main.current;
@@ -673,21 +955,21 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
   useLayoutEffect(() => {
     if (ed.designSel && (ed.step === "map" || ed.step === "export")) setDetent("peek");
   }, [ed.designSel]);
-  // (the checks opened: the sheet up, a list to read; closed: Design's panel as it rests)
+  // (the checks opened: the panel out and up, a list to read; closed: Design's panel as it was)
   const checksOpen = ed.problemsOpen && ed.step === "design";
   const hadChecks = useRef(checksOpen);
   useLayoutEffect(() => {
     if (checksOpen === hadChecks.current) return;
     hadChecks.current = checksOpen;
-    if (checksOpen) setDetent("full");
-    else if (useEditor.getState().step === "design") setDetent(STEP_DETENT.design);
+    if (checksOpen) { setPanelOpen(true); setDetent("full"); }
+    else if (useEditor.getState().step === "design") setDetent("half");
   }, [checksOpen]);
-  // (something to point at in the sheet, asked for by search or Getting started: the sheet up)
+  // (something to point at in the panel, asked for by search or Getting started: the panel out)
   useEffect(() => {
     const on = (e: Event) => {
       const what = (e as CustomEvent).detail;
-      if (what === "sheet:half") setDetent(d => (d === "peek" ? "half" : d));
-      else if (what === "sheet:full") setDetent("full");
+      if (what === "sheet:half") { setPanelOpen(true); setDetent(d => (d === "peek" ? "half" : d)); }
+      else if (what === "sheet:full") { setPanelOpen(true); setDetent("full"); }
     };
     window.addEventListener(SHOW_EVENT, on);
     return () => window.removeEventListener(SHOW_EVENT, on);
@@ -739,8 +1021,25 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
     ro.observe(el);
     toolsSeen.current = ro;
   }, []);
-  const toggle = useCallback(() => setDetent(d => (d === "peek" ? "half" : "peek")), []);
+  // The step's panel grows up out of its tab (from low, up to its height) and goes back into it
+  const openPanel = useCallback(() => {
+    setDetent("peek");
+    setPanelOpen(true);
+    // (drawn low first, so it grows; a screen that isn't drawing frames gets there anyway)
+    requestAnimationFrame(() => requestAnimationFrame(() => setDetent("half")));
+    window.setTimeout(() => setDetent(d => (d === "peek" ? "half" : d)), 80);
+  }, []);
+  const toggle = useCallback(() => { if (panelOpen) setPanelOpen(false); else openPanel(); }, [panelOpen, openPanel]);
   const onStep = (s: Step) => goStep(s, setDetent, toggle);
+  // (another step, from its tab, search or anywhere: its panel out or in, as that step starts)
+  const stepNow = ed.step;
+  const firstStep = useRef(true);
+  useLayoutEffect(() => {
+    if (firstStep.current) { firstStep.current = false; return; }
+    if (STEP_OPEN[stepNow]) openPanel(); else setPanelOpen(false);
+  }, [stepNow]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (the panel dragged down to its smallest: back into its tab)
+  const onDetent = (d: Detent) => { if (d === "peek" && stepOnly) setPanelOpen(false); else setDetent(d); };
   const top = 72; // below the top bar
   const design = (ed.step === "map" || ed.step === "export") && !ed.teeView;
   // (Room for the map's buttons: between the top bar and the sheet, less the drawing buttons;
@@ -771,29 +1070,33 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
         )}
         {!immersive && <PhoneTopBar onMenu={openApp} pages={design && pageTools} />}
         {!immersive && <GettingStarted phone />}
-        {!immersive && <DrawBar bottom={sheetH + 12} />}
+        {!immersive && <DrawBar bottom={bar && ed.drawPoints > 0 ? 18 : sheetH + 12} />}
+        {stepRow && <StepTools onPick={setFrom} back={back} />}
+        {bar && <PhoneBar faded={faded} onHeight={setBarH} mainH={mainH} from={from} />}
         {onSite ? <OnSite /> : ed.teeView && (ed.flyCam && !useCourse.getState().readOnly ? <CameraHud compact /> : <TeeViewHud compact />)}
-        <ExportProgressPill top={immersive ? undefined : top + 4} bottom={immersive ? 96 : undefined} />
+        <ExportProgressPill top={immersive ? undefined : top + 4} bottom={immersive ? 146 : undefined} />
         {/* (above the drawing buttons when they're up) */}
-        {toasts(onSite ? 340 : immersive ? (exporting ? 156 : 96) : pageTools ? 84 : sheetH + 12 + (drawBar ? 64 : 0))}
+        {toasts(onSite ? 340 : immersive ? (exporting ? 206 : 146) : pageTools ? 84 : sheetH + 12 + (drawBar ? 64 : 0))}
         {welcome && !immersive && (
           <div className="absolute inset-0 z-10 flex items-end justify-center px-3 pb-3 pointer-events-none" style={{ paddingTop: top }}>{welcome}</div>
         )}
+        {/* (the map moved away from what's picked: back to it, over the sheet or the bar) */}
+        {(sheet || bar) && away && (
+          <button className="absolute left-1/2 -translate-x-1/2 z-30 h-11 px-4 rounded-full glass border border-white/10 shadow-2xl text-[14px] font-semibold text-zinc-50 flex items-center gap-2 active:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+            style={{ bottom: sheetH + 12 }} onClick={() => { const id = useEditor.getState().selectedId; if (id) getView()?.frame(id); }} data-testid="back-to-it">
+            <LocateFixed size={17} /> Back to it
+          </button>
+        )}
         {sheet && (
           <>
-          {away && (
-            <button className="absolute left-1/2 -translate-x-1/2 z-30 h-11 px-4 rounded-full glass border border-white/10 shadow-2xl text-[14px] font-semibold text-zinc-50 flex items-center gap-2 active:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-              style={{ bottom: sheetH + 12 }} onClick={() => { const id = useEditor.getState().selectedId; if (id) getView()?.frame(id); }} data-testid="back-to-it">
-              <LocateFixed size={17} /> Back to it
-            </button>
-          )}
-          <BottomSheet detent={detent} onDetent={setDetent} header={panel.header} label={panel.mode === "selection" ? "Selection" : panel.mode === "tool" ? "Tool" : "Step panel"} topGap={top + 8} onHeight={setRestH} contentKey={panel.key} locked={panel.mode === "selection" && holePicked}>
+          <BottomSheet detent={detent} onDetent={onDetent} header={panel.header} label={panel.mode === "selection" ? "Selection" : panel.mode === "tool" ? "Tool" : "Step panel"} topGap={top + 8} onHeight={setRestH} contentKey={panel.key} locked={panel.mode === "selection" && holePicked}>
             {panel.body}
           </BottomSheet>
           </>
         )}
       </main>
-      {!immersive && !readOnly && <BottomNav onStep={onStep} />}
+      {/* (tucking away: over the map's foot, under the bar, the map already the whole screen) */}
+      {navShown && <BottomNav onStep={onStep} motion={navMotion} />}
       {panel.announce}
       {menus}
     </div>
@@ -815,15 +1118,36 @@ function RailCourse({ onMenu }: { onMenu: () => void }) {
   );
 }
 
+/** A phone on its side (not a tablet held upright): its tools and what's picked go up the right
+ * edge in the glass bar, the map keeping its height. */
+const SIDEWAYS = "(max-height: 500px) and (min-aspect-ratio: 3/2)";
+const sidewaysNow = () => typeof window !== "undefined" && !!window.matchMedia?.(SIDEWAYS).matches;
+const onSideways = (fn: () => void) => { const m = window.matchMedia?.(SIDEWAYS); m?.addEventListener("change", fn); return () => m?.removeEventListener("change", fn); };
+
 function RailShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts }: ShellProps) {
   const ed = useEditor();
+  const readOnly = useCourse(s => s.readOnly);
   const [open, setOpen] = useState(true);
+  const sideways = useSyncExternalStore(onSideways, sidewaysNow, () => false);
   const drawBar = useDrawBarShown();
   const { menus, openApp, openMore } = useMenus(onHelp, onGoTo);
   const panel = usePanel({ onFindSite, onMore: openMore });
   // (on site: the walk's own screen, over the 3D view or the map)
   const onSite = useOnSite(s => !!s.on);
   const immersive = !!ed.teeView || onSite;
+  // (sideways: a tool in use or a thing picked on the bar up the right edge, not in the panel)
+  const bar = sideways && !readOnly && !welcome && (panel.mode === "tool" || panel.mode === "selection") && !immersive;
+  const faded = useFingerDown(bar && panel.mode === "tool");
+  const [mainH, setMainH] = useState(400);
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setMainH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => { const v = getView(); if (v) v.rightInset = bar ? 120 : 0; }, [bar]);
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => { body.current?.scrollTo({ top: 0 }); }, [panel.key]);
   useEffect(() => {
@@ -839,15 +1163,16 @@ function RailShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts 
     <div className="dg-compact fixed inset-0 flex bg-zinc-950 text-zinc-100 overflow-hidden isolate" data-layout="rail" onScroll={keepPut}>
       <Woods />
       {!immersive && <NavRail onStep={onStep} onMenu={openApp} panelOpen={open} onPanel={() => setOpen(o => !o)} />}
-      {!immersive && open && (
+      {!immersive && open && !bar && (
         <aside className="glass dg-side w-[300px] [@media(min-height:600px)]:w-[340px] shrink-0 flex flex-col m-2 ml-2 rounded-[24px] overflow-hidden relative z-30" aria-label={panel.mode === "selection" ? "Selection" : "Step panel"} data-testid="side-sheet">
           <RailCourse onMenu={openApp} />
           <div className="shrink-0 pt-2">{panel.header}</div>
           <div ref={body} className="dg-scroll flex-1 min-h-0 overflow-y-auto pb-[env(safe-area-inset-bottom)]">{panel.body}</div>
         </aside>
       )}
-      <main className="relative flex-1 min-w-0">
-        <MapViewport onContextMenu={onContextMenu} compact="rail" controlsTop={8} controlsRoom={immersive || design ? 0 : 999} />
+      <main ref={mainRef} className="relative flex-1 min-w-0">
+        <MapViewport onContextMenu={onContextMenu} compact="rail" controlsTop={8} controlsRoom={immersive || design ? 0 : 999} controlsRight={bar ? 120 : 8} />
+        {bar && <PhoneBar side faded={faded} onHeight={() => {}} mainH={mainH} />}
         {design && <div className="absolute inset-0 z-20"><MapDesigner compact topInset={0} preview={ed.step === "export"} /></div>}
         {!immersive && <GettingStarted rail />}
         {!immersive && <DrawBar bottom={12} />}

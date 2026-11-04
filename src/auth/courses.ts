@@ -1,6 +1,7 @@
 // Courses kept on the GlideLine Studio server. Owners and editors change a course live, with everyone else
 // who has it open (live.ts); viewers watch. Earlier versions can be looked at (view only) before
 // restoring one. The File menu and the home page list the courses shared with you.
+import { placeBefore } from "../state/tabPlace";
 import { create } from "zustand";
 import { generateId } from "../constants";
 import { createEmptyCourse, normalizeCourse } from "../lib/course";
@@ -306,8 +307,12 @@ export async function restoreServer() {
   if (opening) return true;
   let last: string | null = null;
   try { last = localStorage.getItem(lastKey()); } catch { /* private window */ }
+  // (a tab refreshed in a course: that course, whichever another tab opened since)
+  if (placeBefore) last = placeBefore.course;
   // (opened, or something opened since in its place: nothing more to do)
   if (last && (await openServerCourse(last, true)) !== false) return true;
+  // (the course it was in can't be had now, gone or no longer shared: the course list)
+  if (placeBefore) useAuth.getState().showHome(true);
   await newServerCourse();
   return false;
 }

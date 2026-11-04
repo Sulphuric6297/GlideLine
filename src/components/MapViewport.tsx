@@ -46,7 +46,7 @@ const scaleBar = (pxPerFoot: number, targetPx: number, units: "ft" | "m") => {
  * buttons under the top bar, `controlsTop` from the top, the turn buttons left out when less
  * than `controlsRoom` pixels are free above the panel) or a phone on its side (2D/3D with them).
  */
-export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsRoom = 999 }: { onContextMenu: (info: MenuInfo) => void; compact?: "phone" | "rail"; controlsTop?: number; controlsRoom?: number }) {
+export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsRoom = 999, controlsRight = 8 }: { onContextMenu: (info: MenuInfo) => void; compact?: "phone" | "rail"; controlsTop?: number; controlsRoom?: number; controlsRight?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<CourseView | null>(null);
   const [info, setInfo] = useState<ViewInfo | null>(null);
@@ -69,10 +69,13 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
       onHole: (tee, basket) => addHole(tee, basket),
       onDrawn: (kind, pts, opts) => {
         // (drawn as a patch of a wood: no area of its own)
-        const { patchFor, patchBrush } = useEditor.getState();
+        const { patchFor, patchBrush, drawShape } = useEditor.getState();
+        // (painted on open ground: the brush stays in hand for the next stroke, as on an area,
+        // nothing picked, so a wood can be painted in as many strokes as it takes)
+        const painting = !patchFor && kind === "area" && drawShape === "paint";
         if (patchFor && kind === "area") (patchBrush ? addBrushSection : addPatch)(patchFor, pts);
-        else addDrawn(kind, pts, opts);
-        useEditor.getState().set({ tool: "select", patchFor: null, patchBrush: false });
+        else addDrawn(kind, pts, { ...opts, pick: !painting });
+        if (!painting) useEditor.getState().set({ tool: "select", patchFor: null, patchBrush: false });
       },
       onChange: (id, patch) => {
         const next = { ...patch } as Record<string, unknown>;
@@ -81,6 +84,11 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
       },
       onHoleChange: (id, patch) => updateHole(id, patch, false),
       onCommit: () => courseStore.getState().commit(),
+      // (a brush stroke on areas: live as it goes, one undo step when let go)
+      onAreas: (items, done) => {
+        changeDoc(() => ({ items }), false);
+        if (done) courseStore.getState().commit();
+      },
       onTerrain: (heights, done, original) => {
         changeDoc(() => ({ terrainHeights: heights, terrainOriginal: original && Object.keys(original).length ? original : undefined }), false);
         if (done) courseStore.getState().commit();
@@ -211,8 +219,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   // picked color already)
   const ghostTee = ed.tool === "add-tee" && !ed.holeToBasket ? teeLevelFor(doc, ed.activeHoleId, ed.teeLevel) : ed.teeLevel;
   useEffect(() => {
-    view?.setTool({ mode: ed.tool, areaKind: ed.areaKind, lineKind: ed.lineKind, structureKind: ed.structureKind, shape: ed.drawShape, dragSelect: ed.dragSelect, treeKind: ed.treeKind, fieldKind: ed.fieldKind, brush: { size: ed.brushSize, strength: ed.brushStrength, ground: ed.groundBrush } }, ghostTee, ed.amenityKind);
-  }, [view, ed.tool, ed.areaKind, ed.lineKind, ed.structureKind, ed.drawShape, ghostTee, ed.amenityKind, ed.dragSelect, ed.treeKind, ed.fieldKind, ed.brushSize, ed.brushStrength, ed.groundBrush]);
+    view?.setTool({ mode: ed.tool, areaKind: ed.areaKind, lineKind: ed.lineKind, structureKind: ed.structureKind, shape: ed.drawShape, dragSelect: ed.dragSelect, treeKind: ed.treeKind, fieldKind: ed.fieldKind, brush: { size: ed.brushSize, strength: ed.brushStrength, ground: ed.groundBrush }, standOf: ed.standOf, areaBrush: ed.areaBrush, reshape: ed.reshapeId }, ghostTee, ed.amenityKind);
+  }, [view, ed.tool, ed.areaKind, ed.lineKind, ed.structureKind, ed.drawShape, ghostTee, ed.amenityKind, ed.dragSelect, ed.treeKind, ed.fieldKind, ed.brushSize, ed.brushStrength, ed.groundBrush, ed.standOf, ed.areaBrush, ed.reshapeId]);
   // (Measure: from one spot, or along a path)
   useEffect(() => { view?.setMeasureMode(ed.measureMode ?? "spot"); }, [view, ed.measureMode]);
   // A check's mark on the map clicked: the checks open, with its row lit up
@@ -230,6 +238,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   useEffect(() => { view?.setPose(ed.view === "2d" ? "top" : "tilt"); }, [view, ed.view]);
   // (a patch is drawn as an area; leaving the tool drops the patch)
   useEffect(() => { if (ed.tool !== "draw-area" && ed.patchFor) useEditor.getState().set({ patchFor: null }); }, [ed.tool, ed.patchFor]);
+  // (reshaping one area with the brush ends with the brush: another tool or way to draw)
+  useEffect(() => { if (ed.reshapeId && (ed.tool !== "draw-area" || ed.drawShape !== "paint")) useEditor.getState().set({ reshapeId: null }); }, [ed.tool, ed.drawShape, ed.reshapeId]);
   // (going to another step, Map say, leaves the tee view and any flyover: they're the map's)
   const stepWas = useRef(ed.step);
   useEffect(() => {
@@ -247,7 +257,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   useEffect(() => { view?.setStandTap(ed.standTap ?? "walk"); }, [view, ed.standTap]);
   // (on site: looking round only, the map from above in its corner)
   const onSite = useOnSite(s => !!s.on);
-  useEffect(() => { view?.setTeeEdit(!!ed.teeView && !ed.flyover && !readOnlyView && !onSite, onSite ? "corner" : ed.teeMap === "off" ? null : ed.teeMap ?? "small"); }, [view, ed.teeView, ed.teeMap, ed.flyover, readOnlyView, onSite]);
+  // (the Flyover editor: its map from above, in the corner on a phone too)
+  useEffect(() => { view?.setTeeEdit(!!ed.teeView && !ed.flyover && !readOnlyView && !onSite, onSite || (ed.flyCam && !!compact) ? "corner" : ed.flyCam ? "small" : ed.teeMap === "off" ? null : ed.teeMap ?? "small"); }, [view, ed.teeView, ed.teeMap, ed.flyover, ed.flyCam, readOnlyView, onSite, compact]);
   // (the picked field's part outlined; redrawn as the field changes)
   const partItem = useCourse(s => (ed.fieldPart && ed.selectedId ? s.doc.items.find(i => i.id === ed.selectedId) : undefined));
   useEffect(() => { view?.setFieldPart(partItem ? partItem.id : null, ed.fieldPart ?? null); }, [view, partItem, ed.fieldPart]);
@@ -258,9 +269,20 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
     if (!view) return;
     // (standing on its own is only where the person is: without the spot, back to the map)
     if (ed.teeView === STAND_HERE && !ed.teeStand) { useEditor.getState().set({ teeView: null, flyover: false }); return; }
-    if (ed.flyover && ed.teeView && ed.teeView !== STAND_HERE) view.flyover(ed.teeView, () => useEditor.getState().set({ flyover: false }));
+    // (it holds at its end, paused, as a video player does; the camera's own preview ends)
+    if (ed.flyover && ed.teeView && ed.teeView !== STAND_HERE) {
+      if (ed.flyCam) view.flyover(ed.teeView, () => useEditor.getState().set({ flyover: false }));
+      else {
+        // (asked for at a moment: it opens held there)
+        const from = useEditor.getState().flyFrom ?? null;
+        view.flyover(ed.teeView, () => useEditor.getState().set({ flyPaused: true }), true, from);
+        if (from !== null) useEditor.getState().set({ flyFrom: null });
+      }
+    }
     else { view.setTeeView(ed.teeView, ed.teeViewTee ?? null, ed.teeStand ?? null); useEditor.getState().set({ flyLoading: null, ...(ed.teeView ? {} : { teeViewTee: null, teeStand: null }) }); }
   }, [view, ed.teeView, ed.teeViewTee, ed.flyover, ed.teeStand]);
+  useEffect(() => { view?.flyPause(ed.flyPaused); }, [view, ed.flyPaused, ed.flyover]);
+  useEffect(() => { view?.setColorPicking(ed.colorPicking > 0); }, [view, ed.colorPicking]);
 
   const scale = info ? scaleBar(info.pxPerUnit, 110, doc.units) : null;
   const elevation = hover ? heightAt(doc.terrainHeights, doc.gridSize, hover.x, hover.y) + doc.site.baseElevationFt : null;
@@ -289,7 +311,7 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
         <MyLocationDot view={view} stats={stats} />
         {plotBar}
         {obBar}
-        {!ed.teeView && controlsRoom > 0 && <TouchControls view={view} info={info} scale={info && flat ? scaleBar(info.pxPerUnit, 72, doc.units) : null} phone={compact === "phone"} top={controlsTop} room={controlsRoom} threeD={ed.view === "3d"} editing={boxable} />}
+        {!ed.teeView && controlsRoom > 0 && <TouchControls view={view} info={info} scale={info && flat ? scaleBar(info.pxPerUnit, 72, doc.units) : null} phone={compact === "phone"} top={controlsTop} room={controlsRoom} right={controlsRight} threeD={ed.view === "3d"} editing={boxable} />}
       </div>
     );
   }
@@ -385,7 +407,7 @@ function ObPickBar({ view, id, edge, cut, top, right }: { view: CourseView | nul
 /** The map's controls for a finger: 44 px buttons (zoom and turn also work by pinching and
  * twisting; these are the one-finger way, and the way for anyone who can't pinch). `editing`: the
  * course can be changed here (Design or Site, not view only): box select is offered. */
-function TouchControls({ view, info, scale, phone, top, room, threeD, editing }: { view: CourseView | null; info: ViewInfo | null; scale: { px: number; label: string } | null; phone: boolean; top: number; room: number; threeD: boolean; editing: boolean }) {
+function TouchControls({ view, info, scale, phone, top, room, right = 8, threeD, editing }: { view: CourseView | null; info: ViewInfo | null; scale: { px: number; label: string } | null; phone: boolean; top: number; room: number; right?: number; threeD: boolean; editing: boolean }) {
   const set = useEditor(e => e.set);
   const boxing = useEditor(e => e.dragSelect && e.tool === "select");
   const b = "w-11 h-11 flex items-center justify-center text-zinc-100 active:bg-white/[0.13] focus:outline-none focus-visible:bg-white/[0.13]";
@@ -421,7 +443,7 @@ function TouchControls({ view, info, scale, phone, top, room, threeD, editing }:
           <div className="h-1.5 border-x-2 border-b-2 border-white" style={{ width: scale.px }} />
         </div>
       )}
-      <div className="absolute right-2 z-10 flex flex-col gap-2 items-end pointer-events-none" style={{ top }} data-testid="map-controls">
+      <div className="absolute z-10 flex flex-col gap-2 items-end pointer-events-none" style={{ top, right }} data-testid="map-controls">
         {!phone && <ViewToggle look="rail" />}
         <div className={phone ? "flex flex-col gap-2 items-end" : "grid grid-cols-2 gap-2"}>
           <div className="flex flex-col gap-2">

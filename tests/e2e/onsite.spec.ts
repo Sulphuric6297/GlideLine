@@ -26,8 +26,8 @@ test("on site: a new hole walked onto the map: its tee, pins A and B, the fairwa
   const geo = await onEarth(page);
   await standAt(page, context, geo(300, 600));
   // In from the holes list
-  // (the sheet up to half: the holes list, its last row On site)
-  await page.getByTestId("sheet-handle").tap();
+  // (the Design step's panel, up out of its tab: the holes list, its last row On site)
+  await page.getByRole("navigation", { name: "Steps" }).getByRole("button", { name: /Design/ }).tap();
   await page.getByTestId("onsite-new").scrollIntoViewIfNeeded();
   await page.getByTestId("onsite-new").tap();
   const site = page.getByTestId("onsite");

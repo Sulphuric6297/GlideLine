@@ -27,7 +27,8 @@ test("a new visitor to the demo lands on Courses with the example course open be
   test.setTimeout(300_000);
   await page.route(/\/example\/course\.json$/, r => r.fulfill({ contentType: "application/json", body: JSON.stringify(stand()) }));
   // (a new visitor: not the tests' empty start)
-  await page.evaluate(() => localStorage.removeItem("hyzerlab-start-blank"));
+  // (and no place kept in this tab: a refresh keeps it, a new visit has none)
+  await page.evaluate(() => { localStorage.removeItem("hyzerlab-start-blank"); sessionStorage.clear(); });
   await page.reload();
   await expect(page.getByTestId("demo-home")).toBeVisible();
   await expect(page.getByTestId("example-card")).toContainText("Thunder Hollow");

@@ -373,6 +373,14 @@ select option:disabled {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+@keyframes dggone {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+/* The map's new treetops fading in; the last painting fading out over the new one */
+.dg-paintfade { animation: dgfade 0.4s ease both; }
+.dg-paintgone { animation: dggone 0.4s ease both; }
+@media (prefers-reduced-motion: reduce) { .dg-paintfade { animation: none; } .dg-paintgone { display: none; } }
 @keyframes dgrise {
   from { transform: translateY(24px); opacity: 0; }
   to { transform: none; opacity: 1; }
@@ -442,3 +450,29 @@ select {
 .dg-colorbar::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 9999px; background: transparent; border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
 .dg-colorbar::-moz-range-thumb { width: 14px; height: 14px; border-radius: 9999px; background: transparent; border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
 @media (pointer: coarse) { .dg-colorbar::-webkit-slider-thumb { width: 26px; height: 26px; } }
+
+/* The phone's glass bar: a menu or dial grows out of the button tapped and shrinks back into it
+   (mobile/GlassBar); a column of settings fades at its foot when more are below */
+@keyframes dggrow { from { opacity: 0; transform: scale(0.5, 0.3); } to { opacity: 1; transform: none; } }
+@keyframes dgshrink { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(0.5, 0.3); } }
+/* (no fill before it starts: where animations don't run, a page in the background say, it shows as it is) */
+.dg-grow { animation: dggrow 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.04); }
+.dg-shrink { animation: dgshrink 0.13s ease-in forwards; }
+.dg-fade-b {
+  -webkit-mask-image: linear-gradient(#000 84%, transparent);
+  mask-image: linear-gradient(#000 84%, transparent);
+}
+@media (prefers-reduced-motion: reduce) { .dg-grow, .dg-shrink { animation: none; } }
+/* (a hint over the map, coming in softly) */
+@keyframes dgfadein { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.dg-fade-in { animation: dgfadein 0.25s ease; }
+/* (fading in where it is: dg-fade-in is for what's centred by translate(-50%)) */
+.dg-appear { animation: dgfade 0.25s ease; }
+@media (prefers-reduced-motion: reduce) { .dg-fade-in { animation: none; } }
+
+/* The phone's steps tucking away under a tool's bar, and coming back up (mobile/CompactShell) */
+@keyframes dgtuck { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(60%) scale(0.94); } }
+@keyframes dguntuck { from { opacity: 0; transform: translateY(60%) scale(0.94); } to { opacity: 1; transform: none; } }
+.dg-tuck { animation: dgtuck 0.26s cubic-bezier(0.2, 0.9, 0.3, 1) forwards; }
+.dg-untuck { animation: dguntuck 0.26s cubic-bezier(0.2, 0.9, 0.3, 1); }
+@media (prefers-reduced-motion: reduce) { .dg-tuck, .dg-untuck { animation: none; } }

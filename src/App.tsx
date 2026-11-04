@@ -3,7 +3,9 @@
 import { usePageToasts } from "./auth/Home";
 import { SHOW_EVENT } from "./components/showSetting";
 import { saveNow, useServerCourse } from "./auth/courses";
-import { SERVER } from "./auth/api";
+import { SERVER, useAuth } from "./auth/api";
+import { goDemoHome, useDemoHome } from "./components/DemoHome";
+import { keepPlace, placeBefore } from "./state/tabPlace";
 import { HelpGuide } from "./components/help/HelpGuide";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MapPinned, Route, X } from "lucide-react";
@@ -31,12 +33,15 @@ import { Button, HELP_EVENT } from "./components/ui";
 import { GettingStarted, openGettingStarted } from "./components/GettingStarted";
 import { useLayout, useTouch } from "./components/useLayout";
 import { CompactShell, GroundMenu, ItemMenu } from "./components/mobile/CompactShell";
-import { useCourse, useEditor, getDoc, changeDoc } from "./state/course";
+import { useCourse, useEditor, getDoc, changeDoc, type Step } from "./state/course";
 import { copySelection, cutSelection, deleteSelection, duplicateSelection, nudgeSelection, pasteClipboard, select, selectAll } from "./state/actions";
 import { groundActions, itemActions, type ItemAction } from "./components/itemActions";
 import { allowed } from "./auth/perms";
 import { osmFailedToast } from "./state/osm";
-import { restoreAutosave, startAutosave } from "./state/files";
+import { openExample, openRecent, restoreAutosave, startAutosave } from "./state/files";
+import { EXAMPLE_ID } from "./lib/example";
+import { goHome } from "./auth/AccountMenu";
+import { SITE_TOKEN } from "./auth/PublicSite";
 import { toast, useToasts } from "./state/toast";
 import { courseStats, holeStats } from "./lib/holeStats";
 import { STAND_HERE } from "./constants";
@@ -223,10 +228,65 @@ export default function App() {
     const stop = startAutosave();
     void (async () => {
       await restoreAutosave();
+      // (a tab refreshed in a course: on the step and printout it was on)
+      if (placeBefore && !(SERVER ? useAuth.getState().home : useDemoHome.getState().open)) useEditor.getState().set({ step: placeBefore.step, designTab: placeBefore.tab, tool: "select" });
       setReady(true);
     })();
     return stop;
   }, []);
+  // Where the tab is, kept as it changes, for a refresh to come back to
+  useEffect(() => {
+    if (!ready) return;
+    const keep = () => {
+      const listed = SERVER ? useAuth.getState().home : useDemoHome.getState().open;
+      const id = SERVER ? useServerCourse.getState().id : getDoc().id;
+      const e = useEditor.getState();
+      keepPlace(listed || !id ? null : { course: id, step: e.step, tab: e.designTab });
+    };
+    keep();
+    const stops = [useAuth.subscribe(keep), useServerCourse.subscribe(keep), useDemoHome.subscribe(keep), useEditor.subscribe(keep), useCourse.subscribe(keep)];
+    return () => stops.forEach(f => f());
+  }, [ready]);
+  // The browser's Back and Forward (a phone's back gesture too): through the steps, between a
+  // course and Courses, and back to the course open before (a printout's tab or a tool isn't a
+  // place of its own: Back never takes a step to undo those)
+  useEffect(() => {
+    if (!ready || SITE_TOKEN) return;
+    type Spot = { listed: boolean; course: string | null; step: Step };
+    const here = (): Spot => ({ listed: SERVER ? useAuth.getState().home : useDemoHome.getState().open, course: (SERVER ? useServerCourse.getState().id : getDoc().id) ?? null, step: useEditor.getState().step });
+    let at = here(), going = false;
+    history.replaceState({ ...history.state, dgSpot: at }, "");
+    const moved = () => {
+      if (going) return;
+      const now = here();
+      if (now.listed === at.listed && now.step === at.step && now.course === at.course) return;
+      // (the same place: a new course given its name when first saved, or Courses as it was)
+      const same = (now.listed === at.listed && now.step === at.step && (!at.course || !now.course)) || (now.listed && at.listed);
+      if (same) history.replaceState({ ...history.state, dgSpot: now }, "");
+      else history.pushState({ dgSpot: now }, "");
+      at = now;
+    };
+    const went = async (e: PopStateEvent) => {
+      const to = (e.state as { dgSpot?: Spot } | null)?.dgSpot;
+      if (!to) return;
+      going = true;
+      try {
+        if (to.listed) {
+          if (SERVER) goHome(); else goDemoHome();
+        } else {
+          if (to.course && to.course !== here().course) await (!SERVER && to.course === EXAMPLE_ID ? openExample() : openRecent(to.course));
+          if (SERVER) useAuth.getState().showHome(false); else useDemoHome.setState({ open: false });
+          useEditor.getState().set({ step: to.step, tool: "select", teeView: null, flyover: false });
+        }
+      } finally {
+        at = here();
+        going = false;
+      }
+    };
+    window.addEventListener("popstate", went);
+    const stops = [useAuth.subscribe(moved), useServerCourse.subscribe(moved), useDemoHome.subscribe(moved), useEditor.subscribe(moved), useCourse.subscribe(moved)];
+    return () => { window.removeEventListener("popstate", went); stops.forEach(f => f()); };
+  }, [ready]);
 
   // (the whole site in view, its top up: the way its frame was turned)
   const faceTheSite = () => {
@@ -323,6 +383,8 @@ export default function App() {
         // other holes, and Esc back to the map)
         const picked = (!!s.selectedId && !getDoc().holes.some(h => h.id === s.selectedId)) || s.group.length > 0;
         const mapKey = e.key === "Escape" ? picked || s.tool !== "select" : !e.key.startsWith("Arrow") || picked;
+        // (Space plays the flyover and pauses it, as a video player's does)
+        if (e.key === " " && s.teeView !== STAND_HERE && !s.flyCam && !picked && !e.repeat) { e.preventDefault(); s.set(s.flyover ? { flyPaused: !s.flyPaused } : { flyover: true }); return; }
         if (!(editing && mapKey)) {
         // (Esc stops a flight first, back at the tee; then leaves the tee view)
         if (e.key === "Escape") s.set(s.flyover ? { flyover: false } : { teeView: null, flyover: false });
@@ -465,7 +527,9 @@ export default function App() {
           {(ed.step === "map" || ed.step === "export") && !ed.teeView && <MapDesigner preview={ed.step === "export"} />}
           {ed.step === "design" && !readOnly && !ed.teeView && <HolesColumn />}
           {ed.step === "design" && !readOnly && <ProblemsPanel />}
-          {ed.step === "design" || ed.step === "site" ? !readOnly && <Toolbar /> : null}
+          {/* (from a tee, only in Tap mode Select: walking, playing a flyover and editing its camera path
+              draw nothing) */}
+          {(ed.step === "design" || ed.step === "site") && !(ed.teeView && (ed.flyCam || ed.flyover || ed.standTap !== "edit")) ? !readOnly && <Toolbar /> : null}
           {ed.step === "design" && !readOnly && <Inspector />}
           {ed.teeView && (ed.flyCam && !readOnly ? <CameraHud /> : <TeeViewHud />)}
           <ExportProgressPill />

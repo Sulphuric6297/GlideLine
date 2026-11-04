@@ -19,6 +19,7 @@ import { isLineKind, offsetPolygon, roofFor, structureHeight, structurePath, str
 import { latitudeOf, lookParts, paintLight, sunFromOf, themeOf } from "./mapLook";
 import { STYLE_GREENS, drawMist, drawShadows, drawTrees, gradeLight, type PaintTree } from "./paintTrees";
 import { drawBrushedSteps, type Wait } from "./brushCrown";
+import { BRUSH, brushOnly, spotDraw, underbrushSpots } from "./brushSpots";
 import { LOOK_TINT, LOOK_VARIANTS, conifersWith, drawOf, lookFor, shapeWith, sharesOf, standShares, type TreeLookId } from "./treeMix";
 
 /** Where the photo shows trees, on a grid over the site (1 = canopy). */
@@ -273,6 +274,103 @@ export type ForestOpts = {
   /** The ground under the trees, for the 3D views (where the trees stand in 3D): grass in the
    * woods, no treetops. */
   under?: boolean;
+  /** Kept, to be painted again quickly after a change of only its colors or tone (the live one). */
+  keep?: boolean;
+  /** Its pixel pass shared out among workers, where that helps (painted a step at a time). */
+  parallel?: boolean;
+  /** Only these rows' pixel pass (a worker's band). */
+  rows?: [number, number];
+};
+
+// ---------------------------------------------------------------- painted again
+// A painting's work kept for the next: after a change of only the colors and tone its pixels are
+// mixed from, only the pixels that color reaches are painted again (after a change of tone, only
+// the last step of each), from the masks, treetops, light and ground it already worked out, the
+// same pixels a whole new painting would give. One painting kept, the live one: each pixel's color
+// before the tone, and which of those colors it was mixed from.
+const RECOLORS = ["water", "path", "fairway", "rough", "tallGrass", "light", "contrast", "colorStrength", "paint"] as const;
+const MIX = { grass: 1, fairway: 2, water: 4, path: 8, tall: 16 }, ALL = 255;
+type Steps = Generator<number | void | Wait, HTMLCanvasElement, unknown>;
+/** A canvas, on the page or in a worker (where there's no page: an offscreen one, used alike). */
+const newCanvas = () => (typeof document === "undefined" ? new OffscreenCanvas(1, 1) : document.createElement("canvas")) as HTMLCanvasElement;
+
+// ---------------------------------------------------------------- painted in bands
+// A whole new painting's pixel pass (most of its time) shared out in bands of rows among workers,
+// each working out the masks, treetops and light as the page does, then its rows, the very same
+// pixels; the page lays them in and draws the trees and the rest over them. Only where it's
+// sure to help and to fit: a computer with cores and memory to spare (a phone, a tablet, an
+// older or smaller machine, or a browser without workers that draw: all on the page, as before).
+type Band = { o: Uint8ClampedArray; pre: Float32Array; bits: Uint8Array };
+let bandOut: Band | null = null;
+const bandWorkers = () => {
+  if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined" || typeof document === "undefined") return 0;
+  const cores = navigator.hardwareConcurrency || 2, memory = (navigator as { deviceMemory?: number }).deviceMemory;
+  if (matchMedia("(pointer: coarse)").matches || cores < 6 || (memory !== undefined && memory < 8)) return 0;
+  return Math.min(4, cores - 2);
+};
+let pool: Worker[] = [], poolBusy = false, jobNo = 0, laidIn = 0;
+/** (the job the workers are on: let go, it's painted on the page instead) */
+let letGo: (() => void)[] = [];
+const terrainIds = new WeakMap<object, number>(), sentTerrain = new WeakMap<Worker, number>();
+let terrainNo = 0;
+/** (for the tests: how many paintings had their bands painted by workers) */
+export const bandsLaidIn = () => laidIn;
+/** The pixel pass for rows y0 to y1 only (in a worker): those rows' pixels, colors before the tone and marks. */
+export const forestBand = (doc: CourseDoc, view: ForestView, stats: HoleStats[], opts: ForestOpts): Band | null => {
+  bandOut = null;
+  forestCanvas(doc, view, stats, opts);
+  return bandOut;
+};
+/** The bands, painted by the workers (null: done on the page instead). */
+const paintBands = (doc: CourseDoc, view: ForestView, stats: HoleStats[], opts: ForestOpts, H: number): Promise<Band[] | null> | null => {
+  const n = bandWorkers();
+  if (n < 2) return null;
+  // (a painting asked for while the last is still out: the workers it's waiting on let go, fresh ones taken)
+  // (and the painting that was waiting on them told to paint on the page: never left waiting)
+  if (poolBusy) { pool.forEach(w => w.terminate()); pool = []; letGo.forEach(f => f()); letGo = []; }
+  try {
+    while (pool.length < n) pool.push(new Worker(new URL("./forest.worker.ts", import.meta.url), { type: "module" }));
+  } catch {
+    return null;
+  }
+  poolBusy = true;
+  const id = ++jobNo, workers = pool, standing = measuredStanding();
+  // (the ground's heights sent to a worker once and kept there, so what it works out from them
+  // is kept too, as the page keeps it; the photo not at all: the painting doesn't read it)
+  const terrainId = terrainIds.get(doc.terrainHeights) ?? terrainIds.set(doc.terrainHeights, ++terrainNo).get(doc.terrainHeights)!;
+  const plain = { ...doc, terrainHeights: {}, background: undefined };
+  const job = Promise.all(workers.map((w, j) => new Promise<Band | null>(done => {
+    const rows: [number, number] = [Math.round((H * j) / n), Math.round((H * (j + 1)) / n)];
+    const fail = () => done(null);
+    letGo.push(fail);
+    w.onmessage = (e: MessageEvent<{ id: number } & Partial<Band>>) => { if (e.data.id === id) done(e.data.o && e.data.pre && e.data.bits ? (e.data as Band) : null); };
+    w.onerror = fail;
+    const terrain = sentTerrain.get(w) === terrainId ? null : doc.terrainHeights;
+    sentTerrain.set(w, terrainId);
+    w.postMessage({ id, doc: plain, terrainId, terrain, view, stats, opts: { ...opts, keep: false, parallel: false, rows }, standing });
+  }))).then(bands => (bands.every(Boolean) ? (bands as Band[]) : null)).catch(() => null);
+  void job.finally(() => { if (jobNo === id) { poolBusy = false; letGo = []; } });
+  return job;
+};
+let kept: { key: string; canopy: unknown; terrain: unknown; rerun: (s: MapStyle) => Steps } | null = null;
+/** Everything a painting is made from but those colors and tone. */
+const keptKey = (doc: CourseDoc, view: ForestView, stats: HoleStats[], opts: ForestOpts) => {
+  const st: Record<string, unknown> = { ...opts.style };
+  for (const k of RECOLORS) delete st[k];
+  if (opts.style.lookParts) st.lookParts = Object.fromEntries(Object.entries(opts.style.lookParts).map(([part, v]) => [part, { ...v, bright: undefined, texture: undefined }]));
+  return JSON.stringify([view, opts.density ?? 2, opts.mode, !!opts.under, st, paintedFrom(doc), stats.map(t => [t.holeId, t.line, t.complete]), doc.canvas, doc.units, doc.site]);
+};
+const keptFor = (doc: CourseDoc, view: ForestView, stats: HoleStats[], opts: ForestOpts) =>
+  kept && kept.canopy === opts.canopy && kept.terrain === doc.terrainHeights && kept.key === keptKey(doc, view, stats, opts) ? kept : null;
+/** Whether this painting can be made from the one kept (only its colors or tone changed). */
+export const paintsAgain = (doc: CourseDoc, view: ForestView, stats: HoleStats[], opts: ForestOpts) => !!keptFor(doc, view, stats, opts);
+/** (for the tests: the next painting a whole new one) */
+export const forgetKept = () => { kept = null; };
+/** The colors to paint again from one style to the next (ALL: every pixel, its brushwork changed). */
+const redoOf = (a: MapStyle, b: MapStyle) => {
+  const brush = (s: MapStyle) => JSON.stringify([s.paint, Object.values(lookParts(s)).map(v => [(v as { bright?: number }).bright, (v as { texture?: number }).texture])]);
+  if (brush(a) !== brush(b)) return ALL;
+  return (a.rough !== b.rough ? MIX.grass : 0) | (a.fairway !== b.fairway ? MIX.fairway : 0) | (a.water !== b.water ? MIX.water : 0) | (a.path !== b.path ? MIX.path : 0) | (tallGrassOf(a) !== tallGrassOf(b) ? MIX.tall : 0);
 };
 
 /**
@@ -284,8 +382,11 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
   const measured = doc.lidar?.trees.length ? measuredStanding() : null;
   const density = opts.density ?? 2;
   const s = opts.style;
+  const again = kept && keptFor(doc, view, stats, opts);
+  if (again) return yield* again.rerun(s);
   const W = Math.max(1, Math.round(view.width * density)), H = Math.max(1, Math.round(view.height * density));
-  const canvas = document.createElement("canvas");
+  const bands = opts.parallel && !opts.rows && W * H >= 1e6 ? paintBands(doc, view, stats, opts, H) : null;
+  const canvas = newCanvas();
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
@@ -311,7 +412,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
   const mw = Math.ceil(W / cell), mh = Math.ceil(H / cell);
   const mk = k / cell;
   const mask = () => {
-    const c = document.createElement("canvas");
+    const c = newCanvas();
     c.width = mw;
     c.height = mh;
     const g = c.getContext("2d", { willReadFrequently: true })!;
@@ -430,7 +531,9 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       else if (a.kind === "nogo") poly(CLEAR, a.points);
       // (a field, court or play area: mown, no treetops over it; the map draws it on top)
       else if (a.kind === "field") { poly(FAIR, a.points); poly(CLEAR, offsetPolygon(a.points, (crownR * 0.8) / k)); }
-      else if (a.kind === "woods") poly(WOODS, a.points);
+      // (a wood of bushes only: its bushes drawn one by one, below, no woods floor or treetops)
+      // (a wood of bushes only: a few of its bushes drawn, below, on the ground as it is)
+      else if (a.kind === "woods" && !brushOnly(a)) poly(WOODS, a.points);
     } else if (i.type === "line") {
       const l = i as LineItem;
       const { points: pts, width: lw, widthAt } = paintedLine(l, view.scale);
@@ -500,7 +603,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     return out;
   };
   const readNow = (c: HTMLCanvasElement, blur: number) => {
-    const o = document.createElement("canvas");
+    const o = newCanvas();
     o.width = mw;
     o.height = mh;
     const g = o.getContext("2d", { willReadFrequently: true })!;
@@ -652,7 +755,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     // outline took seconds on a phone, in one go, the view stuck meanwhile)
     const inDrawn = mask();
     const DRAWN = ch(inDrawn, 0);
-    for (const a of doc.items.filter(i => i.type === "area" && i.kind === "woods" && (i as AreaItem).trees !== "none") as AreaItem[]) poly(DRAWN, drawnAreas([a])[0].points);
+    for (const a of doc.items.filter(i => i.type === "area" && i.kind === "woods" && (i as AreaItem).trees !== "none" && !brushOnly(i as AreaItem)) as AreaItem[]) poly(DRAWN, drawnAreas([a])[0].points);
     const drawn = inDrawn.g.getImageData(0, 0, mw, mh).data;
     // (more woods asked for, from the photo or everywhere: never under a measured crown, no woods
     // floor round the measured trees)
@@ -761,7 +864,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
   const look = lookParts(s), pl = paintLight(s);
   // (Size, the one thing about the trees that's the map's: every tree in every look, the woods',
   // the measured and the placed, as big as its look draws it times this; 1 until it's moved)
-  const treeScale = look.trees.size / (themeOf(s).parts.trees.size || 1);
+  const treeScale = look.trees.size / (themeOf(s).parts.trees.size || 1), brushSize = look.trees.brush ?? 1;
   // (the newer looks: trees drawn as shapes after the ground, not stamped into the height field)
   const vector = look.trees.style !== "classic" && !opts.under;
   const vstyle = look.trees.style as Exclude<typeof look.trees.style, "classic">;
@@ -891,6 +994,36 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       }
     }
   }
+  // Underbrush on its own (the brush that came in with the import): a few of the bushes 3D grows
+  // (lib/brushSpots), low, under the trees, on the ground as it is; where brush areas overlap, the
+  // smaller one's grows, as in 3D. The map is an overview: the trees lead, the brush only says it's
+  // there, its bushes as big as Brush size says.
+  const brushWoods = opts.under ? [] : (doc.items.filter(i => i.type === "area" && i.kind === "woods" && brushOnly(i as AreaItem) && (i as AreaItem).trees !== "none") as AreaItem[]);
+  brushWoods.forEach((w, n) => {
+    const box = boundsOf(w.points), sb = { a: toScreen({ x: box.minX, y: box.minY }), b: toScreen({ x: box.maxX, y: box.maxY }) };
+    if (Math.max(sb.a.x, sb.b.x) < 0 || Math.max(sb.a.y, sb.b.y) < 0 || Math.min(sb.a.x, sb.b.x) > W || Math.min(sb.a.y, sb.b.y) > H) return;
+    const over = brushWoods.slice(n + 1).filter(o => { const b = boundsOf(o.points); return b.minX < box.maxX && b.maxX > box.minX && b.minY < box.maxY && b.maxY > box.minY; }).map(o => o.points);
+    const clearAt = (x: number, y: number) => { const cx = Math.min(mw - 1, Math.max(0, Math.floor(x / cell))), cy = Math.min(mh - 1, Math.max(0, Math.floor(y / cell))); return a[(cy * mw + cx) * 4 + 1] > 90; };
+    const keepOut = (p: P, reach: number) => {
+      if (over.some(o => pointInPolygon(p, o))) return true;
+      const q = toScreen(p), d = reach * k;
+      return clearAt(q.x, q.y) || clearAt(q.x + d, q.y) || clearAt(q.x - d, q.y) || clearAt(q.x, q.y + d) || clearAt(q.x, q.y - d);
+    };
+    const density = w.density ?? 1, level = density < 0.75 ? "light" : density > 1.4 ? "heavy" : "medium";
+    // (closer than reads: fewer bushes, each bigger, the same ground covered)
+    // (a bush every three and a half treetops or so, none of the young trees, smaller than in 3D)
+    const least = (crownR * 3.5) / k, closer = Math.min(1, BRUSH[level].spacing / least), size = 0.7 * brushSize;
+    const spots = underbrushSpots(w.points, keepOut, level, 0, w.points, w.brushKind ?? "mixed", closer).filter(b => b.growth);
+    for (const b of spots) {
+      const sp = toScreen(b);
+      const r = Math.max(1.6 * pt, (b.width / 2) * k * treeScale * size);
+      if (sp.x < -r || sp.y < -r || sp.x > W + r || sp.y > H + r) continue;
+      const top = Math.max(r * 1.1, b.height * k * treeScale), seed = spotDraw(b, 31), tone = 1 + Math.floor(seed * 6);
+      if (vector) { vtrees.push({ x: sp.x, y: sp.y, r: b.growth ? r * 0.9 : r, h: b.growth ? Math.min(top, r * 1.1) : top, pine: false, col: treeColor(spotDraw(b, 32)), seed, look: null }); continue; }
+      if (!b.growth) natural ? leafy(sp.x, sp.y, r, top, tone) : stamp(sp.x, sp.y, r, top, tone);
+      else natural ? leafy(sp.x, sp.y, r * 0.9, Math.min(top, r * 1.1), tone, 4) : stamp(sp.x, sp.y, r * 0.9, Math.min(top, r * 1.1), tone);
+    }
+  });
   // The measured trees, each drawn whole where it stands, at its own size and height and of its
   // own kind, as a tree placed by hand is (crowns that touch are the woods' canopy)
   if (measured && !opts.under) measured.trees.forEach(([x0, y0, h0, radius, conifer], idx) => {
@@ -1024,7 +1157,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
   };
   // The ground darkens near the woods, all round (the light under the trees' edges)
   const near = (() => {
-    const cov = document.createElement("canvas");
+    const cov = newCanvas();
     cov.width = mw;
     cov.height = mh;
     const g = cov.getContext("2d", { willReadFrequently: true })!;
@@ -1032,7 +1165,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) if (height[y * W + x] > 0) id.data[((y >> 1) * mw + (x >> 1)) * 4] = 255;
     for (let m = 3; m < id.data.length; m += 4) id.data[m] = 255;
     g.putImageData(id, 0, 0);
-    const o2 = document.createElement("canvas");
+    const o2 = newCanvas();
     o2.width = mw;
     o2.height = mh;
     const g2 = o2.getContext("2d", { willReadFrequently: true })!;
@@ -1045,7 +1178,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
   // inside them and fades into the grass at their edges (the woods' outline is coarse; hard
   // edged, its gaps beside the treetops read as dark specks)
   const inWoods = (() => {
-    const cov = document.createElement("canvas");
+    const cov = newCanvas();
     cov.width = mw;
     cov.height = mh;
     const g = cov.getContext("2d", { willReadFrequently: true })!;
@@ -1053,7 +1186,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     for (let m = 0; m < wooded.length; m++) if (wooded[m]) id.data[m * 4] = 255;
     for (let m = 3; m < id.data.length; m += 4) id.data[m] = 255;
     g.putImageData(id, 0, 0);
-    const o2 = document.createElement("canvas");
+    const o2 = newCanvas();
     o2.width = mw;
     o2.height = mh;
     const g2 = o2.getContext("2d", { willReadFrequently: true })!;
@@ -1080,645 +1213,700 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
   const inked = reliefLook === "cliffs" || reliefLook === "terraces";
 
   yield;
+  // (the trees as worked out: each painting draws copies, never these)
+  const treesOnce = vtrees;
+  let last: { style: MapStyle; bits: Uint8Array; pre: Float32Array } | null = null;
   // ---------------------------------------------------------------- paint
-  // Every surface is a brightness, cut into a few tones of its own earthy palette (the
-  // painted, cut-out look of hand-made course maps); `paint` 0 blends the tones smoothly
-  const crisp = Math.max(0, Math.min(1, s.paint ?? 0.8));
-  // Near-black gaps up to pale, sunlit sage tops
-  const woodsFactors = [0.54, 0.69, 0.86, 1.02, 1.2, 1.46, 1.86, 2.4];
-  const woods = palette(s.trees, woodsFactors, 6, 0.82);
-  // Treetops in several colors where the landscape has them (autumn), one color per tree
-  // (as vivid as Autumn colors asks, as in every look)
-  const mixPals = treeMixOf(s).map(c => palette(vividLeaf(c, s.autumnVivid ?? 1), woodsFactors, 6, 0.9));
-  // (pines keep their needles: deep blue-green whatever the season)
-  const pinePal = palette("#2c4636", woodsFactors, 0, 0.9);
-  // (under the 3D view, a little darker: its sun is brighter than the printed map's paper)
-  const dim = (f: number[]) => (opts.under ? f.map(v => v * 0.88) : f);
-  const fair = palette(s.fairway, dim([0.56, 0.7, 0.84, 1, 1.14, 1.28]), 4);
-  const lawn = palette(s.rough, dim([0.6, 0.76, 0.9, 1.04, 1.18]), 3);
-  // Tall grass: lighter and straw yellow
-  const tallPal = palette(tallGrassOf(s), [0.62, 0.78, 0.92, 1.06, 1.2, 1.34], 6, 0.9);
-  // (shaded green, never black: the gaps between treetops are where it shows)
-  const floorPal = palette(s.trees, [0.5, 0.64, 0.8], 0, 0.9);
-  // (the lightest tones toward teal: shallows and the rim)
-  const water = palette(s.water, [0.42, 0.58, 0.76, 0.94, 1.12, 1.34, 1.62], -14);
-  // Worn dirt: an olive tan, lighter than the shade around it (it reads as open ground)
-  const dirtPal = palette(s.path, [0.86, 1.03, 1.19, 1.35, 1.54], -8, 0.85);
-  // (under the 3D view, the 3D look's roads and parking)
-  const road = palette(opts.under ? s.look3d?.paving ?? "#969a9d" : "#969a9d", [0.66, 0.8, 0.92, 1.02, 1.1], 0);
-  // (concrete: lighter and warmer than the asphalt roads, so a walkway reads apart from a road)
-  const walkPal = palette("#dcdad4", [0.8, 0.9, 0.97, 1.02, 1.06], 0, 0.6);
-  const TIERS = ["dirt", "gravel", "walkway", "road"] as const;
-  const order = (s.pathOrder?.length === 4 ? s.pathOrder : TIERS).map(t => TIERS.indexOf(t));
-  const sandPal = palette("#b3a275", [0.78, 0.9, 1, 1.1], 0);
-  // (gravel: a warm stone, speckled light and dark: never the smooth pale of concrete)
-  const gravelPal = palette("#b3a891", [0.66, 0.82, 0.96, 1.1, 1.22], 0, 1.1);
-  const chipsPal = palette(PATH_SURFACES.woodchips.color, [0.72, 0.86, 1, 1.16], 0);
-  const roof = palette("#77716a", [0.6, 0.8, 1, 1.18], 0);
-  const n6 = (pal: RGB[]) => pal.length;
-  /** A palette tone for brightness v (0..1): bands with soft or crisp steps. */
-  let tr0 = 0, tg0 = 0, tb0 = 0;
-  const tone = (pal: RGB[], v: number) => {
-    const n = n6(pal);
-    const f = Math.max(0, Math.min(0.9999, v)) * (n - 1);
-    const i = Math.floor(f);
-    const frac = f - i;
-    // crisp: the next tone only in the last sliver of the band; smooth: a full blend
-    const e = 1 - 0.88 * crisp;
-    const t = frac < 1 - e ? 0 : (frac - (1 - e)) / e;
-    const c0 = pal[i], c1 = pal[Math.min(n - 1, i + 1)];
-    tr0 = c0[0] + (c1[0] - c0[0]) * t;
-    tg0 = c0[1] + (c1[1] - c0[1]) * t;
-    tb0 = c0[2] + (c1[2] - c0[2]) * t;
-  };
-  const thick = smooth(0.55, 1, cover);
-  const bump = crownR * 0.75;
-  // Leaf dabs grow with the page's resolution (tile pixels per pixel), a little bigger than a pixel
-  // each; the crowns' own slope is softened so the dabs carry the texture (soft: sharp dabs and
-  // dark gaps between clumps read as broccoli)
-  const dabK = 0.8 / Math.max(0.5, pt * 0.85);
-  const bumpK = 5;
-  const img = ctx.createImageData(W, H);
-  const o = img.data;
-  let cr = 0, cg = 0, cb = 0;
-  /** Lays a surface over what is there, with a narrow soft edge. */
-  const lay = (pal: RGB[], v: number, alpha: number) => {
-    if (alpha <= 0) return;
-    tone(pal, v);
-    cr += (tr0 - cr) * alpha;
-    cg += (tg0 - cg) * alpha;
-    cb += (tb0 - cb) * alpha;
-  };
-  const light = s.light ?? 0, contrast = s.contrast ?? 0, sat = s.colorStrength ?? 1;
-  // The grass's own looks (Painted: the tone bands above): each from the course's grass color,
-  // lighter and sunnier, its patterns in feet so they stay put however the map is framed
-  const grassBase = rgbToHsl(hexRgb(s.rough));
-  const lightLift = Math.max(0, Math.min(1, (0.85 - grassBase[2]) / 0.5));
-  const gshift = (dl: number, dh: number, ds: number): RGB => hslToRgb(grassBase[0] + dh, Math.max(0, Math.min(1, grassBase[1] + ds)), Math.max(0.04, Math.min(0.92, grassBase[2] + dl)));
-  const G = {
-    meadow: [gshift(0.13, -6, 0.06), gshift(0.29, -14, 0.08), gshift(0.03, 0, 0.02)],
-    field: [gshift(0.06, -22, 0.02), gshift(0.2, -34, 0.08), gshift(0.0, -12, 0.02)],
-    mown: [gshift(0.08, -2, 0.04), gshift(0.14, -6, 0.06), gshift(0.02, 0, 0)],
-    // (lifted less where the land is already light: sand stays sand, not white)
-    storybook: [gshift(0.2 * lightLift, -4, 0.16), gshift(0.26 * lightLift, -8, 0.18), gshift(0.33 * lightLift, -14, 0.12)]
-  };
-  const blend = (p: RGB, q: RGB, t: number): RGB => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
-  // (the patterns are broad: a sample every other pixel, read between, is as good and a quarter the work)
-  const GF = 2, gfw = Math.ceil(W / GF) + 2, gfh = Math.ceil(H / GF) + 2;
-  const gStyle = look.grass.style;
-  const field2 = (f1: (X: number, Y: number) => number, f2: (X: number, Y: number) => number) => {
-    const A1 = new Float32Array(gfw * gfh), A2 = new Float32Array(gfw * gfh);
-    for (let gy = 0; gy < gfh; gy++) for (let gx = 0; gx < gfw; gx++) {
-      const sxp = (gx * GF - W / 2) / k, syp = (gy * GF - H / 2) / k, X = view.cx + sxp * cos + syp * sin, Y = view.cy - sxp * sin + syp * cos;
-      A1[gy * gfw + gx] = f1(X, Y); A2[gy * gfw + gx] = f2(X, Y);
-    }
-    return [A1, A2] as const;
-  };
-  const gfields = gStyle === "meadow" ? field2((X, Y) => fbm(X * 0.006, Y * 0.006), (X, Y) => fbm(X * 0.03 + 4, Y * 0.03))
-    : gStyle === "field" ? field2((X, Y) => fbm(X * 0.004 + Y * 0.002, Y * 0.03 - X * 0.012), (X, Y) => fbm(X * 0.008, Y * 0.008))
-    : gStyle === "storybook" ? field2((X, Y) => fbm(X * 0.004, Y * 0.004), (X, Y) => fbm(X * 0.012 + 3, Y * 0.012))
-    : gStyle === "mown" ? field2((X, Y) => fbm(X * 0.01, Y * 0.01), () => 0) : null;
-  const gread = (arr: Float32Array, x: number, y: number) => {
-    const fx = x / GF, fy = y / GF, ix = fx | 0, iy = fy | 0, u = fx - ix, v = fy - iy, j = iy * gfw + ix;
-    return (arr[j] * (1 - u) + arr[j + 1] * u) * (1 - v) + (arr[j + gfw] * (1 - u) + arr[j + gfw + 1] * u) * v;
-  };
-  const grassColor = (style: string, X: number, Y: number, tex: number, mott: number, grain: number, px: number, py: number): RGB => {
-    const f1 = gfields ? gread(gfields[0], px, py) : 0, f2 = gfields ? gread(gfields[1], px, py) : 0;
-    if (style === "meadow") {
-      const pp = f1, q = f2;
-      const c0 = blend(blend(G.meadow[0], G.meadow[1], smooth(0.35, 0.75, pp)), G.meadow[2], smooth(0.55, 0.85, q) * 0.5 * tex);
-      const kk = 0.94 + 0.08 * noise(X * 0.8, Y * 0.8) * tex + (grain - 0.5) * 0.04 * tex;
+  // (once for this painting, and again for each change of only its colors and tone, in that style;
+  // `prev`, the last one's pixels: those the change doesn't reach only have their tone again)
+  function* finish(s: MapStyle, prev: typeof last): Steps {
+    const look = lookParts(s);
+    const canvas = newCanvas();
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d")!;
+    const vtrees = treesOnce.map(t => ({ ...t, col: [...t.col] as RGB }));
+    // Every surface is a brightness, cut into a few tones of its own earthy palette (the
+    // painted, cut-out look of hand-made course maps); `paint` 0 blends the tones smoothly
+    const crisp = Math.max(0, Math.min(1, s.paint ?? 0.8));
+    // Near-black gaps up to pale, sunlit sage tops
+    const woodsFactors = [0.54, 0.69, 0.86, 1.02, 1.2, 1.46, 1.86, 2.4];
+    const woods = palette(s.trees, woodsFactors, 6, 0.82);
+    // Treetops in several colors where the landscape has them (autumn), one color per tree
+    // (as vivid as Autumn colors asks, as in every look)
+    const mixPals = treeMixOf(s).map(c => palette(vividLeaf(c, s.autumnVivid ?? 1), woodsFactors, 6, 0.9));
+    // (pines keep their needles: deep blue-green whatever the season)
+    const pinePal = palette("#2c4636", woodsFactors, 0, 0.9);
+    // (under the 3D view, a little darker: its sun is brighter than the printed map's paper)
+    const dim = (f: number[]) => (opts.under ? f.map(v => v * 0.88) : f);
+    const fair = palette(s.fairway, dim([0.56, 0.7, 0.84, 1, 1.14, 1.28]), 4);
+    const lawn = palette(s.rough, dim([0.6, 0.76, 0.9, 1.04, 1.18]), 3);
+    // Tall grass: lighter and straw yellow
+    const tallPal = palette(tallGrassOf(s), [0.62, 0.78, 0.92, 1.06, 1.2, 1.34], 6, 0.9);
+    // (shaded green, never black: the gaps between treetops are where it shows)
+    const floorPal = palette(s.trees, [0.5, 0.64, 0.8], 0, 0.9);
+    // (the lightest tones toward teal: shallows and the rim)
+    const water = palette(s.water, [0.42, 0.58, 0.76, 0.94, 1.12, 1.34, 1.62], -14);
+    // Worn dirt: an olive tan, lighter than the shade around it (it reads as open ground)
+    const dirtPal = palette(s.path, [0.86, 1.03, 1.19, 1.35, 1.54], -8, 0.85);
+    // (under the 3D view, the 3D look's roads and parking)
+    const road = palette(opts.under ? s.look3d?.paving ?? "#969a9d" : "#969a9d", [0.66, 0.8, 0.92, 1.02, 1.1], 0);
+    // (concrete: lighter and warmer than the asphalt roads, so a walkway reads apart from a road)
+    const walkPal = palette("#dcdad4", [0.8, 0.9, 0.97, 1.02, 1.06], 0, 0.6);
+    const TIERS = ["dirt", "gravel", "walkway", "road"] as const;
+    const order = (s.pathOrder?.length === 4 ? s.pathOrder : TIERS).map(t => TIERS.indexOf(t));
+    const sandPal = palette("#b3a275", [0.78, 0.9, 1, 1.1], 0);
+    // (gravel: a warm stone, speckled light and dark: never the smooth pale of concrete)
+    const gravelPal = palette("#b3a891", [0.66, 0.82, 0.96, 1.1, 1.22], 0, 1.1);
+    const chipsPal = palette(PATH_SURFACES.woodchips.color, [0.72, 0.86, 1, 1.16], 0);
+    const roof = palette("#77716a", [0.6, 0.8, 1, 1.18], 0);
+    // (the colors a change can be painted again for: which of them each pixel is mixed from)
+    const mark = (pal: RGB[], bit: number) => Object.assign(pal, { bit });
+    mark(lawn, MIX.grass); mark(fair, MIX.fairway); mark(water, MIX.water); mark(dirtPal, MIX.path); mark(tallPal, MIX.tall);
+    let px = 0;
+    const n6 = (pal: RGB[]) => pal.length;
+    /** A palette tone for brightness v (0..1): bands with soft or crisp steps. */
+    let tr0 = 0, tg0 = 0, tb0 = 0;
+    const tone = (pal: RGB[], v: number) => {
+      px |= (pal as RGB[] & { bit?: number }).bit ?? 0;
+      const n = n6(pal);
+      const f = Math.max(0, Math.min(0.9999, v)) * (n - 1);
+      const i = Math.floor(f);
+      const frac = f - i;
+      // crisp: the next tone only in the last sliver of the band; smooth: a full blend
+      const e = 1 - 0.88 * crisp;
+      const t = frac < 1 - e ? 0 : (frac - (1 - e)) / e;
+      const c0 = pal[i], c1 = pal[Math.min(n - 1, i + 1)];
+      tr0 = c0[0] + (c1[0] - c0[0]) * t;
+      tg0 = c0[1] + (c1[1] - c0[1]) * t;
+      tb0 = c0[2] + (c1[2] - c0[2]) * t;
+    };
+    const thick = smooth(0.55, 1, cover);
+    const bump = crownR * 0.75;
+    // Leaf dabs grow with the page's resolution (tile pixels per pixel), a little bigger than a pixel
+    // each; the crowns' own slope is softened so the dabs carry the texture (soft: sharp dabs and
+    // dark gaps between clumps read as broccoli)
+    const dabK = 0.8 / Math.max(0.5, pt * 0.85);
+    const bumpK = 5;
+    const img = ctx.createImageData(W, H);
+    const o = img.data;
+    let cr = 0, cg = 0, cb = 0;
+    /** Lays a surface over what is there, with a narrow soft edge. */
+    const lay = (pal: RGB[], v: number, alpha: number) => {
+      if (alpha <= 0) return;
+      tone(pal, v);
+      cr += (tr0 - cr) * alpha;
+      cg += (tg0 - cg) * alpha;
+      cb += (tb0 - cb) * alpha;
+    };
+    const light = s.light ?? 0, contrast = s.contrast ?? 0, sat = s.colorStrength ?? 1;
+    // The grass's own looks (Painted: the tone bands above): each from the course's grass color,
+    // lighter and sunnier, its patterns in feet so they stay put however the map is framed
+    const grassBase = rgbToHsl(hexRgb(s.rough));
+    const lightLift = Math.max(0, Math.min(1, (0.85 - grassBase[2]) / 0.5));
+    const gshift = (dl: number, dh: number, ds: number): RGB => hslToRgb(grassBase[0] + dh, Math.max(0, Math.min(1, grassBase[1] + ds)), Math.max(0.04, Math.min(0.92, grassBase[2] + dl)));
+    const G = {
+      meadow: [gshift(0.13, -6, 0.06), gshift(0.29, -14, 0.08), gshift(0.03, 0, 0.02)],
+      field: [gshift(0.06, -22, 0.02), gshift(0.2, -34, 0.08), gshift(0.0, -12, 0.02)],
+      mown: [gshift(0.08, -2, 0.04), gshift(0.14, -6, 0.06), gshift(0.02, 0, 0)],
+      // (lifted less where the land is already light: sand stays sand, not white)
+      storybook: [gshift(0.2 * lightLift, -4, 0.16), gshift(0.26 * lightLift, -8, 0.18), gshift(0.33 * lightLift, -14, 0.12)]
+    };
+    const blend = (p: RGB, q: RGB, t: number): RGB => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
+    // (the patterns are broad: a sample every other pixel, read between, is as good and a quarter the work)
+    const GF = 2, gfw = Math.ceil(W / GF) + 2, gfh = Math.ceil(H / GF) + 2;
+    const gStyle = look.grass.style;
+    const field2 = (f1: (X: number, Y: number) => number, f2: (X: number, Y: number) => number) => {
+      const A1 = new Float32Array(gfw * gfh), A2 = new Float32Array(gfw * gfh);
+      for (let gy = 0; gy < gfh; gy++) for (let gx = 0; gx < gfw; gx++) {
+        const sxp = (gx * GF - W / 2) / k, syp = (gy * GF - H / 2) / k, X = view.cx + sxp * cos + syp * sin, Y = view.cy - sxp * sin + syp * cos;
+        A1[gy * gfw + gx] = f1(X, Y); A2[gy * gfw + gx] = f2(X, Y);
+      }
+      return [A1, A2] as const;
+    };
+    const gfields = gStyle === "meadow" ? field2((X, Y) => fbm(X * 0.006, Y * 0.006), (X, Y) => fbm(X * 0.03 + 4, Y * 0.03))
+      : gStyle === "field" ? field2((X, Y) => fbm(X * 0.004 + Y * 0.002, Y * 0.03 - X * 0.012), (X, Y) => fbm(X * 0.008, Y * 0.008))
+      : gStyle === "storybook" ? field2((X, Y) => fbm(X * 0.004, Y * 0.004), (X, Y) => fbm(X * 0.012 + 3, Y * 0.012))
+      : gStyle === "mown" ? field2((X, Y) => fbm(X * 0.01, Y * 0.01), () => 0) : null;
+    const gread = (arr: Float32Array, x: number, y: number) => {
+      const fx = x / GF, fy = y / GF, ix = fx | 0, iy = fy | 0, u = fx - ix, v = fy - iy, j = iy * gfw + ix;
+      return (arr[j] * (1 - u) + arr[j + 1] * u) * (1 - v) + (arr[j + gfw] * (1 - u) + arr[j + gfw + 1] * u) * v;
+    };
+    const grassColor = (style: string, X: number, Y: number, tex: number, mott: number, grain: number, px: number, py: number): RGB => {
+      const f1 = gfields ? gread(gfields[0], px, py) : 0, f2 = gfields ? gread(gfields[1], px, py) : 0;
+      if (style === "meadow") {
+        const pp = f1, q = f2;
+        const c0 = blend(blend(G.meadow[0], G.meadow[1], smooth(0.35, 0.75, pp)), G.meadow[2], smooth(0.55, 0.85, q) * 0.5 * tex);
+        const kk = 0.94 + 0.08 * noise(X * 0.8, Y * 0.8) * tex + (grain - 0.5) * 0.04 * tex;
+        return [c0[0] * kk, c0[1] * kk, c0[2] * kk];
+      }
+      if (style === "field") {
+        const st = f1, pp = f2;
+        const c0 = blend(blend(G.field[0], G.field[1], smooth(0.3, 0.8, pp * 0.6 + st * 0.4 * tex)), G.field[2], (1 - mott) * 0.15);
+        const kk = 0.92 + 0.12 * noise(X * 0.8, Y * 0.8) * tex;
+        return [c0[0] * kk, c0[1] * kk, c0[2] * kk];
+      }
+      if (style === "storybook") {
+        // flat bright green, soft light patches, a fine dot grain (dots blended over a pixel)
+        const pp = f1, q = f2;
+        const c0 = blend(blend(G.storybook[0], G.storybook[1], smooth(0.4, 0.6, pp)), G.storybook[2], smooth(0.62, 0.72, q) * 0.6);
+        const fx = ((X % 7) + 7) % 7 - 3.5, fy = ((Y % 7) + 7) % 7 - 3.5, dd2 = Math.hypot(fx, fy), aa = 0.7 / k;
+        // (Texture: the dots deeper or fainter, as the style has them at its own 0.8)
+        const kk = 1 - Math.min(0.15, 0.05 * (tex / 0.8)) * smooth(1.25 + aa, 1.25 - aa, dd2);
+        return [c0[0] * kk, c0[1] * kk, c0[2] * kk];
+      }
+      // mown: stripes as a mower leaves them, blended over a pixel
+      const band = Math.max(-1, Math.min(1, Math.sin((X * 0.6 + Y * 0.8) / 18) * (18 * k / 1.2)));
+      const c0 = blend(G.mown[0], G.mown[1], f1);
+      const kk = 1.005 + 0.055 * band * tex + (grain - 0.5) * 0.03;
       return [c0[0] * kk, c0[1] * kk, c0[2] * kk];
+    };
+    yield;
+    // (a mask's channel k where the pixel is, from its four nearest cells)
+    let q00 = 0, q10 = 0, q01 = 0, q11 = 0, w00 = 1, w10 = 0, w01 = 0, w11 = 0;
+    // Each pixel's color before the tone, and the colors it was mixed from; painted again, the last
+    // painting's, and only the pixels whose colors changed worked out again
+    const redo = prev ? redoOf(prev.style, s) : ALL, reuse = !!prev && redo !== ALL;
+    const bits = prev?.bits ?? new Uint8Array(W * H), pre = prev?.pre ?? new Float32Array(W * H * 3);
+    /** The whole picture's brightness, contrast and color strength, on a pixel's color as kept. */
+    const put = (o4: number, i3: number) => {
+      let r = pre[i3], g = pre[i3 + 1], b = pre[i3 + 2];
+      if (light !== 0 || contrast !== 0 || sat !== 1) {
+        const lum = 0.3 * r + 0.59 * g + 0.11 * b;
+        r = lum + (r - lum) * sat; g = lum + (g - lum) * sat; b = lum + (b - lum) * sat;
+        const kk = 1 + contrast, add = 128 * (1 - kk) + light * 255;
+        r = r * kk + add; g = g * kk + add; b = b * kk + add;
+      }
+      o[o4] = r;
+      o[o4 + 1] = g;
+      o[o4 + 2] = b;
+      o[o4 + 3] = 255;
+    };
+    const S = (arr: ArrayLike<number>, k: number) => arr[q00 + k] * w00 + arr[q10 + k] * w10 + arr[q01 + k] * w01 + arr[q11 + k] * w11;
+    const rows = opts.rows ?? [0, H];
+    // (the bands from the workers, when they're painting it: laid in, the pass done)
+    const got = !prev && bands ? ((yield { wait: bands }) as Band[] | null) : null;
+    if (got) {
+      laidIn++;
+      let y = 0;
+      for (const b of got) {
+        o.set(b.o, y * W * 4); pre.set(b.pre, y * W * 3); bits.set(b.bits, y * W);
+        y += b.bits.length / W;
+      }
     }
-    if (style === "field") {
-      const st = f1, pp = f2;
-      const c0 = blend(blend(G.field[0], G.field[1], smooth(0.3, 0.8, pp * 0.6 + st * 0.4 * tex)), G.field[2], (1 - mott) * 0.15);
-      const kk = 0.92 + 0.12 * noise(X * 0.8, Y * 0.8) * tex;
-      return [c0[0] * kk, c0[1] * kk, c0[2] * kk];
-    }
-    if (style === "storybook") {
-      // flat bright green, soft light patches, a fine dot grain (dots blended over a pixel)
-      const pp = f1, q = f2;
-      const c0 = blend(blend(G.storybook[0], G.storybook[1], smooth(0.4, 0.6, pp)), G.storybook[2], smooth(0.62, 0.72, q) * 0.6);
-      const fx = ((X % 7) + 7) % 7 - 3.5, fy = ((Y % 7) + 7) % 7 - 3.5, dd2 = Math.hypot(fx, fy), aa = 0.7 / k;
-      // (Texture: the dots deeper or fainter, as the style has them at its own 0.8)
-      const kk = 1 - Math.min(0.15, 0.05 * (tex / 0.8)) * smooth(1.25 + aa, 1.25 - aa, dd2);
-      return [c0[0] * kk, c0[1] * kk, c0[2] * kk];
-    }
-    // mown: stripes as a mower leaves them, blended over a pixel
-    const band = Math.max(-1, Math.min(1, Math.sin((X * 0.6 + Y * 0.8) / 18) * (18 * k / 1.2)));
-    const c0 = blend(G.mown[0], G.mown[1], f1);
-    const kk = 1.005 + 0.055 * band * tex + (grain - 0.5) * 0.03;
-    return [c0[0] * kk, c0[1] * kk, c0[2] * kk];
-  };
-  yield;
-  // (a mask's channel k where the pixel is, from its four nearest cells)
-  let q00 = 0, q10 = 0, q01 = 0, q11 = 0, w00 = 1, w10 = 0, w01 = 0, w11 = 0;
-  const S = (arr: ArrayLike<number>, k: number) => arr[q00 + k] * w00 + arr[q10 + k] * w10 + arr[q01 + k] * w01 + arr[q11 + k] * w11;
-  for (let y = 0; y < H; y++) {
-    if ((y & 7) === 0) yield 0.7 + 0.3 * (y / H);
-    const my = Math.min(mh - 1, y >> 1) * mw;
-    // (the masks read smoothly between their cells: edges blend over a pixel, never in steps)
-    const fy = Math.max(0, Math.min(mh - 1.001, (y + 0.5) / cell - 0.5)), y0 = fy | 0, wy = fy - y0;
-    const tr = (y & 511) << 9, tu = ((y - 1) & 511) << 9, td = ((y + 1) & 511) << 9;
-    for (let x = 0, i = y * W; x < W; x++, i++) {
-      const o4 = i * 4;
-      const m = my + Math.min(mw - 1, x >> 1);
-      const fx = Math.max(0, Math.min(mw - 1.001, (x + 0.5) / cell - 0.5)), x0 = fx | 0, wx = fx - x0;
-      q00 = (y0 * mw + x0) * 4; q10 = q00 + 4; q01 = q00 + mw * 4; q11 = q01 + 4;
-      w00 = (1 - wx) * (1 - wy); w10 = wx * (1 - wy); w01 = (1 - wx) * wy; w11 = wx * wy;
-      const rh = relief ? relief.at(x, y, contourIv > 0 || lineIv > 0, inked) : null;
-      let rf = rh && s.hillshade ? rh.shade : 1;
-      // (terraces: each shelf flat and lit alike, a little lighter the higher it is, under the
-      // shadow of higher ground; the inked looks: the light a little softer, the lines carry it)
-      if (stepIv) rf = (0.8 + 0.34 * ((Math.floor((seaFt + rh!.elev) / stepIv) * stepIv - seaFt - relief!.lo) / (relief!.hi - relief!.lo))) * rh!.amb;
-      else if (reliefLook === "contours") rf = 1 + (rf - 1) * 0.7;
-      const h = height[i];
-      if (h > 0) {
-        // Treetops: the slope of the leafy surface (neighbours outside the crowns count as level)
-        const c0 = h + LEAF[tr | (x & 511)] * bump;
-        const hr = x < W - 1 && height[i + 1] > 0 ? height[i + 1] + LEAF[tr | ((x + 1) & 511)] * bump : c0;
-        const hl = x > 0 && height[i - 1] > 0 ? height[i - 1] + LEAF[tr | ((x - 1) & 511)] * bump : c0;
-        const hd = y < H - 1 && height[i + W] > 0 ? height[i + W] + LEAF[td | (x & 511)] * bump : c0;
-        const hu = y > 0 && height[i - W] > 0 ? height[i - W] + LEAF[tu | (x & 511)] * bump : c0;
-        const gx = (hr - hl) * 0.5, gy = (hd - hu) * 0.5;
-        const lam = Math.max(0, (-gx * L.x - gy * L.y + L.z) / Math.sqrt(gx * gx + gy * gy + 1));
-        const sun = sunlit(x, y, h);
-        // Leaf dabs on the treetop, lit by the sun: a little paler on the sunny side of each clump,
-        // a little darker between them, the tree's own roundness lit over them
-        const fx = x * dabK, fy = y * dabK;
-        const ix = fx | 0, iy = fy | 0, ax = fx - ix, ay = fy - iy;
-        const r0 = (iy & 511) << 9, r1 = ((iy + 1) & 511) << 9, c0x = ix & 511, c1x = (ix + 1) & 511;
-        const w00 = (1 - ax) * (1 - ay), w10 = ax * (1 - ay), w01 = (1 - ax) * ay, w11 = ax * ay;
-        const j00 = r0 | c0x, j10 = r0 | c1x, j01 = r1 | c0x, j11 = r1 | c1x;
-        const dh = DH[j00] * w00 + DH[j10] * w10 + DH[j01] * w01 + DH[j11] * w11;
-        const nx = gx / bumpK + (DGX[j00] * w00 + DGX[j10] * w10 + DGX[j01] * w01 + DGX[j11] * w11) * 1.6;
-        const ny = gy / bumpK + (DGY[j00] * w00 + DGY[j10] * w10 + DGY[j01] * w01 + DGY[j11] * w11) * 1.6;
-        const lit = Math.max(0, (-nx * L.x - ny * L.y + L.z) / Math.sqrt(nx * nx + ny * ny + 1));
-        const occ = smooth(0.04, 0.5, dh);
-        const shade = 1 - shadowK * 0.9 * (1 - sun);
-        let v = (0.17 + 0.6 * lit) * (0.8 + 0.2 * occ) * shade;
-        v += smooth(0.8, 0.97, lit) * occ * sun * 0.03;
-        v += at(stands, x, y) * 0.2 + ((kind[i] % 3) - 1) * 0.025 + (lam - 0.6) * 0.28;
-        // (hills read through the trees: their shaded sides darker, as from the air)
-        v *= 0.58 + 0.42 * rf;
-        tone(kind[i] === PINE ? pinePal : mixPals.length ? mixPals[kind[i] % mixPals.length] : woods, v);
-        cr = tr0; cg = tg0; cb = tb0;
-      } else {
-        // The ground: grass, or the dark floor under the trees, then what is drawn on it
-        const sun = sunAt(x, y);
-        const ao = S(near, 0) / 255;
-        // (the grass darkens in a band along the trees, as on painted maps)
-        const lit = (1 - shadowK * 0.75 * (1 - sun)) * (1 - 0.62 * shadowK * ao) * rf;
-        const mott = at(mottle, x, y);
-        const grain = GRAIN[tr | (x & 511)];
-        if (look.grass.style === "painted") {
-          // (brighter than the tones go: the whole lawn lighter; Texture, its mottle stronger or
-          // calmer about the same middle, as every grass look has it)
-          tone(lawn, (0.84 + (mott * 0.5 + grain * 0.18 - 0.34) * look.grass.texture) * Math.min(1, look.grass.bright) * lit);
-          const lift = Math.max(1, look.grass.bright);
-          cr = tr0 * lift; cg = tg0 * lift; cb = tb0 * lift;
-        }
-        else {
-          // (the plan position, in feet, for the grass's own patterns)
-          const sxp = (x - W / 2) / k, syp = (y - H / 2) / k, X = view.cx + sxp * cos + syp * sin, Y = view.cy - sxp * sin + syp * cos;
-          const g0 = grassColor(look.grass.style, X, Y, look.grass.texture, mott, grain, x, y);
-          const kk = look.grass.bright * lit;
-          cr = g0[0] * kk; cg = g0[1] * kk; cb = g0[2] * kk;
-        }
-        // Cliffs and steep banks: bare rock in ledges across the slope (the layers of a canyon
-        // wall), broken up at its edge, lit like the ground round it (on the map only: the 3D
-        // ground keeps its own colors on a slope, its shape showing it's steep)
-        if (rh && reliefLook === "shaded" && rh.rock > 0.02 && !opts.under) {
-          const ledge = rh.elev / 11 + (fbm(x / pt * 0.03 + 70, y / pt * 0.03) - 0.5) * 2.2 + (noise(x / pt * 0.4, y / pt * 0.4) - 0.5) * 0.25;
-          const fr = ledge - Math.floor(ledge);
-          const band = 0.88 + 0.18 * smooth(0.1, 0.5, fr) - 0.16 * smooth(0.86, 1, fr);
-          const rv = (0.78 + (grain - 0.5) * 0.3 + mott * 0.16) * band * lit;
-          const ra = smooth(0.15, 0.75, rh.rock + (fbm(x / pt * 0.12 + 90, y / pt * 0.12) - 0.5) * 0.6);
-          cr += (rockColor[0] * rv - cr) * ra; cg += (rockColor[1] * rv - cg) * ra; cb += (rockColor[2] * rv - cb) * ra;
-        }
-        // Cliff edges: the walls darker than the ground above and below, worn into ledges
-        if (rh && reliefLook === "cliffs" && rh.wall > 0.02) {
-          const ledge = rh.elev / 12 + (fbm(x / pt * 0.03 + 70, y / pt * 0.03) - 0.5) * 2.2;
-          const fr = ledge - Math.floor(ledge);
-          const wk = 1 - rh.wall * (0.26 + 0.16 * smooth(0.86, 1, fr) - 0.06 * smooth(0.1, 0.5, fr));
-          cr *= wk; cg *= wk; cb *= wk;
-        }
-        // The floor under the trees, well inside the woods (fading out toward their edges)
-        const deep = smooth(0.55, 0.95, S(inWoods, 0) / 255);
-        if (deep > 0) {
-          if (thick > 0.5 && !opts.under) lay(floorPal, (0.5 + mott * 0.4 + grain * 0.2) * (0.35 + 0.65 * lit), deep);
-          else lay(lawn, (0.45 + mott * 0.4 + grain * 0.2) * lit * 0.8, deep);
-        }
-        // Tall grass: in tufts, its blades streaked up and down; its edge fading into the grass
-        // over a few feet, ragged, tufts reaching out past it and the lawn reaching in
-        const tg = S(dd, 2) / 255;
-        if (tg > 0.04) {
-          const tuft = noise(x / pt * 0.9 + 30, y / pt * 0.3) - 0.5;
-          const edge = (fbm(x / pt * 0.3 + 160, y / pt * 0.3) - 0.5) * 0.3 + (noise(x / pt * 1.4 + 7, y / pt * 0.45) - 0.5) * 0.22;
-          lay(tallPal, (0.5 + tuft * 0.55 + (GRIT[tr | (x & 511)] - 0.5) * 0.3 + mott * 0.2) * lit, smooth(0.2, 0.72, tg + edge));
-        }
-        const f = S(a, 0) / 255, r = S(b, 1) / 255;
-        const rag = f > 0.05 || r > 0.2 ? fbm(x / pt * 0.16 + 50, y / pt * 0.16) - 0.5 : 0;
-        // Fairways: light down the middle, darker toward the trees, soft ragged edges
-        if (f > 0.05) {
-          const mid = smooth(0.05, 0.9, S(middle, 2) / 255);
-          const fv = (0.44 + 0.62 * mid + at(fairMottle, x, y) * 0.3 + grain * 0.08) * look.fairway.bright * lit;
-          // (its edge fading into the grass round it)
-          const fa = smooth(0.3, 0.62, f + rag * 0.45);
-          if (look.fairway.style === "stripes") {
-            // mown stripes: bands across the plan, about 26 ft, blended over a pixel
+    for (let y = got ? H : rows[0]; y < rows[1]; y++) {
+      if ((y & 7) === 0) yield 0.7 + 0.3 * (y / H);
+      const my = Math.min(mh - 1, y >> 1) * mw;
+      // (the masks read smoothly between their cells: edges blend over a pixel, never in steps)
+      const fy = Math.max(0, Math.min(mh - 1.001, (y + 0.5) / cell - 0.5)), y0 = fy | 0, wy = fy - y0;
+      const tr = (y & 511) << 9, tu = ((y - 1) & 511) << 9, td = ((y + 1) & 511) << 9;
+      for (let x = 0, i = y * W; x < W; x++, i++) {
+        const o4 = i * 4;
+        if (reuse && !(bits[i] & redo)) { put(o4, i * 3); continue; }
+        px = 0;
+        const m = my + Math.min(mw - 1, x >> 1);
+        const fx = Math.max(0, Math.min(mw - 1.001, (x + 0.5) / cell - 0.5)), x0 = fx | 0, wx = fx - x0;
+        q00 = (y0 * mw + x0) * 4; q10 = q00 + 4; q01 = q00 + mw * 4; q11 = q01 + 4;
+        w00 = (1 - wx) * (1 - wy); w10 = wx * (1 - wy); w01 = (1 - wx) * wy; w11 = wx * wy;
+        const rh = relief ? relief.at(x, y, contourIv > 0 || lineIv > 0, inked) : null;
+        let rf = rh && s.hillshade ? rh.shade : 1;
+        // (terraces: each shelf flat and lit alike, a little lighter the higher it is, under the
+        // shadow of higher ground; the inked looks: the light a little softer, the lines carry it)
+        if (stepIv) rf = 1 + ((0.8 + 0.34 * ((Math.floor((seaFt + rh!.elev) / stepIv) * stepIv - seaFt - relief!.lo) / (relief!.hi - relief!.lo))) * rh!.amb - 1) * rh!.inside;
+        else if (reliefLook === "contours") rf = 1 + (rf - 1) * 0.7;
+        const h = height[i];
+        if (h > 0) {
+          // Treetops: the slope of the leafy surface (neighbours outside the crowns count as level)
+          const c0 = h + LEAF[tr | (x & 511)] * bump;
+          const hr = x < W - 1 && height[i + 1] > 0 ? height[i + 1] + LEAF[tr | ((x + 1) & 511)] * bump : c0;
+          const hl = x > 0 && height[i - 1] > 0 ? height[i - 1] + LEAF[tr | ((x - 1) & 511)] * bump : c0;
+          const hd = y < H - 1 && height[i + W] > 0 ? height[i + W] + LEAF[td | (x & 511)] * bump : c0;
+          const hu = y > 0 && height[i - W] > 0 ? height[i - W] + LEAF[tu | (x & 511)] * bump : c0;
+          const gx = (hr - hl) * 0.5, gy = (hd - hu) * 0.5;
+          const lam = Math.max(0, (-gx * L.x - gy * L.y + L.z) / Math.sqrt(gx * gx + gy * gy + 1));
+          const sun = sunlit(x, y, h);
+          // Leaf dabs on the treetop, lit by the sun: a little paler on the sunny side of each clump,
+          // a little darker between them, the tree's own roundness lit over them
+          const fx = x * dabK, fy = y * dabK;
+          const ix = fx | 0, iy = fy | 0, ax = fx - ix, ay = fy - iy;
+          const r0 = (iy & 511) << 9, r1 = ((iy + 1) & 511) << 9, c0x = ix & 511, c1x = (ix + 1) & 511;
+          const w00 = (1 - ax) * (1 - ay), w10 = ax * (1 - ay), w01 = (1 - ax) * ay, w11 = ax * ay;
+          const j00 = r0 | c0x, j10 = r0 | c1x, j01 = r1 | c0x, j11 = r1 | c1x;
+          const dh = DH[j00] * w00 + DH[j10] * w10 + DH[j01] * w01 + DH[j11] * w11;
+          const nx = gx / bumpK + (DGX[j00] * w00 + DGX[j10] * w10 + DGX[j01] * w01 + DGX[j11] * w11) * 1.6;
+          const ny = gy / bumpK + (DGY[j00] * w00 + DGY[j10] * w10 + DGY[j01] * w01 + DGY[j11] * w11) * 1.6;
+          const lit = Math.max(0, (-nx * L.x - ny * L.y + L.z) / Math.sqrt(nx * nx + ny * ny + 1));
+          const occ = smooth(0.04, 0.5, dh);
+          const shade = 1 - shadowK * 0.9 * (1 - sun);
+          let v = (0.17 + 0.6 * lit) * (0.8 + 0.2 * occ) * shade;
+          v += smooth(0.8, 0.97, lit) * occ * sun * 0.03;
+          v += at(stands, x, y) * 0.2 + ((kind[i] % 3) - 1) * 0.025 + (lam - 0.6) * 0.28;
+          // (hills read through the trees: their shaded sides darker, as from the air)
+          v *= 0.58 + 0.42 * rf;
+          tone(kind[i] === PINE ? pinePal : mixPals.length ? mixPals[kind[i] % mixPals.length] : woods, v);
+          cr = tr0; cg = tg0; cb = tb0;
+        } else {
+          // The ground: grass, or the dark floor under the trees, then what is drawn on it
+          const sun = sunAt(x, y);
+          const ao = S(near, 0) / 255;
+          // (the grass darkens in a band along the trees, as on painted maps)
+          const lit = (1 - shadowK * 0.75 * (1 - sun)) * (1 - 0.62 * shadowK * ao) * rf;
+          const mott = at(mottle, x, y);
+          const grain = GRAIN[tr | (x & 511)];
+          if (look.grass.style === "painted") {
+            // (brighter than the tones go: the whole lawn lighter; Texture, its mottle stronger or
+            // calmer about the same middle, as every grass look has it)
+            tone(lawn, (0.84 + (mott * 0.5 + grain * 0.18 - 0.34) * look.grass.texture) * Math.min(1, look.grass.bright) * lit);
+            const lift = Math.max(1, look.grass.bright);
+            cr = tr0 * lift; cg = tg0 * lift; cb = tb0 * lift;
+          }
+          else {
+            // (the plan position, in feet, for the grass's own patterns)
             const sxp = (x - W / 2) / k, syp = (y - H / 2) / k, X = view.cx + sxp * cos + syp * sin, Y = view.cy - sxp * sin + syp * cos;
-            const band = Math.max(-1, Math.min(1, Math.sin(((X + Y) * 0.7071 * Math.PI) / 26) * (26 / (Math.PI * 1.2 / k))));
-            lay(fair, fv * (1.02 + 0.06 * band), fa);
-          } else if (look.fairway.style === "outlined") {
-            // a crisp dark outline round a striped fairway (as a storybook draws it)
-            const sxp = (x - W / 2) / k, syp = (y - H / 2) / k, X = view.cx + sxp * cos + syp * sin, Y = view.cy - sxp * sin + syp * cos;
-            const band = Math.max(-1, Math.min(1, Math.sin(((X + Y) * 0.7071 * Math.PI) / 22) * (22 / (Math.PI * 1.2 / k))));
-            lay(fair, fv * (1.06 + 0.04 * band), fa);
-            const fe = f + rag * 0.12, rim = smooth(0.4, 0.45, fe) * (1 - smooth(0.5, 0.56, fe));
-            cr += (34 * 1.4 - cr) * rim * 0.9; cg += (84 - cg) * rim * 0.9; cb += (34 - cb) * rim * 0.9;
-          } else if (look.fairway.style === "sunlit") {
-            lay(fair, fv * 1.04, fa);
-            // (warm sun down the middle)
-            const sm2 = fa * mid * 0.45;
-            cr += (236 - cr) * sm2; cg += (228 - cg) * sm2; cb += (150 - cb) * sm2;
-          } else lay(fair, fv, fa);
-        }
-        const sa = S(c, 1) / 255;
-        if (sa > 0.3) lay(sandPal, (0.6 + grain * 0.3) * lit, smooth(0.45, 0.55, sa));
-        // Paths and roads, stacked in the order the style sets (unset: dirt under gravel, gravel
-        // under paved walkways, walkways under roads and parking)
-        for (let li = 0; li < order.length; li++) {
-          const layer = order[li];
-          if (look.paths.style === "trail" && (layer === 0 || layer === 1)) continue;
-          if (layer === 3) {
-            // Roads and parking: soft gray, darker at the edges, a little gravel
-            if (r > 0.2) lay(road, (0.35 + 0.45 * smooth(0.45, 0.9, r) + grain * 0.25 + mott * 0.1) * lit, smooth(0.38, 0.5, r + rag * 0.04));
-          } else if (layer === 0) {
-            // Dirt: fuzzy edged, speckled with lighter and darker grit
-            const d = S(b, 0) / 255;
-            if (d > 0.1) {
-              const da = smooth(0.45, 0.55, d + (fbm(x / pt * 0.35 + 80, y / pt * 0.35) - 0.5) * 0.12);
-              if (da > 0) {
+            const g0 = grassColor(look.grass.style, X, Y, look.grass.texture, mott, grain, x, y);
+            px |= MIX.grass;
+            const kk = look.grass.bright * lit;
+            cr = g0[0] * kk; cg = g0[1] * kk; cb = g0[2] * kk;
+          }
+          // Cliffs and steep banks: bare rock in ledges across the slope (the layers of a canyon
+          // wall), broken up at its edge, lit like the ground round it (on the map only: the 3D
+          // ground keeps its own colors on a slope, its shape showing it's steep)
+          if (rh && reliefLook === "shaded" && rh.rock > 0.02 && !opts.under) {
+            const ledge = rh.elev / 11 + (fbm(x / pt * 0.03 + 70, y / pt * 0.03) - 0.5) * 2.2 + (noise(x / pt * 0.4, y / pt * 0.4) - 0.5) * 0.25;
+            const fr = ledge - Math.floor(ledge);
+            const band = 0.88 + 0.18 * smooth(0.1, 0.5, fr) - 0.16 * smooth(0.86, 1, fr);
+            const rv = (0.78 + (grain - 0.5) * 0.3 + mott * 0.16) * band * lit;
+            const ra = smooth(0.15, 0.75, rh.rock + (fbm(x / pt * 0.12 + 90, y / pt * 0.12) - 0.5) * 0.6);
+            cr += (rockColor[0] * rv - cr) * ra; cg += (rockColor[1] * rv - cg) * ra; cb += (rockColor[2] * rv - cb) * ra;
+          }
+          // Cliff edges: the walls darker than the ground above and below, worn into ledges
+          if (rh && reliefLook === "cliffs" && rh.wall > 0.02) {
+            const ledge = rh.elev / 12 + (fbm(x / pt * 0.03 + 70, y / pt * 0.03) - 0.5) * 2.2;
+            const fr = ledge - Math.floor(ledge);
+            const wk = 1 - rh.wall * (0.26 + 0.16 * smooth(0.86, 1, fr) - 0.06 * smooth(0.1, 0.5, fr));
+            cr *= wk; cg *= wk; cb *= wk;
+          }
+          // The floor under the trees, well inside the woods (fading out toward their edges)
+          const deep = smooth(0.55, 0.95, S(inWoods, 0) / 255);
+          if (deep > 0) {
+            if (thick > 0.5 && !opts.under) lay(floorPal, (0.5 + mott * 0.4 + grain * 0.2) * (0.35 + 0.65 * lit), deep);
+            else lay(lawn, (0.45 + mott * 0.4 + grain * 0.2) * lit * 0.8, deep);
+          }
+          // Tall grass: in tufts, its blades streaked up and down; its edge fading into the grass
+          // over a few feet, ragged, tufts reaching out past it and the lawn reaching in
+          const tg = S(dd, 2) / 255;
+          if (tg > 0.04) {
+            const tuft = noise(x / pt * 0.9 + 30, y / pt * 0.3) - 0.5;
+            const edge = (fbm(x / pt * 0.3 + 160, y / pt * 0.3) - 0.5) * 0.3 + (noise(x / pt * 1.4 + 7, y / pt * 0.45) - 0.5) * 0.22;
+            lay(tallPal, (0.5 + tuft * 0.55 + (GRIT[tr | (x & 511)] - 0.5) * 0.3 + mott * 0.2) * lit, smooth(0.2, 0.72, tg + edge));
+          }
+          const f = S(a, 0) / 255, r = S(b, 1) / 255;
+          const rag = f > 0.05 || r > 0.2 ? fbm(x / pt * 0.16 + 50, y / pt * 0.16) - 0.5 : 0;
+          // Fairways: light down the middle, darker toward the trees, soft ragged edges
+          if (f > 0.05) {
+            const mid = smooth(0.05, 0.9, S(middle, 2) / 255);
+            const fv = (0.44 + 0.62 * mid + at(fairMottle, x, y) * 0.3 + grain * 0.08) * look.fairway.bright * lit;
+            // (its edge fading into the grass round it)
+            const fa = smooth(0.3, 0.62, f + rag * 0.45);
+            if (look.fairway.style === "stripes") {
+              // mown stripes: bands across the plan, about 26 ft, blended over a pixel
+              const sxp = (x - W / 2) / k, syp = (y - H / 2) / k, X = view.cx + sxp * cos + syp * sin, Y = view.cy - sxp * sin + syp * cos;
+              const band = Math.max(-1, Math.min(1, Math.sin(((X + Y) * 0.7071 * Math.PI) / 26) * (26 / (Math.PI * 1.2 / k))));
+              lay(fair, fv * (1.02 + 0.06 * band), fa);
+            } else if (look.fairway.style === "outlined") {
+              // a crisp dark outline round a striped fairway (as a storybook draws it)
+              const sxp = (x - W / 2) / k, syp = (y - H / 2) / k, X = view.cx + sxp * cos + syp * sin, Y = view.cy - sxp * sin + syp * cos;
+              const band = Math.max(-1, Math.min(1, Math.sin(((X + Y) * 0.7071 * Math.PI) / 22) * (22 / (Math.PI * 1.2 / k))));
+              lay(fair, fv * (1.06 + 0.04 * band), fa);
+              const fe = f + rag * 0.12, rim = smooth(0.4, 0.45, fe) * (1 - smooth(0.5, 0.56, fe));
+              cr += (34 * 1.4 - cr) * rim * 0.9; cg += (84 - cg) * rim * 0.9; cb += (34 - cb) * rim * 0.9;
+            } else if (look.fairway.style === "sunlit") {
+              lay(fair, fv * 1.04, fa);
+              // (warm sun down the middle)
+              const sm2 = fa * mid * 0.45;
+              cr += (236 - cr) * sm2; cg += (228 - cg) * sm2; cb += (150 - cb) * sm2;
+            } else lay(fair, fv, fa);
+          }
+          const sa = S(c, 1) / 255;
+          if (sa > 0.3) lay(sandPal, (0.6 + grain * 0.3) * lit, smooth(0.45, 0.55, sa));
+          // Paths and roads, stacked in the order the style sets (unset: dirt under gravel, gravel
+          // under paved walkways, walkways under roads and parking)
+          for (let li = 0; li < order.length; li++) {
+            const layer = order[li];
+            if (look.paths.style === "trail" && (layer === 0 || layer === 1)) continue;
+            if (layer === 3) {
+              // Roads and parking: soft gray, darker at the edges, a little gravel
+              if (r > 0.2) lay(road, (0.35 + 0.45 * smooth(0.45, 0.9, r) + grain * 0.25 + mott * 0.1) * lit, smooth(0.38, 0.5, r + rag * 0.04));
+            } else if (layer === 0) {
+              // Dirt: fuzzy edged, speckled with lighter and darker grit
+              const d = S(b, 0) / 255;
+              if (d > 0.1) {
+                const da = smooth(0.45, 0.55, d + (fbm(x / pt * 0.35 + 80, y / pt * 0.35) - 0.5) * 0.12);
+                if (da > 0) {
+                  const grit = GRIT[tr | (x & 511)];
+                  lay(dirtPal, (0.52 + (grit - 0.5) * 0.7 + mott * 0.3) * (0.45 + 0.55 * lit), da);
+                }
+              }
+            } else if (layer === 1) {
+              // Gravel and wood chips: speckled, fuzzy edged like the dirt
+              const gv = S(dd, 0) / 255, ch2 = S(dd, 1) / 255;
+              if (gv > 0.1 || ch2 > 0.1) {
+                const edge = (fbm(x / pt * 0.35 + 120, y / pt * 0.35) - 0.5) * 0.12;
                 const grit = GRIT[tr | (x & 511)];
-                lay(dirtPal, (0.52 + (grit - 0.5) * 0.7 + mott * 0.3) * (0.45 + 0.55 * lit), da);
+                if (gv > 0.1) lay(gravelPal, (0.55 + (grit - 0.5) * 0.8 + mott * 0.2) * (0.5 + 0.5 * lit), smooth(0.45, 0.55, gv + edge));
+                if (ch2 > 0.1) lay(chipsPal, (0.5 + (grit - 0.5) * 0.9 + mott * 0.25) * (0.45 + 0.55 * lit), smooth(0.45, 0.55, ch2 + edge));
               }
-            }
-          } else if (layer === 1) {
-            // Gravel and wood chips: speckled, fuzzy edged like the dirt
-            const gv = S(dd, 0) / 255, ch2 = S(dd, 1) / 255;
-            if (gv > 0.1 || ch2 > 0.1) {
-              const edge = (fbm(x / pt * 0.35 + 120, y / pt * 0.35) - 0.5) * 0.12;
-              const grit = GRIT[tr | (x & 511)];
-              if (gv > 0.1) lay(gravelPal, (0.55 + (grit - 0.5) * 0.8 + mott * 0.2) * (0.5 + 0.5 * lit), smooth(0.45, 0.55, gv + edge));
-              if (ch2 > 0.1) lay(chipsPal, (0.5 + (grit - 0.5) * 0.9 + mott * 0.25) * (0.45 + 0.55 * lit), smooth(0.45, 0.55, ch2 + edge));
-            }
-          } else {
-            // Paved walkways: pale concrete, a little darker at the edges, a faint fine grit
-            const wk = S(ee, 0) / 255;
-            if (look.paths.style === "clean" && wk > 0.2) { const rim = smooth(0.25, 0.42, wk) * (1 - smooth(0.5, 0.66, wk)); cr *= 1 - 0.3 * rim; cg *= 1 - 0.3 * rim; cb *= 1 - 0.3 * rim; }
-            if (wk > 0.2) lay(walkPal, (0.42 + 0.4 * smooth(0.45, 0.9, wk) + (GRIT[tr | (x & 511)] - 0.5) * 0.12 + mott * 0.08) * (0.55 + 0.45 * lit), smooth(0.4, 0.52, wk));
-          }
-        }
-        if (look.paths.style === "clean") {
-          const pv = Math.max(S(b, 0), S(dd, 0), S(dd, 1)) / 255;
-          if (pv > 0.2) { const rim = smooth(0.3, 0.45, pv) * (1 - smooth(0.52, 0.66, pv)); cr *= 1 - 0.32 * rim; cg *= 1 - 0.32 * rim; cb *= 1 - 0.32 * rim; }
-        }
-        const bd = S(c, 0) / 255;
-        if (bd > 0.25) lay(roof, (0.25 + 0.6 * smooth(0.5, 0.8, bd)) * (0.6 + 0.4 * lit), smooth(0.42, 0.52, bd));
-        // Water. Ponds: lighter in the shallows, deepening toward the middle, a bright rim just
-        // inside the shore and a few faint lines following it out (as cartographers draw water),
-        // and now and then a glint of sun. Creeks: dark at the banks, light down the middle.
-        const w0 = S(wet, 2) / 255;
-        if (w0 > 0.25) {
-          const w = w0 + (fbm(x / pt * 0.25 + 120, y / pt * 0.25) - 0.5) * 0.1;
-          if (w > 0.36) {
-            const ripple = noise(x / pt * 0.35 + 7, y / pt * 0.12) - 0.5;
-            const d = shore[m], open = smooth(2.5 * pt, 7 * pt, openWater[m]);
-            const creek = 0.15 + 0.6 * smooth(0.4, 0.8, w) + ripple * 0.1;
-            let pond = 0.7 - 0.38 * smooth(0, 32 * pt, d) + ripple * 0.06;
-            pond += 0.24 * (1 - smooth(0.5 * pt, 1.8 * pt, d));
-            for (let k = 1; k <= 3; k++) {
-              const at = (2.2 + k * k * 1.6) * pt;
-              pond += (0.11 / k) * (1 - smooth(0.2 * pt, 0.75 * pt, Math.abs(d - at))) * (1 - 0.4 * smooth(0, 30 * pt, d));
-            }
-            const sun = sunAt(x, y);
-            if (sun > 0.9 && d > 6 * pt && GRIT[tr | (x & 511)] > 0.93 && GRIT[((y >> 1) & 511) << 9 | ((x * 3) & 511)] > 0.6) pond += 0.3;
-            let wv = (creek + (pond - creek) * open) * (0.55 + 0.45 * lit);
-            if (look.water.style === "glinting") wv *= 0.78;
-            // (flat: one bright blue, a little deeper in the middle, a white line just inside the shore)
-            if (look.water.style === "flat") wv = (0.7 + 0.12 * (1 - smooth(0, 24 * pt, d)) * open - 0.08 * smooth(4 * pt, 30 * pt, d) * open) * (0.55 + 0.45 * lit);
-            lay(water, wv, smooth(0.4, 0.46, w));
-            if (look.water.style === "flat") {
-              const ring = (1 - smooth(0.35 * pt, 0.8 * pt, Math.abs(d - 1.8 * pt))) * open * 0.55 * smooth(0.4, 0.46, w);
-              cr += (255 - cr) * ring; cg += (255 - cg) * ring; cb += (255 - cb) * ring;
-            }
-            if (look.water.style === "painterly") {
-              // (foam streaks along the current, on the creeks; a pale rim at the shore)
-              // (and on open water, soft long brush strokes across it, lighter and darker: painted, not deep)
-              const foam = smooth(0.62, 0.7, fbm(x / pt * 0.12 + 40, y / pt * 0.5)) * (1 - open) * 0.38 + (1 - smooth(0.3 * pt, 1.4 * pt, d)) * 0.18
-                + smooth(0.52, 0.72, fbm(x / pt * 0.035 + 11, y / pt * 0.16)) * open * 0.16;
-              const dab = smooth(0.55, 0.75, fbm(x / pt * 0.03 + 90, y / pt * 0.14)) * open * 0.12 * smooth(0.4, 0.46, w);
-              cr *= 1 - dab; cg *= 1 - dab * 0.7; cb *= 1 - dab * 0.4;
-              const fa2 = foam * smooth(0.4, 0.46, w);
-              cr += (240 - cr) * fa2; cg += (250 - cg) * fa2; cb += (250 - cb) * fa2;
-            } else if (look.water.style === "glinting") {
-              const gl = smooth(0.82, 0.9, noise(x / pt * 0.9 + 3, y / pt * 2.2)) * smooth(0.5, 0.6, fbm(x / pt * 0.05, y / pt * 0.05)) * sunAt(x, y) * 0.75 * smooth(0.4, 0.46, w);
-              cr += (255 - cr) * gl; cg += (231 - cg) * gl; cb += (168 - cb) * gl;
+            } else {
+              // Paved walkways: pale concrete, a little darker at the edges, a faint fine grit
+              const wk = S(ee, 0) / 255;
+              if (look.paths.style === "clean" && wk > 0.2) { const rim = smooth(0.25, 0.42, wk) * (1 - smooth(0.5, 0.66, wk)); cr *= 1 - 0.3 * rim; cg *= 1 - 0.3 * rim; cb *= 1 - 0.3 * rim; }
+              if (wk > 0.2) lay(walkPal, (0.42 + 0.4 * smooth(0.45, 0.9, wk) + (GRIT[tr | (x & 511)] - 0.5) * 0.12 + mott * 0.08) * (0.55 + 0.45 * lit), smooth(0.4, 0.52, wk));
             }
           }
-        }
-        // Illuminated contours on the open ground (never across the treetops or water): light
-        // where the slope faces the sun, dark where it faces away, every fifth a little bolder
-        if (contourIv > 0 && relief && w0 <= 0.3) {
-          const gX = rh!.sx, gY = rh!.sy;
-          const g = Math.hypot(gX, gY);
-          if (g > 1e-5) {
-            const k = rh!.elev / contourIv, near = Math.round(k);
-            const dpx = (Math.abs(k - near) * contourIv) / g;
-            const index = near % 5 === 0;
-            const half = (index ? 0.7 : 0.42) * pt;
-            if (dpx < half + 0.8) {
-              const a = (1 - smooth(half - 0.4, half + 0.8, dpx)) * (index ? 1 : 0.75);
-              const face = (-gX * L.x - gY * L.y) / (g * lxyL);
-              if (face > 0.15) {
-                const m = a * (0.12 + 0.4 * face);
-                cr += (250 - cr) * m; cg += (246 - cg) * m; cb += (222 - cb) * m;
-              } else {
-                const m = a * (0.22 + 0.4 * Math.max(0, -face));
-                cr += (14 - cr) * m; cg += (24 - cg) * m; cb += (12 - cb) * m;
+          if (look.paths.style === "clean") {
+            const pv = Math.max(S(b, 0), S(dd, 0), S(dd, 1)) / 255;
+            if (pv > 0.2) { const rim = smooth(0.3, 0.45, pv) * (1 - smooth(0.52, 0.66, pv)); cr *= 1 - 0.32 * rim; cg *= 1 - 0.32 * rim; cb *= 1 - 0.32 * rim; }
+          }
+          const bd = S(c, 0) / 255;
+          if (bd > 0.25) lay(roof, (0.25 + 0.6 * smooth(0.5, 0.8, bd)) * (0.6 + 0.4 * lit), smooth(0.42, 0.52, bd));
+          // Water. Ponds: lighter in the shallows, deepening toward the middle, a bright rim just
+          // inside the shore and a few faint lines following it out (as cartographers draw water),
+          // and now and then a glint of sun. Creeks: dark at the banks, light down the middle.
+          const w0 = S(wet, 2) / 255;
+          if (w0 > 0.25) {
+            const w = w0 + (fbm(x / pt * 0.25 + 120, y / pt * 0.25) - 0.5) * 0.1;
+            if (w > 0.36) {
+              const ripple = noise(x / pt * 0.35 + 7, y / pt * 0.12) - 0.5;
+              const d = shore[m], open = smooth(2.5 * pt, 7 * pt, openWater[m]);
+              const creek = 0.15 + 0.6 * smooth(0.4, 0.8, w) + ripple * 0.1;
+              let pond = 0.7 - 0.38 * smooth(0, 32 * pt, d) + ripple * 0.06;
+              pond += 0.24 * (1 - smooth(0.5 * pt, 1.8 * pt, d));
+              for (let k = 1; k <= 3; k++) {
+                const at = (2.2 + k * k * 1.6) * pt;
+                pond += (0.11 / k) * (1 - smooth(0.2 * pt, 0.75 * pt, Math.abs(d - at))) * (1 - 0.4 * smooth(0, 30 * pt, d));
+              }
+              const sun = sunAt(x, y);
+              if (sun > 0.9 && d > 6 * pt && GRIT[tr | (x & 511)] > 0.93 && GRIT[((y >> 1) & 511) << 9 | ((x * 3) & 511)] > 0.6) pond += 0.3;
+              let wv = (creek + (pond - creek) * open) * (0.55 + 0.45 * lit);
+              if (look.water.style === "glinting") wv *= 0.78;
+              // (flat: one bright blue, a little deeper in the middle, a white line just inside the shore)
+              if (look.water.style === "flat") wv = (0.7 + 0.12 * (1 - smooth(0, 24 * pt, d)) * open - 0.08 * smooth(4 * pt, 30 * pt, d) * open) * (0.55 + 0.45 * lit);
+              lay(water, wv, smooth(0.4, 0.46, w));
+              if (look.water.style === "flat") {
+                const ring = (1 - smooth(0.35 * pt, 0.8 * pt, Math.abs(d - 1.8 * pt))) * open * 0.55 * smooth(0.4, 0.46, w);
+                cr += (255 - cr) * ring; cg += (255 - cg) * ring; cb += (255 - cb) * ring;
+              }
+              if (look.water.style === "painterly") {
+                // (foam streaks along the current, on the creeks; a pale rim at the shore)
+                // (and on open water, soft long brush strokes across it, lighter and darker: painted, not deep)
+                const foam = smooth(0.62, 0.7, fbm(x / pt * 0.12 + 40, y / pt * 0.5)) * (1 - open) * 0.38 + (1 - smooth(0.3 * pt, 1.4 * pt, d)) * 0.18
+                  + smooth(0.52, 0.72, fbm(x / pt * 0.035 + 11, y / pt * 0.16)) * open * 0.16;
+                const dab = smooth(0.55, 0.75, fbm(x / pt * 0.03 + 90, y / pt * 0.14)) * open * 0.12 * smooth(0.4, 0.46, w);
+                cr *= 1 - dab; cg *= 1 - dab * 0.7; cb *= 1 - dab * 0.4;
+                const fa2 = foam * smooth(0.4, 0.46, w);
+                cr += (240 - cr) * fa2; cg += (250 - cg) * fa2; cb += (250 - cb) * fa2;
+              } else if (look.water.style === "glinting") {
+                const gl = smooth(0.82, 0.9, noise(x / pt * 0.9 + 3, y / pt * 2.2)) * smooth(0.5, 0.6, fbm(x / pt * 0.05, y / pt * 0.05)) * sunAt(x, y) * 0.75 * smooth(0.4, 0.46, w);
+                cr += (255 - cr) * gl; cg += (231 - cg) * gl; cb += (168 - cb) * gl;
               }
             }
           }
-        }
-        if (rh && w0 <= 0.3 && reliefLook !== "off" && reliefLook !== "shaded") {
-          // The rim of every drop, inked, with a pale lip of light just above it (only where the
-          // ground bulges: the foot of a wall gets none)
-          if (reliefLook === "cliffs") {
-            const gw2 = Math.hypot(rh.wgx, rh.wgy);
-            if (gw2 > 1e-4 && rh.cv > 0) {
-              const dpx = (rh.wall - 0.5) / gw2;
-              const conv = smooth(0, 0.15, rh.cv);
-              const lip = dpx < 0 ? (1 - smooth(1.2 * pt, 6 * pt, -dpx)) * smooth(0.7 * pt, 1.5 * pt, -dpx) * conv * 0.42 : 0;
-              if (lip > 0) { cr += (255 - cr) * lip; cg += (242 - cg) * lip; cb += (200 - cb) * lip; }
-              const ln = (1 - smooth(0.7 * pt, 1.5 * pt, Math.abs(dpx))) * conv * 0.88;
-              if (ln > 0) { cr += (48 - cr) * ln; cg += (34 - cg) * ln; cb += (22 - cb) * ln; }
-            }
-          }
-          // Contours: a lit line every so often (every fifth bolder), at round heights
-          if (lineIv) {
-            const gX = rh.sx, gY = rh.sy, g = Math.hypot(gX, gY);
+          // Illuminated contours on the open ground (never across the treetops or water): light
+          // where the slope faces the sun, dark where it faces away, every fifth a little bolder
+          if (contourIv > 0 && relief && w0 <= 0.3) {
+            const gX = rh!.sx, gY = rh!.sy;
+            const g = Math.hypot(gX, gY);
             if (g > 1e-5) {
-              const kk = (seaFt + rh.elev) / lineIv, near = Math.round(kk);
-              const dpx = (Math.abs(kk - near) * lineIv) / g;
+              const k = rh!.elev / contourIv, near = Math.round(k);
+              const dpx = (Math.abs(k - near) * contourIv) / g;
               const index = near % 5 === 0;
-              const half = (index ? 0.75 : 0.42) * pt;
+              const half = (index ? 0.7 : 0.42) * pt;
               if (dpx < half + 0.8) {
-                const a = (1 - smooth(half - 0.4, half + 0.8, dpx)) * (index ? 1 : 0.8);
+                const a = (1 - smooth(half - 0.4, half + 0.8, dpx)) * (index ? 1 : 0.75);
                 const face = (-gX * L.x - gY * L.y) / (g * lxyL);
                 if (face > 0.15) {
-                  const m = a * (0.18 + 0.5 * face);
-                  cr += (252 - cr) * m; cg += (248 - cg) * m; cb += (226 - cb) * m;
+                  const m = a * (0.12 + 0.4 * face);
+                  cr += (250 - cr) * m; cg += (246 - cg) * m; cb += (222 - cb) * m;
                 } else {
-                  const m = a * (0.3 + 0.45 * Math.max(0, -face));
-                  cr += (30 - cr) * m; cg += (32 - cg) * m; cb += (22 - cb) * m;
+                  const m = a * (0.22 + 0.4 * Math.max(0, -face));
+                  cr += (14 - cr) * m; cg += (24 - cg) * m; cb += (12 - cb) * m;
                 }
               }
             }
           }
-          // Terraces: at each step a fine dark line, a pale lip on top, and a soft shadow thrown
-          // down onto the shelf below (longer where the step faces away from the sun)
-          if (stepIv) {
-            const gX = rh.sx, gY = rh.sy, g = Math.hypot(gX, gY);
-            if (g > 1e-5) {
-              const t = (seaFt + rh.elev) / stepIv, n0 = Math.round(t);
-              const dpx = ((t - n0) * stepIv) / g;
-              const face = (-gX * L.x - gY * L.y) / (g * lxyL);
-              if (dpx < 0) {
-                const sh = (1 - smooth(0, (4 + 9 * Math.max(0, -face)) * pt, -dpx)) * 0.38;
-                cr *= 1 - sh; cg *= 1 - sh; cb *= 1 - sh * 0.85;
-              } else {
-                const lip = (1 - smooth(0.8 * pt, 3 * pt, dpx)) * smooth(0.3 * pt, 0.8 * pt, dpx) * (0.26 + 0.26 * Math.max(0, face));
-                cr += (255 - cr) * lip; cg += (246 - cg) * lip; cb += (214 - cb) * lip;
+          if (rh && w0 <= 0.3 && reliefLook !== "off" && reliefLook !== "shaded") {
+            // The rim of every drop, inked, with a pale lip of light just above it (only where the
+            // ground bulges: the foot of a wall gets none)
+            if (reliefLook === "cliffs") {
+              const gw2 = Math.hypot(rh.wgx, rh.wgy);
+              if (gw2 > 1e-4 && rh.cv > 0) {
+                const dpx = (rh.wall - 0.5) / gw2;
+                const conv = smooth(0, 0.15, rh.cv);
+                const lip = dpx < 0 ? (1 - smooth(1.2 * pt, 6 * pt, -dpx)) * smooth(0.7 * pt, 1.5 * pt, -dpx) * conv * 0.42 : 0;
+                if (lip > 0) { cr += (255 - cr) * lip; cg += (242 - cg) * lip; cb += (200 - cb) * lip; }
+                const ln = (1 - smooth(0.7 * pt, 1.5 * pt, Math.abs(dpx))) * conv * 0.88;
+                if (ln > 0) { cr += (48 - cr) * ln; cg += (34 - cg) * ln; cb += (22 - cb) * ln; }
               }
-              const ln = (1 - smooth(0.4 * pt, 1.0 * pt, Math.abs(dpx))) * 0.48;
-              cr += (40 - cr) * ln; cg += (34 - cg) * ln; cb += (24 - cb) * ln;
+            }
+            // Contours: a lit line every so often (every fifth bolder), at round heights
+            if (lineIv) {
+              const gX = rh.sx, gY = rh.sy, g = Math.hypot(gX, gY);
+              if (g > 1e-5) {
+                const kk = (seaFt + rh.elev) / lineIv, near = Math.round(kk);
+                const dpx = (Math.abs(kk - near) * lineIv) / g;
+                const index = near % 5 === 0;
+                const half = (index ? 0.75 : 0.42) * pt;
+                if (dpx < half + 0.8) {
+                  const a = (1 - smooth(half - 0.4, half + 0.8, dpx)) * (index ? 1 : 0.8);
+                  const face = (-gX * L.x - gY * L.y) / (g * lxyL);
+                  if (face > 0.15) {
+                    const m = a * (0.18 + 0.5 * face);
+                    cr += (252 - cr) * m; cg += (248 - cg) * m; cb += (226 - cb) * m;
+                  } else {
+                    const m = a * (0.3 + 0.45 * Math.max(0, -face));
+                    cr += (30 - cr) * m; cg += (32 - cg) * m; cb += (22 - cb) * m;
+                  }
+                }
+              }
+            }
+            // Terraces: at each step a fine dark line, a pale lip on top, and a soft shadow thrown
+            // down onto the shelf below (longer where the step faces away from the sun)
+            if (stepIv) {
+              const gX = rh.sx, gY = rh.sy, g = Math.hypot(gX, gY);
+              if (g > 1e-5) {
+                const t = (seaFt + rh.elev) / stepIv, n0 = Math.round(t);
+                const dpx = ((t - n0) * stepIv) / g;
+                const face = (-gX * L.x - gY * L.y) / (g * lxyL);
+                if (dpx < 0) {
+                  const sh = (1 - smooth(0, (4 + 9 * Math.max(0, -face)) * pt, -dpx)) * 0.38;
+                  cr *= 1 - sh; cg *= 1 - sh; cb *= 1 - sh * 0.85;
+                } else {
+                  const lip = (1 - smooth(0.8 * pt, 3 * pt, dpx)) * smooth(0.3 * pt, 0.8 * pt, dpx) * (0.26 + 0.26 * Math.max(0, face));
+                  cr += (255 - cr) * lip; cg += (246 - cg) * lip; cb += (214 - cb) * lip;
+                }
+                const ln = (1 - smooth(0.4 * pt, 1.0 * pt, Math.abs(dpx))) * 0.48;
+                cr += (40 - cr) * ln; cg += (34 - cg) * ln; cb += (24 - cb) * ln;
+              }
             }
           }
         }
-      }
-      // Relief in color, as on Swiss maps: slopes facing the sun a little warmer, slopes facing
-      // away a little cooler, high ground a touch lighter than low (half as much on treetops)
-      // (strong enough that a canyon or a ridge reads at a glance: the slope away from the sun as
-      // much as half in shadow, the slope toward it warmed; treetops get a little less, so the
-      // woods stay woods)
-      if (relief && s.hillshade) {
-        const tt = (rf - 1) * (h > 0 ? 0.7 : 1) * (stepIv ? 0.5 : 1);
-        if (tt > 0) {
-          const k = Math.min(0.45, tt * 1.3);
-          cr += (255 - cr) * k * 0.42; cg += (244 - cg) * k * 0.36; cb += (206 - cb) * k * 0.16;
-        } else {
-          const k = Math.min(0.6, -tt * 1.5);
-          cr += (28 - cr) * k * 0.62; cg += (38 - cg) * k * 0.58; cb += (58 - cb) * k * 0.55;
+        // Relief in color, as on Swiss maps: slopes facing the sun a little warmer, slopes facing
+        // away a little cooler, high ground a touch lighter than low (half as much on treetops)
+        // (strong enough that a canyon or a ridge reads at a glance: the slope away from the sun as
+        // much as half in shadow, the slope toward it warmed; treetops get a little less, so the
+        // woods stay woods)
+        if (relief && s.hillshade) {
+          const tt = (rf - 1) * (h > 0 ? 0.7 : 1) * (stepIv ? 0.5 : 1);
+          if (tt > 0) {
+            const k = Math.min(0.45, tt * 1.3);
+            cr += (255 - cr) * k * 0.42; cg += (244 - cg) * k * 0.36; cb += (206 - cb) * k * 0.16;
+          } else {
+            const k = Math.min(0.6, -tt * 1.5);
+            cr += (28 - cr) * k * 0.62; cg += (38 - cg) * k * 0.58; cb += (58 - cb) * k * 0.55;
+          }
+          // (and high ground a touch lighter than low, so which way is down reads too)
+          const lift = ((rh!.elev - relief.lo) / (relief.hi - relief.lo) - 0.5) * 0.16 * rh!.inside;
+          cr *= 1 + lift; cg *= 1 + lift; cb *= 1 + lift * 0.7;
         }
-        // (and high ground a touch lighter than low, so which way is down reads too)
-        const lift = ((rh!.elev - relief.lo) / (relief.hi - relief.lo) - 0.5) * 0.16;
-        cr *= 1 + lift; cg *= 1 + lift; cb *= 1 + lift * 0.7;
-      }
-      // The whole picture: brightness, contrast and color strength
-      if (light !== 0 || contrast !== 0 || sat !== 1) {
-        const lum = 0.3 * cr + 0.59 * cg + 0.11 * cb;
-        cr = lum + (cr - lum) * sat; cg = lum + (cg - lum) * sat; cb = lum + (cb - lum) * sat;
-        const kk = 1 + contrast, add = 128 * (1 - kk) + light * 255;
-        cr = cr * kk + add; cg = cg * kk + add; cb = cb * kk + add;
-      }
-      o[o4] = cr;
-      o[o4 + 1] = cg;
-      o[o4 + 2] = cb;
-      o[o4 + 3] = 255;
-    }
-  }
-  yield;
-  // (the open ground everywhere: its tone bands' steps; treetops and roofs only at their outline,
-  // so the leaf grain stays crisp)
-  const solid = (i: number) => height[i] > 0 || built[i] > 0;
-  yield* smoothEdgeSteps(o, W, H, i => !solid(i) || !solid(i + 1) || !solid(i - 1) || !solid(i + W) || !solid(i - W));
-  ctx.putImageData(img, 0, 0);
-  yield;
-  const lxy = Math.hypot(sunX, sunY) || 1, Lx = sunX / lxy, Ly = sunY / lxy;
-  if (vector) roomBetween(vtrees);
-  // (the picture's brightness, contrast and color strength on the vector looks' trees too: they're
-  // drawn after the pass that gives the rest of the map them)
-  const adjust = (c: RGB): RGB => {
-    if (light === 0 && contrast === 0 && sat === 1) return c;
-    const lum = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2], kk = 1 + contrast, add = 128 * (1 - kk) + light * 255;
-    return [c[0], c[1], c[2]].map(v => Math.max(0, Math.min(255, (lum + (v - lum) * sat) * kk + add))) as RGB;
-  };
-  if (vector) for (const t of vtrees) t.col = adjust(t.col);
-  if (vector) {
-    // (none at 0%, as the other looks; as long as the sun's height makes them, 38° the usual)
-    const strength = shadowK * 1.72, long = Math.max(0.3, Math.min(3, Math.tan((38 * Math.PI) / 180) / rise));
-    if (strength > 0.01) drawShadows(ctx, vtrees, Lx * long, Ly * long, pl, strength, vstyle === "drybrush" ? 1 : vstyle === "cloud" ? 0.3 : 0.6);
-    yield 0.92;
-    if (vstyle === "brushed") {
-      // (every crown brushed on, a step at a time, leafy and pine, the smallest too; a pine in the
-      // map's own green, as an evergreen keeps (not the autumn mix); specks too small to paint, as
-      // the other looks draw them)
-      const pineGreens = (() => {
-        const [h0, s0, l0] = rgbToHsl(hexRgb("#354a2c")), [h1, s1, l1] = rgbToHsl(hexRgb(s.trees));
-        return STYLE_GREENS.brushed.map(c => { const [h, sl, l] = rgbToHsl(hexRgb(c)); const g = hslToRgb(h + (h1 - h0), Math.max(0, Math.min(1, sl * (s1 / Math.max(0.05, s0)))), Math.max(0.05, Math.min(0.9, l * (l1 / Math.max(0.05, l0))))); return [g[0] * 0.86, g[1] * 0.94, g[2] * 0.96] as RGB; });
-      })();
-      const painted = vtrees.filter(t => t.r >= 1.5);
-      yield* drawBrushedSteps(ctx, painted.map(t => ({ x: t.x, y: t.y, r: t.r, h: t.h, seed: t.seed, pine: t.pine, col: t.pine ? adjust(asKind(pineGreens[Math.floor(t.seed * 997) % pineGreens.length], t.look)) : t.col })), [Lx, Ly], k);
-      drawTrees(ctx, vtrees.filter(t => t.r < 1.5), "cluster", Lx, Ly, pl);
-    } else drawTrees(ctx, vtrees, vstyle, Lx, Ly, pl);
-  }
-  // Paths and walks where the leaves cover them: a pale dashed line with a dark edge over the
-  // treetops, as trail maps draw them, so you can see where a path leads through the woods (in the
-  // open it's painted as it is; the Trail look dashes the unpaved ones everywhere already)
-  const trailed = (l: LineItem) => look.paths.style === "trail" && l.surface !== "paved" && l.surface !== "grass";
-  const covered = (doc.items.filter(i => i.type === "line" && (i.kind === "path" || i.kind === "walk")) as LineItem[]).filter(l => !trailed(l)).map(l => paintedLine(l, view.scale).points).filter(p => p.length >= 2);
-  if (covered.length && !opts.under) {
-    // (where the leaves are: the treetops painted in, and the crowns drawn over the painting)
-    const cover = document.createElement("canvas");
-    cover.width = W; cover.height = H;
-    const cg = cover.getContext("2d")!;
-    const mask = cg.createImageData(W, H), md = mask.data;
-    for (let i = 0; i < W * H; i++) if (height[i] > 0) md[i * 4 + 3] = 255;
-    cg.putImageData(mask, 0, 0);
-    cg.beginPath();
-    for (const t of vtrees) { cg.moveTo(t.x + t.r, t.y); cg.arc(t.x, t.y, t.r, 0, Math.PI * 2); }
-    cg.fill();
-    // (the lines, then only what's under the leaves kept)
-    const lines = document.createElement("canvas");
-    lines.width = W; lines.height = H;
-    const lg = lines.getContext("2d")!;
-    lg.lineCap = "round"; lg.lineJoin = "round";
-    const trace = (pts: P[]) => { lg.beginPath(); pts.forEach((q, i) => { const sp = toScreen(q); if (i) lg.lineTo(sp.x, sp.y); else lg.moveTo(sp.x, sp.y); }); lg.stroke(); };
-    lg.strokeStyle = "rgba(22,28,18,.55)"; lg.lineWidth = Math.max(2, 2.8 * pt);
-    covered.forEach(trace);
-    lg.setLineDash([4 * pt, 3 * pt]); lg.strokeStyle = pl.mode === "night" ? "rgba(220,228,255,.92)" : "rgba(246,238,214,.95)"; lg.lineWidth = Math.max(1.1, 1.5 * pt);
-    covered.forEach(trace);
-    lg.globalCompositeOperation = "destination-in";
-    lg.drawImage(cover, 0, 0);
-    ctx.drawImage(lines, 0, 0);
-  }
-  yield;
-  if (pl.mist) {
-    const mr = seeded(31), spots: { x: number; y: number; r: number }[] = [];
-    // (only over open ground well away from the woods, never on the hole's own fairway)
-    for (let i = 0; i < 200 && spots.length < 10; i++) {
-      const x = mr() * W, y = mr() * H, mm = (Math.min(mh - 1, y >> 1) * mw + Math.min(mw - 1, x >> 1)) * 4;
-      if (inWoods[mm] > 40 || a[mm] > 40 || near[mm] > 90) continue;
-      spots.push({ x, y, r: (50 + mr() * 70) * k });
-    }
-    drawMist(ctx, spots);
-  }
-  gradeLight(ctx, W, H, Lx, Ly, pl);
-  // (the newer looks draw their crowns as shapes, not into the height field: their tops stamped
-  // here, a low dome each, for which roofs they cover and shade)
-  let tops = height, topMost = tallest;
-  if (vector && vtrees.length) {
-    tops = new Float32Array(height);
-    for (const t of vtrees) {
-      const r = t.r, r2 = r * r;
-      for (let y = Math.max(0, Math.floor(t.y - r)); y <= Math.min(H - 1, Math.ceil(t.y + r)); y++) {
-        for (let x = Math.max(0, Math.floor(t.x - r)); x <= Math.min(W - 1, Math.ceil(t.x + r)); x++) {
-          const d2 = ((x + 0.5 - t.x) ** 2 + (y + 0.5 - t.y) ** 2) / r2;
-          if (d2 > 1) continue;
-          const h = t.h * (0.75 + 0.25 * Math.sqrt(1 - d2)), i = y * W + x;
-          if (h > tops[i]) tops[i] = h;
-          if (h > topMost) topMost = h;
-        }
+        // The whole picture: brightness, contrast and color strength (on the color as kept)
+        const i3 = i * 3;
+        pre[i3] = cr; pre[i3 + 1] = cg; pre[i3 + 2] = cb;
+        bits[i] = px;
+        put(o4, i3);
       }
     }
-  }
-  if (look.paths.style === "trail") {
-    // dirt and gravel paths as dashed trail lines (walkways and roads stay painted)
-    ctx.save();
-    // (a light tint of the paths' color, so a color picked for them shows here too)
-    const tint = hexRgb(s.path ?? "#c8b48a"), up = (c: number, w: number) => Math.round(c + (w - c) * 0.6);
-    ctx.strokeStyle = pl.mode === "night" ? `rgba(${up(tint[0], 220)},${up(tint[1], 228)},${up(tint[2], 255)},.85)` : `rgba(${up(tint[0], 255)},${up(tint[1], 255)},${up(tint[2], 255)},.9)`;
-    ctx.lineCap = "round"; ctx.setLineDash([4 * pt, 3.2 * pt]);
-    // (each as wide as its path, a third of it, never thinner than reads; the walks between holes
-    // along the same winding line they're painted on)
-    const trail = (pts: P[], widthFt: number) => { if (pts.length < 2) return; ctx.lineWidth = Math.max(1.2, 1.1 * pt, widthFt * k * 0.35); ctx.beginPath(); pts.forEach((q, i) => { const sp = toScreen(q); if (i) ctx.lineTo(sp.x, sp.y); else ctx.moveTo(sp.x, sp.y); }); ctx.stroke(); };
-    for (const l of doc.items.filter(i => i.type === "line" && (i.kind === "path" || i.kind === "walk")) as LineItem[]) if (l.surface !== "paved" && l.surface !== "grass") trail(paintedLine(l, view.scale).points, l.width || 5);
-    for (const w of walked) trail(w.pts, w.width);
-    ctx.restore();
-  }
-  // (labels kept off the treetops, every look's: the vector looks' crowns are in `tops`)
-  if (lineIv) contourLabels(ctx, relief!, W, H, pt, lineIv, seaFt, doc.units, tops, s.labelScale ?? 1);
-  // The treetops over the buildings, and the trees' shade on the roofs: a picture of its own (clear
-  // elsewhere), laid over the buildings, which are drawn over the painting
-  {
-    // (the shade on a roof, from whatever stands between it and the sun: the treetops as stamped)
-    const tdx: number[] = [], tdy: number[] = [], tup: number[] = [];
-    for (let d = 1.5; d < topMost / rise + 2 && d < 400; d *= 1.3) {
-      const dx = Math.round(sunX * d), dy = Math.round(sunY * d);
-      if (tdx.length && dx === tdx[tdx.length - 1] && dy === tdy[tdy.length - 1]) continue;
-      tdx.push(dx); tdy.push(dy); tup.push(d * rise);
+    if (opts.rows) {
+      const [y0, y1] = opts.rows;
+      bandOut = { o: o.slice(y0 * W * 4, y1 * W * 4), pre: pre.slice(y0 * W * 3, y1 * W * 3), bits: bits.slice(y0 * W, y1 * W) };
+      return canvas;
     }
-    const roofSun = (x: number, y: number, h0: number) => {
-      let shade = 0;
-      for (let j = 0; j < tdx.length; j++) {
-        const up = h0 + tup[j];
-        if (up >= topMost) break;
-        const sx = x + tdx[j], sy = y + tdy[j];
-        if (sx < 0 || sy < 0 || sx >= W || sy >= H) break;
-        const over = Math.max(tops[sy * W + sx], built[sy * W + sx]) - up;
-        if (over > 0) {
-          shade = Math.max(shade, over / soft);
-          if (shade >= 1) return 0;
-        }
-      }
-      return 1 - shade;
+    last = { style: s, bits, pre };
+    yield;
+    // (the open ground everywhere: its tone bands' steps; treetops and roofs only at their outline,
+    // so the leaf grain stays crisp)
+    const solid = (i: number) => height[i] > 0 || built[i] > 0;
+    yield* smoothEdgeSteps(o, W, H, i => !solid(i) || !solid(i + 1) || !solid(i - 1) || !solid(i + W) || !solid(i - W));
+    ctx.putImageData(img, 0, 0);
+    yield;
+    const lxy = Math.hypot(sunX, sunY) || 1, Lx = sunX / lxy, Ly = sunY / lxy;
+    if (vector) roomBetween(vtrees);
+    // (the picture's brightness, contrast and color strength on the vector looks' trees too: they're
+    // drawn after the pass that gives the rest of the map them)
+    const adjust = (c: RGB): RGB => {
+      if (light === 0 && contrast === 0 && sat === 1) return c;
+      const lum = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2], kk = 1 + contrast, add = 128 * (1 - kk) + light * 255;
+      return [c[0], c[1], c[2]].map(v => Math.max(0, Math.min(255, (lum + (v - lum) * sat) * kk + add))) as RGB;
     };
-    const near = new Uint8Array(W * H);
-    let any = false;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      if (built[y * W + x] <= 0) continue;
-      any = true;
-      // (a little past the roof's edge, so its outline is under the leaves too)
-      const rr = Math.max(2, Math.round(pt * 1.5));
-      for (let dy = -rr; dy <= rr; dy++) for (let dx = -rr; dx <= rr; dx++) {
-        const xx = x + dx, yy = y + dy;
-        if (xx >= 0 && yy >= 0 && xx < W && yy < H) near[yy * W + xx] = 1;
-      }
+    if (vector) for (const t of vtrees) t.col = adjust(t.col);
+    if (vector) {
+      // (none at 0%, as the other looks; as long as the sun's height makes them, 38° the usual)
+      const strength = shadowK * 1.72, long = Math.max(0.3, Math.min(3, Math.tan((38 * Math.PI) / 180) / rise));
+      if (strength > 0.01) drawShadows(ctx, vtrees, Lx * long, Ly * long, pl, strength, vstyle === "drybrush" ? 1 : vstyle === "cloud" ? 0.3 : 0.6);
+      yield 0.92;
+      if (vstyle === "brushed") {
+        // (every crown brushed on, a step at a time, leafy and pine, the smallest too; a pine in the
+        // map's own green, as an evergreen keeps (not the autumn mix); specks too small to paint, as
+        // the other looks draw them)
+        const pineGreens = (() => {
+          const [h0, s0, l0] = rgbToHsl(hexRgb("#354a2c")), [h1, s1, l1] = rgbToHsl(hexRgb(s.trees));
+          return STYLE_GREENS.brushed.map(c => { const [h, sl, l] = rgbToHsl(hexRgb(c)); const g = hslToRgb(h + (h1 - h0), Math.max(0, Math.min(1, sl * (s1 / Math.max(0.05, s0)))), Math.max(0.05, Math.min(0.9, l * (l1 / Math.max(0.05, l0))))); return [g[0] * 0.86, g[1] * 0.94, g[2] * 0.96] as RGB; });
+        })();
+        const painted = vtrees.filter(t => t.r >= 1.5);
+        yield* drawBrushedSteps(ctx, painted.map(t => ({ x: t.x, y: t.y, r: t.r, h: t.h, seed: t.seed, pine: t.pine, col: t.pine ? adjust(asKind(pineGreens[Math.floor(t.seed * 997) % pineGreens.length], t.look)) : t.col })), [Lx, Ly], k);
+        drawTrees(ctx, vtrees.filter(t => t.r < 1.5), "cluster", Lx, Ly, pl);
+      } else drawTrees(ctx, vtrees, vstyle, Lx, Ly, pl);
     }
-    if (any && !opts.under) {
-      const fin = ctx.getImageData(0, 0, W, H).data;
-      const ov = new ImageData(W, H), od = ov.data;
-      for (let i = 0; i < W * H; i++) {
-        if (!near[i]) continue;
-        const o4 = i * 4;
-        if (tops[i] > built[i]) {
-          od[o4] = fin[o4]; od[o4 + 1] = fin[o4 + 1]; od[o4 + 2] = fin[o4 + 2]; od[o4 + 3] = 255;
-        } else if (built[i] > 0) {
-          const x = i % W, y = (i / W) | 0;
-          const shade = shadowK * 0.75 * (1 - roofSun(x, y, built[i]));
-          if (shade > 0.01) { od[o4 + 3] = Math.round(shade * 255); }
+    // Paths and walks where the leaves cover them: a pale dashed line with a dark edge over the
+    // treetops, as trail maps draw them, so you can see where a path leads through the woods (in the
+    // open it's painted as it is; the Trail look dashes the unpaved ones everywhere already)
+    const trailed = (l: LineItem) => look.paths.style === "trail" && l.surface !== "paved" && l.surface !== "grass";
+    const covered = (doc.items.filter(i => i.type === "line" && (i.kind === "path" || i.kind === "walk")) as LineItem[]).filter(l => !trailed(l)).map(l => paintedLine(l, view.scale).points).filter(p => p.length >= 2);
+    if (covered.length && !opts.under) {
+      // (where the leaves are: the treetops painted in, and the crowns drawn over the painting)
+      const cover = newCanvas();
+      cover.width = W; cover.height = H;
+      const cg = cover.getContext("2d")!;
+      const mask = cg.createImageData(W, H), md = mask.data;
+      for (let i = 0; i < W * H; i++) if (height[i] > 0) md[i * 4 + 3] = 255;
+      cg.putImageData(mask, 0, 0);
+      cg.beginPath();
+      for (const t of vtrees) { cg.moveTo(t.x + t.r, t.y); cg.arc(t.x, t.y, t.r, 0, Math.PI * 2); }
+      cg.fill();
+      // (the lines, then only what's under the leaves kept)
+      const lines = newCanvas();
+      lines.width = W; lines.height = H;
+      const lg = lines.getContext("2d")!;
+      lg.lineCap = "round"; lg.lineJoin = "round";
+      const trace = (pts: P[]) => { lg.beginPath(); pts.forEach((q, i) => { const sp = toScreen(q); if (i) lg.lineTo(sp.x, sp.y); else lg.moveTo(sp.x, sp.y); }); lg.stroke(); };
+      lg.strokeStyle = "rgba(22,28,18,.55)"; lg.lineWidth = Math.max(2, 2.8 * pt);
+      covered.forEach(trace);
+      lg.setLineDash([4 * pt, 3 * pt]); lg.strokeStyle = pl.mode === "night" ? "rgba(220,228,255,.92)" : "rgba(246,238,214,.95)"; lg.lineWidth = Math.max(1.1, 1.5 * pt);
+      covered.forEach(trace);
+      lg.globalCompositeOperation = "destination-in";
+      lg.drawImage(cover, 0, 0);
+      ctx.drawImage(lines, 0, 0);
+    }
+    yield;
+    if (pl.mist) {
+      const mr = seeded(31), spots: { x: number; y: number; r: number }[] = [];
+      // (only over open ground well away from the woods, never on the hole's own fairway)
+      for (let i = 0; i < 200 && spots.length < 10; i++) {
+        const x = mr() * W, y = mr() * H, mm = (Math.min(mh - 1, y >> 1) * mw + Math.min(mw - 1, x >> 1)) * 4;
+        if (inWoods[mm] > 40 || a[mm] > 40 || near[mm] > 90) continue;
+        spots.push({ x, y, r: (50 + mr() * 70) * k });
+      }
+      drawMist(ctx, spots);
+    }
+    gradeLight(ctx, W, H, Lx, Ly, pl);
+    // (the newer looks draw their crowns as shapes, not into the height field: their tops stamped
+    // here, a low dome each, for which roofs they cover and shade)
+    let tops = height, topMost = tallest;
+    if (vector && vtrees.length) {
+      tops = new Float32Array(height);
+      for (const t of vtrees) {
+        const r = t.r, r2 = r * r;
+        for (let y = Math.max(0, Math.floor(t.y - r)); y <= Math.min(H - 1, Math.ceil(t.y + r)); y++) {
+          for (let x = Math.max(0, Math.floor(t.x - r)); x <= Math.min(W - 1, Math.ceil(t.x + r)); x++) {
+            const d2 = ((x + 0.5 - t.x) ** 2 + (y + 0.5 - t.y) ** 2) / r2;
+            if (d2 > 1) continue;
+            const h = t.h * (0.75 + 0.25 * Math.sqrt(1 - d2)), i = y * W + x;
+            if (h > tops[i]) tops[i] = h;
+            if (h > topMost) topMost = h;
+          }
         }
       }
-      const oc = document.createElement("canvas");
-      oc.width = W; oc.height = H;
-      oc.getContext("2d")!.putImageData(ov, 0, 0);
-      // The buildings mostly hidden by leaves (over half the roof): their outline shows through
-      const roofPx = new Uint32Array(roofIds.length + 1), leafPx = new Uint32Array(roofIds.length + 1);
-      for (let i = 0; i < W * H; i++) {
-        const o = roofOwner[i];
-        if (!o) continue;
-        roofPx[o]++;
-        if (tops[i] > built[i]) leafPx[o]++;
-      }
-      const hidden = new Set(roofIds.filter((_, j) => roofPx[j + 1] > 0 && leafPx[j + 1] > roofPx[j + 1] * 0.5));
-      overGrids.set(canvas, { picture: oc, hidden });
     }
+    if (look.paths.style === "trail") {
+      // dirt and gravel paths as dashed trail lines (walkways and roads stay painted)
+      ctx.save();
+      // (a light tint of the paths' color, so a color picked for them shows here too)
+      const tint = hexRgb(s.path ?? "#c8b48a"), up = (c: number, w: number) => Math.round(c + (w - c) * 0.6);
+      ctx.strokeStyle = pl.mode === "night" ? `rgba(${up(tint[0], 220)},${up(tint[1], 228)},${up(tint[2], 255)},.85)` : `rgba(${up(tint[0], 255)},${up(tint[1], 255)},${up(tint[2], 255)},.9)`;
+      ctx.lineCap = "round"; ctx.setLineDash([4 * pt, 3.2 * pt]);
+      // (each as wide as its path, a third of it, never thinner than reads; the walks between holes
+      // along the same winding line they're painted on)
+      const trail = (pts: P[], widthFt: number) => { if (pts.length < 2) return; ctx.lineWidth = Math.max(1.2, 1.1 * pt, widthFt * k * 0.35); ctx.beginPath(); pts.forEach((q, i) => { const sp = toScreen(q); if (i) ctx.lineTo(sp.x, sp.y); else ctx.moveTo(sp.x, sp.y); }); ctx.stroke(); };
+      for (const l of doc.items.filter(i => i.type === "line" && (i.kind === "path" || i.kind === "walk")) as LineItem[]) if (l.surface !== "paved" && l.surface !== "grass") trail(paintedLine(l, view.scale).points, l.width || 5);
+      for (const w of walked) trail(w.pts, w.width);
+      ctx.restore();
+    }
+    // (labels kept off the treetops, every look's: the vector looks' crowns are in `tops`)
+    if (lineIv) contourLabels(ctx, relief!, W, H, pt, lineIv, seaFt, doc.units, tops, s.labelScale ?? 1);
+    // The treetops over the buildings, and the trees' shade on the roofs: a picture of its own (clear
+    // elsewhere), laid over the buildings, which are drawn over the painting
+    {
+      // (the shade on a roof, from whatever stands between it and the sun: the treetops as stamped)
+      const tdx: number[] = [], tdy: number[] = [], tup: number[] = [];
+      for (let d = 1.5; d < topMost / rise + 2 && d < 400; d *= 1.3) {
+        const dx = Math.round(sunX * d), dy = Math.round(sunY * d);
+        if (tdx.length && dx === tdx[tdx.length - 1] && dy === tdy[tdy.length - 1]) continue;
+        tdx.push(dx); tdy.push(dy); tup.push(d * rise);
+      }
+      const roofSun = (x: number, y: number, h0: number) => {
+        let shade = 0;
+        for (let j = 0; j < tdx.length; j++) {
+          const up = h0 + tup[j];
+          if (up >= topMost) break;
+          const sx = x + tdx[j], sy = y + tdy[j];
+          if (sx < 0 || sy < 0 || sx >= W || sy >= H) break;
+          const over = Math.max(tops[sy * W + sx], built[sy * W + sx]) - up;
+          if (over > 0) {
+            shade = Math.max(shade, over / soft);
+            if (shade >= 1) return 0;
+          }
+        }
+        return 1 - shade;
+      };
+      const near = new Uint8Array(W * H);
+      let any = false;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        if (built[y * W + x] <= 0) continue;
+        any = true;
+        // (a little past the roof's edge, so its outline is under the leaves too)
+        const rr = Math.max(2, Math.round(pt * 1.5));
+        for (let dy = -rr; dy <= rr; dy++) for (let dx = -rr; dx <= rr; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx >= 0 && yy >= 0 && xx < W && yy < H) near[yy * W + xx] = 1;
+        }
+      }
+      if (any && !opts.under) {
+        const fin = ctx.getImageData(0, 0, W, H).data;
+        const ov = new ImageData(W, H), od = ov.data;
+        for (let i = 0; i < W * H; i++) {
+          if (!near[i]) continue;
+          const o4 = i * 4;
+          if (tops[i] > built[i]) {
+            od[o4] = fin[o4]; od[o4 + 1] = fin[o4 + 1]; od[o4 + 2] = fin[o4 + 2]; od[o4 + 3] = 255;
+          } else if (built[i] > 0) {
+            const x = i % W, y = (i / W) | 0;
+            const shade = shadowK * 0.75 * (1 - roofSun(x, y, built[i]));
+            if (shade > 0.01) { od[o4 + 3] = Math.round(shade * 255); }
+          }
+        }
+        const oc = newCanvas();
+        oc.width = W; oc.height = H;
+        oc.getContext("2d")!.putImageData(ov, 0, 0);
+        // The buildings mostly hidden by leaves (over half the roof): their outline shows through
+        const roofPx = new Uint32Array(roofIds.length + 1), leafPx = new Uint32Array(roofIds.length + 1);
+        for (let i = 0; i < W * H; i++) {
+          const o = roofOwner[i];
+          if (!o) continue;
+          roofPx[o]++;
+          if (tops[i] > built[i]) leafPx[o]++;
+        }
+        const hidden = new Set(roofIds.filter((_, j) => roofPx[j + 1] > 0 && leafPx[j + 1] > roofPx[j + 1] * 0.5));
+        overGrids.set(canvas, { picture: oc, hidden });
+      }
+    }
+    // Where it painted woods, for 3D trees standing on the painting (an unturned view only)
+    if (!view.rotation) woodedGrids.set(canvas, { cols: mw, rows: mh, data: wooded, x0: view.cx - W / 2 / k, y0: view.cy - H / 2 / k, ftPerCell: cell / k, cover });
+    return canvas;
   }
-  // Where it painted woods, for 3D trees standing on the painting (an unturned view only)
-  if (!view.rotation) woodedGrids.set(canvas, { cols: mw, rows: mh, data: wooded, x0: view.cx - W / 2 / k, y0: view.cy - H / 2 / k, ftPerCell: cell / k, cover });
-  return canvas;
+  const first = yield* finish(s, null);
+  // (kept: a new style made from it takes the last one's pixels in hand, given back when it's done,
+  // so one stopped part way leaves none to be taken up wrong)
+  if (opts.keep) kept = { key: keptKey(doc, view, stats, opts), canopy: opts.canopy, terrain: doc.terrainHeights, rerun: function* (s2) { const prev = last; last = null; return yield* finish(s2, prev); } };
+  return first;
 }
 
 type Relief = NonNullable<ReturnType<typeof reliefGridSteps> extends Generator<unknown, infer R, unknown> ? R : never>;
@@ -1736,7 +1924,7 @@ const contourLabels = (ctx: CanvasRenderingContext2D, relief: Relief, W: number,
   const rnd = seeded(91);
   for (let y = size * 2; y < H - size * 2; y += sp) for (let x = size * 3; x < W - size * 3; x += sp) {
     const t = relief.at(x + (rnd() - 0.5) * sp, y + (rnd() - 0.5) * sp, true, true);
-    if (t.rise < 0.06 || t.rise > 0.9) continue;
+    if (t.rise < 0.06 || t.rise > 0.9 || t.inside < 0.99) continue;
     const abs = seaFt + t.elev, n0 = Math.round(abs / major), off = abs - n0 * major;
     const g2 = t.sx * t.sx + t.sy * t.sy;
     // (onto the line: a step against the slope)
@@ -1851,23 +2039,30 @@ export const paintedFrom = (doc: CourseDoc) => [
 ];
 
 export const forestCanvasAsync = async (doc: CourseDoc, view: ForestView, stats: HoleStats[], opts: ForestOpts, signal?: AbortSignal, onProgress?: (fraction: number) => void, pace?: () => Promise<number>) => {
-  const steps = forestSteps(doc, view, stats, opts);
+  const steps = forestSteps(doc, view, stats, { parallel: true, ...opts });
   // (a slice at a time, 8 ms of painting between frames; or as `pace` says: it waits for its moment
   // and says how long the next slice may run; and what the steps wait for, waited for, the page
   // free meanwhile: Hand painted's trees, painted by workers)
   let start = performance.now(), told = -1, budget = 8, back: unknown;
-  for (;;) {
-    if (signal?.aborted) throw new DOMException("Painting stopped", "AbortError");
-    const r = timed("a step of painting the ground", () => steps.next(back));
-    back = undefined;
-    if (r.done) return r.value;
-    if (r.value && typeof r.value === "object" && "wait" in r.value) { back = await r.value.wait; start = performance.now(); continue; }
-    if (onProgress && typeof r.value === "number" && r.value - told >= 0.01) onProgress((told = r.value));
-    if (performance.now() - start > budget) {
-      if (pace) budget = await pace();
-      else await new Promise<void>(res => setTimeout(res, 0));
-      start = performance.now();
+  // (stopped, or failed, part way: the steps closed, so what they hold is let go, the graphics
+  // chip's trees among it)
+  let done = false;
+  try {
+    for (;;) {
+      if (signal?.aborted) throw new DOMException("Painting stopped", "AbortError");
+      const r = timed("a step of painting the ground", () => steps.next(back));
+      back = undefined;
+      if (r.done) { done = true; return r.value; }
+      if (r.value && typeof r.value === "object" && "wait" in r.value) { back = await r.value.wait; start = performance.now(); continue; }
+      if (onProgress && typeof r.value === "number" && r.value - told >= 0.01) onProgress((told = r.value));
+      if (performance.now() - start > budget) {
+        if (pace) budget = await pace();
+        else await new Promise<void>(res => setTimeout(res, 0));
+        start = performance.now();
+      }
     }
+  } finally {
+    if (!done) try { steps.return(undefined as never); } catch { /* already stopped */ }
   }
 };
 
@@ -1925,8 +2120,24 @@ const terrainGrid = (doc: CourseDoc) => {
   }
   cols = Math.max(2, cols);
   rows = Math.max(2, rows);
-  const data = new Float32Array(cols * rows);
-  for (const [c, r, v] of cells) data[r * cols + c] = v;
+  const data = new Float32Array(cols * rows), known = new Uint8Array(cols * rows);
+  for (const [c, r, v] of cells) { data[r * cols + c] = v; known[r * cols + c] = 1; }
+  // (a point never measured inside it: its measured neighbours' height, spreading in from them,
+  // never a pit at 0)
+  for (let gap = cells.length < cols * rows, pass = 0; gap && pass < 64; pass++) {
+    gap = false;
+    const was = known.slice();
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const j = r * cols + c;
+      if (was[j]) continue;
+      let sum = 0, n = 0;
+      if (c > 0 && was[j - 1]) { sum += data[j - 1]; n++; }
+      if (c < cols - 1 && was[j + 1]) { sum += data[j + 1]; n++; }
+      if (r > 0 && was[j - cols]) { sum += data[j - cols]; n++; }
+      if (r < rows - 1 && was[j + cols]) { sum += data[j + cols]; n++; }
+      if (n) { data[j] = sum / n; known[j] = 1; } else gap = true;
+    }
+  }
   const value = { cols, rows, grid, data };
   terrainGrids.set(doc.terrainHeights, value);
   return value;
@@ -2020,9 +2231,11 @@ function* terrainLight(doc: CourseDoc, dir: P, tanEl: number, hills: number) {
       ring += a3;
       top2 = Math.max(top2, a2, a3); low2 = Math.min(low2, a2, a3);
     }
-    const drop = smooth(5 * hills, 12 * hills, top2 - low2);
-    rock[j] = smooth(0.62, 1.05, Math.hypot(gx, gy)) * drop;
-    wall[j] = smooth(0.45, 0.8, Math.hypot(gx, gy)) * drop;
+    // (on the ground's real slope and drop: Hills makes the shading stronger, it never turns a
+    // wooded bank into a cliff)
+    const drop = smooth(5, 12, (top2 - low2) / hills), steep = Math.hypot(gx, gy) / hills;
+    rock[j] = smooth(0.62, 1.05, steep) * drop;
+    wall[j] = smooth(0.45, 0.8, steep) * drop;
     cv[j] = Math.max(-1, Math.min(1, ((h0 - ring / dirs.length) / (3 * G)) * 3));
   }
   const v = { cols, rows, grid: G, cast, sky, rock, wall, cv };
@@ -2045,8 +2258,13 @@ function* reliefGridSteps(doc: CourseDoc, on: boolean, W: number, H: number, toP
   const elev = new Float32Array(gw * gh), sx = new Float32Array(gw * gh), sy = new Float32Array(gw * gh), shade = new Float32Array(gw * gh);
   const castS = new Float32Array(gw * gh), skyS = new Float32Array(gw * gh), rockS = new Float32Array(gw * gh);
   const ambS = new Float32Array(gw * gh), wallS = new Float32Array(gw * gh), cvS = new Float32Array(gw * gh), wgx = new Float32Array(gw * gh), wgy = new Float32Array(gw * gh);
+  const ins = new Float32Array(gw * gh);
   const e = Math.max(2, doc.gridSize / 2);
-  // Beyond the measured ground the edge heights carry on (no cliff at the site's edge)
+  // Past the measured ground nothing is known of its shape: the edge's heights carry on (no cliff
+  // at the site's edge), and its slopes, light and lines ease away to level ground over a little
+  // way (carried on unchanged they drew the edge out across the page in stripes)
+  const endX = (tg.cols - 1) * tg.grid, endY = (tg.rows - 1) * tg.grid, ease = Math.max(150, tg.grid * 8);
+  const inside = (p: P) => 1 - smooth(0, ease, Math.hypot(Math.max(0, -p.x, p.x - endX), Math.max(0, -p.y, p.y - endY)));
   const at = (p: P) => {
     const fx = Math.max(0, Math.min(tg.cols - 1.001, p.x / tg.grid)), fy = Math.max(0, Math.min(tg.rows - 1.001, p.y / tg.grid));
     const ix = fx | 0, iy = fy | 0, tx = fx - ix, ty = fy - iy, j = iy * tg.cols + ix, d = tg.data;
@@ -2067,11 +2285,17 @@ function* reliefGridSteps(doc: CourseDoc, on: boolean, W: number, H: number, toP
       const j = gy * gw + gx;
       const h = at(p);
       elev[j] = h;
-      sx[j] = (at({ x: p.x + ux.x * e, y: p.y + ux.y * e }) - at({ x: p.x - ux.x * e, y: p.y - ux.y * e })) / (2 * e);
-      sy[j] = (at({ x: p.x + uy.x * e, y: p.y + uy.y * e }) - at({ x: p.x - uy.x * e, y: p.y - uy.y * e })) / (2 * e);
+      // (the slope where the measured ground is: at or past its edge, the edge's own, so the light
+      // carries on across it with no seam, then eases away)
+      const q = { x: Math.max(e, Math.min(endX - e, p.x)), y: Math.max(e, Math.min(endY - e, p.y)) };
+      sx[j] = (at({ x: q.x + ux.x * e, y: q.y + ux.y * e }) - at({ x: q.x - ux.x * e, y: q.y - ux.y * e })) / (2 * e);
+      sy[j] = (at({ x: q.x + uy.x * e, y: q.y + uy.y * e }) - at({ x: q.x - uy.x * e, y: q.y - uy.y * e })) / (2 * e);
+      const w = (ins[j] = inside(p));
+      sx[j] *= w; sy[j] *= w;
       lo = Math.min(lo, h);
       hi = Math.max(hi, h);
-      if ((gx & 3) === 0 && (gy & 3) === 0) slopes.push(Math.hypot(sx[j], sy[j]));
+      // (how steep the course is: its measured ground's)
+      if ((gx & 3) === 0 && (gy & 3) === 0 && w > 0.99) slopes.push(Math.hypot(sx[j], sy[j]));
     }
   }
   slopes.sort((a, b) => a - b);
@@ -2094,8 +2318,9 @@ function* reliefGridSteps(doc: CourseDoc, on: boolean, W: number, H: number, toP
     if ((gy & 31) === 0) yield;
     for (let gx = 0; gx < gw; gx++) {
     const p = toPlan(gx * step, gy * step), j = gy * gw + gx;
-    castS[j] = fromTl(tl.cast, p); skyS[j] = fromTl(tl.sky, p); rockS[j] = fromTl(tl.rock, p);
-    wallS[j] = fromTl(tl.wall, p); cvS[j] = fromTl(tl.cv, p);
+    const w = ins[j];
+    castS[j] = fromTl(tl.cast, p) * w; skyS[j] = 1 - (1 - fromTl(tl.sky, p)) * w; rockS[j] = fromTl(tl.rock, p) * w;
+    wallS[j] = fromTl(tl.wall, p) * w; cvS[j] = fromTl(tl.cv, p) * w;
     }
   }
   // (how fast the walls start, per screen pixel: to draw their rim a set width)
@@ -2132,12 +2357,12 @@ function* reliefGridSteps(doc: CourseDoc, on: boolean, W: number, H: number, toP
     return j;
   };
   const look = (f: Float32Array, j: number) => f[j] * k00 + f[j + 1] * k10 + f[j + gw] * k01 + f[j + gw + 1] * k11;
-  const here = { shade: 1, elev: 0, sx: 0, sy: 0, rock: 0, amb: 1, wall: 0, wgx: 0, wgy: 0, cv: 0, rise: 0 };
+  const here = { shade: 1, elev: 0, sx: 0, sy: 0, rock: 0, amb: 1, wall: 0, wgx: 0, wgy: 0, cv: 0, rise: 0, inside: 1 };
   return {
     /** Everything at a pixel at once (one lookup of its cell): light, height, slope (per pixel). */
     at: (x: number, y: number, withSlope: boolean, inked = false) => {
       const j = cell(x, y);
-      here.shade = look(shade, j); here.elev = look(elev, j); here.rock = look(rockS, j);
+      here.shade = look(shade, j); here.elev = look(elev, j); here.rock = look(rockS, j); here.inside = look(ins, j);
       if (withSlope || inked) { here.sx = look(sx, j) * ftPerPx; here.sy = look(sy, j) * ftPerPx; }
       if (inked) {
         here.amb = look(ambS, j); here.wall = look(wallS, j); here.wgx = look(wgx, j); here.wgy = look(wgy, j); here.cv = look(cvS, j);

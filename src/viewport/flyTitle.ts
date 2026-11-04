@@ -68,7 +68,7 @@ const BODY = "Inter, Arial, sans-serif";
 
 /** Over the picture: the hole's badge in the corner, its big title as the flight starts, the
  * basket marker with the distance left, and the course's name. */
-export const drawOverlay = (g: CanvasRenderingContext2D, w: number, h: number, hole: HoleTitle, title: number, info: FrameInfo | null, doc: CourseDoc) => {
+export const drawOverlay = (g: CanvasRenderingContext2D, w: number, h: number, hole: HoleTitle, title: number, info: FrameInfo | null, doc: CourseDoc, foot = 0) => {
   const u = h / 720;
   // (the course's headings font, the tee signs')
   const head = hole.head || HEAD;
@@ -135,7 +135,8 @@ export const drawOverlay = (g: CanvasRenderingContext2D, w: number, h: number, h
     g.fillStyle = "rgba(255,255,255,.85)";
     g.shadowColor = "rgba(0,0,0,.7)";
     g.shadowBlur = 4 * u;
-    g.fillText(doc.name, w - 24 * u, h - 24 * u);
+    // (on screen, above the bar over the view's foot: `foot`)
+    g.fillText(doc.name, w - 24 * u, h - 24 * u - foot);
     g.shadowBlur = 0;
   }
   // The big title as the flight starts

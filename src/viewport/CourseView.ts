@@ -32,7 +32,10 @@ import type { WoodedGrid } from "../lib/forest";
 import { autoFlight, flightClock, flyoverOf, insertKey, keyFlight, keyTimes, keysFromFlight, type Air, type Canopy, type Crown, LENS } from "../lib/flight";
 import { VIDEO_HOLD, titleStrength } from "../lib/video";
 import { drawOverlay, holeTitle, overlayShow, type HoleTitle } from "./flyTitle";
-import { forestDetail, type Forest, type TreeSpot, woodsCrownWidth } from "../three/treeKit";
+import { Forest, forestDetail, type TreeSpot, TREES_SEEN, TREES_SHADOW, woodsCrownWidth } from "../three/treeKit";
+import { brushOnly } from "../lib/brushSpots";
+import { applyEdit, brushStroke, kindOf, levelOf, type BrushKind as PaintKind } from "../lib/areaBrush";
+import { foundAreas } from "../lib/undergrowth";
 import { GRASS, Grass, type GrassQuality } from "../three/grass";
 import { Tufts } from "../three/tufts";
 import { setWaterSky, waterMaterial, waterUniforms } from "../three/water";
@@ -147,14 +150,14 @@ const STYLE = `
 .dg-h[data-handle=dogleg]{border-color:#f59e0b}
 .dg-h[data-handle=extend]{width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid #f97316;cursor:copy;display:flex;align-items:center;justify-content:center;font:700 12px/1 Inter,sans-serif;color:#f97316}.dg-h[data-handle=extend]::after{content:"+"}
 .dg-h[data-handle=walkout],.dg-h[data-handle=walkin]{width:13px;height:13px;border-radius:3px;background:#e2e8f0;border:2px dashed #475569;cursor:grab;box-shadow:0 1px 3px rgba(0,0,0,.5)}
-.dg-h[data-handle=flykey]{width:20px;height:20px;border-radius:6px;background:#0284c7;border:2px solid #fff;color:#fff;font:800 11px/16px Inter,system-ui,sans-serif;text-align:center;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.dg-h[data-handle=flykey]{width:22px;height:22px;border-radius:50%;background:#f2f2ee;border:0;color:#1a1a1a;font:800 11.5px/22px Inter,system-ui,sans-serif;text-align:center;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 .dg-h[data-handle=flykey]::after{content:attr(data-n)}
 /* (a keyframe's camera over the + between two, when they're close: it's the one to take hold of) */
 .dg-h[data-handle=flykey]{z-index:2}
-.dg-h[data-handle=flyfoot]{width:12px;height:12px;border-radius:50%;background:#e0f2fe;border:2px solid #0284c7;cursor:move;box-shadow:0 1px 3px rgba(0,0,0,.5)}
-.dg-h[data-handle=flylook]{width:12px;height:12px;border-radius:50%;border:2.5px solid #38bdf8;background:rgba(15,23,42,.35);cursor:grab}
-.dg-h[data-handle=flykey][data-on]{background:#f97316;width:24px;height:24px;font-size:12.5px;line-height:20px;box-shadow:0 0 0 3px rgba(249,115,22,.35),0 1px 4px rgba(0,0,0,.5)}
-.dg-h[data-handle=flylook][data-on]{border-color:#f97316}
+.dg-h[data-handle=flyfoot]{width:12px;height:12px;border-radius:50%;background:#f2f2ee;border:2px solid #52525b;cursor:move;box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.dg-h[data-handle=flylook]{width:12px;height:12px;border-radius:50%;border:2.5px solid #f2f2ee;background:rgba(15,23,42,.35);cursor:grab}
+.dg-h[data-handle=flykey][data-on]{background:#a2cf6a;color:#1f2c12;width:26px;height:26px;font-size:12.5px;line-height:26px;box-shadow:0 0 0 3px rgba(162,207,106,.35),0 1px 4px rgba(0,0,0,.5)}
+.dg-h[data-handle=flylook][data-on]{border-color:#a2cf6a}
 .dg-h[data-handle=flyadd]{width:16px;height:16px;border-radius:50%;background:rgba(2,132,199,.85);border:2px solid #fff;cursor:copy;display:flex;align-items:center;justify-content:center;font:800 13px/1 Inter,sans-serif;color:#fff;opacity:.8;box-shadow:0 1px 3px rgba(0,0,0,.5)}.dg-h[data-handle=flyadd]::after{content:"+"}.dg-h[data-handle=flyadd]:hover{opacity:1}
 .dg-h[data-handle=mid]{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.6);border:2px solid #0891b2;cursor:copy}
 .dg-h[data-handle=mid][data-kind=line]{border-color:#f59e0b}
@@ -217,6 +220,9 @@ let loadingTextures = 0;
 THREE.DefaultLoadingManager.onStart = () => { loadingTextures++; };
 THREE.DefaultLoadingManager.onLoad = () => { loadingTextures = 0; };
 const texturesLoading = () => loadingTextures > 0;
+
+/** Whether a hole's keyframes have handles on the map (they're the Flyover editor's now). */
+const FLY_KEYS_ON_MAP = false;
 
 export class CourseView {
   readonly renderer: THREE.WebGLRenderer;
@@ -339,7 +345,7 @@ export class CourseView {
   private needWarm = true;
   private warmed = new WeakSet<THREE.Object3D>();
   private detailReady: Promise<unknown> = Promise.resolve();
-  private fly: { pts: THREE.Vector3[]; look: THREE.Vector3[]; fov: number[]; t: number; dur: number; play: number; at: (t: number) => number; done?: () => void; title?: HoleTitle } | null = null;
+  private fly: { pts: THREE.Vector3[]; look: THREE.Vector3[]; fov: number[]; t: number; dur: number; play: number; at: (t: number) => number; done?: () => void; title?: HoleTitle; paused?: boolean; hold?: boolean } | null = null;
   /** A hole whose line is being plotted by hand, and its turns so far (from the tee). */
   private plotHole: string | null = null;
   /** Marking a stretch of OB along a line: the line, and where along it the stretch starts (0..1). */
@@ -492,6 +498,17 @@ export class CourseView {
     this.scene.environment = null;
     this.scene.add(this.hemi);
     this.sun.castShadow = true;
+    // (the trees' layers: the shadow picture takes the set that throws shadows, the corner map that
+    // one too (every tree round the eye, not only those in sight); the cameras the trees in sight.
+    // three picks the shadows' casters by the picture's camera's layers, so its shadow pass is
+    // handed the shadow camera instead, which sees the shadow set and everything else)
+    this.sun.shadow.camera.layers.enable(TREES_SHADOW);
+    {
+      const sm = this.renderer.shadowMap, shadowPass = sm.render.bind(sm), sunCam = this.sun.shadow.camera;
+      sm.render = (lights, scene) => shadowPass(lights, scene, sunCam);
+    }
+    this.miniCam.layers.enable(TREES_SHADOW);
+    this.povCam.layers.enable(TREES_SEEN);
     // (how wide the soft edge is, in texels of the shadow picture: three/softShadows)
     this.sun.shadow.radius = SHADOW_SOFT;
     this.sun.shadow.mapSize.set(this.mobile ? 1024 : 2048, this.mobile ? 1024 : 2048);
@@ -506,6 +523,7 @@ export class CourseView {
     }
 
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.5, 40000);
+    this.camera.layers.enable(TREES_SEEN);
     this.controls = new CameraControls(this.camera, canvas);
     const c = this.controls;
     void c.setLookAt(800, 2400, 550, 800, 0, 550, false);
@@ -558,7 +576,7 @@ export class CourseView {
     on(container, "pointerdown", e => this.onPointerDown(e), { capture: true });
     on(container, "wheel", e => this.onWheel(e), { capture: true, passive: false });
     on(container, "pointermove", e => this.onHoverMove(e));
-    on(container, "pointerleave", () => { this.lastPointer = null; this.cb.onHover(null); this.setHover(null); this.updateGhost(null); this.showStep(null); this.tip(null); this.invalidate(); });
+    on(container, "pointerleave", () => { this.lastPointer = null; this.cb.onHover(null); this.setHover(null); this.restKey = ""; window.clearTimeout(this.restTimer); this.updateGhost(null); this.showStep(null); this.tip(null); this.invalidate(); });
     on(container, "dblclick", e => this.onDoubleClick(e));
     on(window, "pointerup", e => this.touchUp(e));
     on(window, "pointercancel", e => this.touchUp(e));
@@ -728,6 +746,9 @@ export class CourseView {
     this.teeLevel = teeLevel;
     this.amenityKind = amenityKind;
     if (leaving && this.tool.mode === "measure") this.clearMeasure();
+    // (no longer a brush: its ring goes, on a touch screen too, where no hover would move it off)
+    const paints = tool.mode === "sculpt" || (tool.mode === "draw-area" && tool.shape === "paint");
+    if (!paints && this.brushRing?.obj.visible) this.showBrush(null, 0);
     if (leaving || tool.shape !== this.tool.shape) {
       if (this.plotHole) this.endPlot();
       // (marking a stretch of OB goes on in Select, which it starts in)
@@ -736,10 +757,26 @@ export class CourseView {
     }
     this.tool = tool;
     if (tool.mode === "select") this.updateGhost(null);
+    // (painting underbrush: each patch tinted by how thick it is, as Look first shows it)
+    const k = this.paintKind(), tint = !!k?.brush;
+    if (tint !== this.brushTint) { this.brushTint = tint; if (this.doc) this.syncShapes(); }
+    if (this.doc) this.syncSelection();
     this.updateCursor();
     this.handleKey = "";
     this.syncHandles();
     this.invalidate();
+  }
+
+  /** Underbrush tinted by its level (while it's being painted). */
+  private brushTint = false;
+  /** What the brush paints: the area being reshaped's kind, or the tool's (a stand of bushes is
+   * underbrush); null when it isn't painting areas. */
+  private paintKind(): PaintKind | null {
+    const t = this.tool;
+    if (t.mode !== "draw-area" || t.shape !== "paint") return null;
+    const own = t.reshape ? this.item(t.reshape) : null;
+    if (own && own.type === "area") return kindOf(own);
+    return { kind: t.areaKind, brush: t.areaKind === "woods" && t.standOf === "bush" };
   }
 
   onView(fn: (info: ViewInfo) => void) {
@@ -1235,6 +1272,8 @@ export class CourseView {
   /** Look from a hole's tee down the hole (null: back to the map); `teeId`: from that tee of it
    * (another skill level's), not the one the layout plays. */
   setTeeView(holeId: string | null, teeId: string | null = null, at: { x: number; y: number; face?: number } | null = null) {
+    // (a flyover stopped, held or not: the tee view's own lens again)
+    if (this.fly) this.povCam.fov = this.povFov;
     this.fly = null;
     // (never past the map's edge)
     const stand = at ? { ...at, ...this.inMap(at) } : null;
@@ -1472,6 +1511,24 @@ export class CourseView {
     } finally { this.eye = was; }
   }
 
+  /** Ground spots on the corner map, in the container's pixels (null: none there, or no map). */
+  miniProject(pts: P[]): ({ x: number; y: number } | null)[] {
+    const m = this.miniRect;
+    if (!m) return pts.map(() => null);
+    const was = this.eye;
+    this.eye = { cam: this.miniCam, rect: m };
+    try { return pts.map(q => this.project(new THREE.Vector3(q.x, this.h(q.x, q.y), q.y))); } finally { this.eye = was; }
+  }
+
+  /** The ground under a client point on the corner map (null: not on it). */
+  miniGround(clientX: number, clientY: number): P | null {
+    const m = this.miniRect;
+    if (!m) return null;
+    const was = this.eye;
+    this.eye = { cam: this.miniCam, rect: m };
+    try { const g = this.groundAt(clientX, clientY); return g ? { x: g.x, y: g.z } : null; } finally { this.eye = was; }
+  }
+
   /** The corner map's place in the view (the container's pixels). */
   private miniPlace(): Rect | null {
     if (!this.miniSize || !this.povHole || this.fly) return null;
@@ -1513,10 +1570,11 @@ export class CourseView {
     return true;
   }
 
-  /** Fly over a hole from behind the tee to the basket; `done` runs when it lands. */
   /** Flies over a hole just as a recording shows it: its title held a moment on the first
-   * picture, the flight (the title fading), a moment at the basket. */
-  flyover(holeId: string, done?: () => void) {
+   * picture, the flight (the title fading), a moment at the basket; `done` runs when it lands.
+   * `hold`: at the end it stays on its last picture, paused (`done` runs then), as a video player
+   * does, instead of ending. */
+  flyover(holeId: string, done?: () => void, hold = false, from: number | null = null) {
     const path = this.flightPath(holeId);
     if (!path || !this.doc) {
       this.fly = null;
@@ -1527,7 +1585,9 @@ export class CourseView {
     }
     this.setTeeView(holeId);
     if (!this.fly) this.povFov = this.povCam.fov;
-    this.fly = { ...path, t: -VIDEO_HOLD.intro, done, title: holeTitle(this.doc.course, holeId) };
+    // (from a moment: held there, paused, without the title as it starts)
+    this.fly = { ...path, t: from !== null ? clamp(from, 0, path.play) : -VIDEO_HOLD.intro, done, title: holeTitle(this.doc.course, holeId), hold, ...(from !== null ? { paused: true } : {}) };
+    this.flyStarted = performance.now();
     const wait: { since: number; loaded: boolean; frames: number } = { since: performance.now(), loaded: false, frames: 0 };
     this.flyWait = wait;
     this.cb.onFlyWait("map");
@@ -1856,9 +1916,20 @@ export class CourseView {
     const restore = this.atmosphere(cam, true);
     this.ground.extras.visible = false;
     this.updateGrass(cam, true);
-    // (the corner map from above draws the same trees: all of them, then)
-    // (every tree, in view or not: each casts its shadow, and the shadows are drawn only now and then)
-    this.updateForests(cam.position);
+    // (the trees in sight for the picture, and those under the shadow picture for its shadows: its
+    // place worked out first)
+    this.syncPlacedBatch();
+    if (this.shadowsDirty) {
+      this.placeSun();
+      this.renderer.shadowMap.needsUpdate = true;
+      this.shadowsDirty = false;
+    }
+    this.nearShadows(cam);
+    // (the shadow camera where it's about to be: three puts it there only as it draws)
+    this.sun.updateMatrixWorld();
+    this.sun.target.updateMatrixWorld();
+    this.sun.shadow.updateMatrices(this.sun);
+    this.updateForests(cam.position, cam, this.sun.shadow.camera);
     waterUniforms.uTime.value = this.clock.elapsedTime;
     waterUniforms.uWind.value = this.wind ? 1 : 0.25;
     // (editing: what's picked and what's under the pointer outlined, as on the map)
@@ -1870,12 +1941,6 @@ export class CourseView {
     // (standing under a tree, the leaves right in front of the eye melt away, those overhead stay;
     // a flyover never fades anything: it's for seeing what's really there)
     treeNearFade.value = this.fly ? 0 : 8;
-    if (this.shadowsDirty) {
-      this.placeSun();
-      this.renderer.shadowMap.needsUpdate = true;
-      this.shadowsDirty = false;
-    }
-    this.nearShadows(cam);
     if (target) {
       this.renderer.setRenderTarget(target);
       this.renderer.clear();
@@ -1964,7 +2029,7 @@ export class CourseView {
       info = { basket: inside ? { x: ((q.x + 1) / 2) * w, y: ((1 - q.y) / 2) * h } : null, toBasket: dist({ x: cam.position.x, y: cam.position.z }, b) };
     }
     // (what it shows as set now, if changed mid-flight)
-    drawOverlay(g, w, h, { ...f.title, show: overlayShow(doc.course, this.povHole ?? "") }, titleStrength(f.t), info, doc.course);
+    drawOverlay(g, w, h, { ...f.title, show: overlayShow(doc.course, this.povHole ?? "") }, titleStrength(f.t), info, doc.course, this.flyFoot);
   }
 
   /** In the tee view: a marker over the basket (too small to see from far away) with the distance. */
@@ -1999,6 +2064,73 @@ export class CourseView {
   /** Where the tee view is (for the HUD): progress of a flyover 0..1, or null. */
   flyProgress() {
     return this.fly ? clamp(this.fly.t / this.fly.play, 0, 1) : null;
+  }
+
+  /** A flyover's clock as it plays: seconds in (0 while its title holds) and how long it plays. */
+  flyClock(): { t: number; play: number } | null {
+    return this.fly ? { t: clamp(this.fly.t, 0, this.fly.play), play: this.fly.play } : null;
+  }
+
+  /** The flyover paused (held on its moment) or playing on; played on from its end, from the start. */
+  flyPause(on: boolean) {
+    if (!this.fly || !!this.fly.paused === on) return;
+    if (!on && this.fly.t >= this.fly.play) this.fly.t = 0;
+    this.fly.paused = on;
+    this.invalidate();
+  }
+
+  /** The flyover's path made again from the hole as it is now (a keyframe or a setting changed
+   * while it plays or is paused), at the same moment. */
+  flyRefresh() {
+    if (!this.fly || !this.povHole) return;
+    const p = this.flightPath(this.povHole);
+    if (!p) return;
+    Object.assign(this.fly, p, { t: Math.min(this.fly.t, p.play) });
+    this.invalidate();
+  }
+
+  /** Room kept at the foot of the view (px) for the bar over it: the overlay's course name sits
+   * above it on screen (a video has none). */
+  private flyFoot = 0;
+  setFlyFoot(px: number) {
+    if (px === this.flyFoot) return;
+    this.flyFoot = px;
+    this.invalidate();
+  }
+
+  /** The flyover playing jumped to `t` seconds in (its timeline's playhead dragged). */
+  flySeek(t: number) {
+    if (!this.fly) return;
+    this.fly.t = clamp(t, 0, this.fly.play);
+    if (this.flyWait) { this.flyWait = null; this.cb.onFlyWait(null); }
+    this.invalidate();
+  }
+
+  /** Where a hole's flyover puts the camera `t` seconds in, as the timeline plays it (automatic or
+   * through keyframes), as a keyframe: to put the camera there, the timeline dragged. */
+  flightKeyAt(holeId: string, t: number): FlyKey | null {
+    const f = this.flightPath(holeId);
+    if (!f || f.pts.length < 2) return null;
+    const e = f.dur > 0 ? clamp(f.at(clamp(t, 0, f.play)) / f.dur, 0, 1) : 0;
+    const idx = e * (f.pts.length - 1), i0 = Math.floor(idx), u = idx - i0;
+    const c = curveBetween(f.pts, i0, u, new THREE.Vector3()), l = curveBetween(f.look, i0, u, new THREE.Vector3());
+    const i1 = Math.min(f.fov.length - 1, i0 + 1);
+    const r1 = (v: number) => Math.round(v * 10) / 10;
+    return { x: r1(c.x), y: r1(c.z), alt: r1(c.y - this.h(c.x, c.z)), lookX: r1(l.x), lookY: r1(l.z), lookAlt: r1(Math.max(0, l.y - this.h(l.x, l.z))), fov: Math.round(f.fov[i0] + (f.fov[i1] - f.fov[i0]) * u) };
+  }
+
+  /** The camera path a hole's flyover flies, sampled along it (for drawing it from above). */
+  flightPoints(holeId: string, n = 60): P[] {
+    const f = this.flightPath(holeId);
+    if (!f || f.pts.length < 2) return [];
+    const out: P[] = [];
+    for (let i = 0; i < n; i++) { const q = f.pts[Math.round((i / (n - 1)) * (f.pts.length - 1))]; out.push({ x: q.x, y: q.z }); }
+    return out;
+  }
+
+  /** How long a hole's flyover plays (s), or null if it can't fly yet. */
+  flyLength(holeId: string): number | null {
+    return this.flightPath(holeId)?.play ?? null;
   }
 
   // ------------------------------------------------------------------ flyover videos
@@ -2183,11 +2315,17 @@ export class CourseView {
       else {
         if (w) this.cb.onFlyWait(null);
         this.flyWait = null;
-        this.fly.t += Math.min(dt, 0.25);
+        if (!this.fly.paused) this.fly.t += Math.min(dt, 0.25);
       }
       this.dirty = true;
+      // (held at its end, from the tee view: on its last picture, paused)
+      if (this.fly.hold && !this.fly.paused && this.fly.t >= this.fly.play + (this.fly.title ? VIDEO_HOLD.outro : 0)) {
+        this.fly.t = this.fly.play;
+        this.fly.paused = true;
+        this.fly.done?.();
+      }
       // (a moment at the basket before it ends, as in a recording)
-      if (this.fly.t >= this.fly.play + (this.fly.title ? VIDEO_HOLD.outro : 0)) {
+      else if (!this.fly.hold && this.fly.t >= this.fly.play + (this.fly.title ? VIDEO_HOLD.outro : 0)) {
         const done = this.fly.done;
         this.fly = null;
         this.povCam.fov = this.povFov;
@@ -2202,8 +2340,9 @@ export class CourseView {
     // phone when nothing else moves: the battery matters more than the breeze; and still while a
     // video records, whose frames would otherwise wait on the screen's)
     const breeze = !!this.povHole && this.wind && this.recordings === 0;
-    // (standing on the course, not flying: always the full render, whatever the device)
-    const street = !!this.povHole && !this.fly && !this.software;
+    // (on the course, standing or flying: always the full render, whatever the device, now that
+    // only what can be seen is drawn)
+    const street = !!this.povHole && !this.software;
     if (street !== this.streetDetail) this.setStreetDetail(street);
     if (breeze && !(this.mobile && !this.dirty && performance.now() - this.lastRender < 33)) this.dirty = true;
     // (While a video records, the screen at most 8 times a second: on a slow device its pictures
@@ -2231,8 +2370,13 @@ export class CourseView {
    * less grass, softer shadows and fewer trees in full detail; it steps back up when there is
    * room again. Software rendering (no graphics card) keeps its own fixed, lower settings.
    */
+  /** When the flight now under way began (its quality picked in its first seconds, then held). */
+  private flyStarted = 0;
   perfSample(ms: number) {
     if (this.software && !this.adaptiveForced) return;
+    // A flight keeps one quality: picked in its first three seconds (its title, the camera still at
+    // the tee), then held to the end, so the picture never steps down or up partway down the hole
+    if (this.fly && performance.now() - this.flyStarted > 3000) { this.perfSamples.length = 0; return; }
     const s = this.perfSamples;
     s.push(ms);
     // A window of 24 frames, or a second and a half on a slow device (24 frames at 5 a second
@@ -2259,10 +2403,11 @@ export class CourseView {
   }
 
   /**
-   * Standing on the course (street view, from a tee or anywhere): always the full render, as a
-   * computer draws it, on a phone too: the sharpest picture, a computer's grass, shadows and trees
-   * in full detail, and nothing stepped down when frames run slow (standing, the view is drawn
-   * only when it moves). Back to what keeps this device smooth once it's left.
+   * On the course (street view, from a tee or anywhere, and flying down a hole): always the full
+   * render, as a computer draws it, on a phone too: the sharpest picture, a computer's grass out
+   * to 170 ft, shadows, and trees in full detail out to 360 ft, stepped down only when frames truly
+   * run slow (a flight picks its quality in its first seconds and keeps it). Back to what keeps
+   * this device smooth once it's left.
    */
   private streetDetail = false;
   private setStreetDetail(on: boolean) {
@@ -2293,7 +2438,7 @@ export class CourseView {
       this.sun.shadow.map = null;
       this.shadowsDirty = true;
     }
-    forestDetail.nearFt = this.streetDetail ? 260 : (this.software ? 70 : this.mobile ? 150 : 260) * (this.tier >= 3 ? 0.6 : 1);
+    forestDetail.nearFt = this.streetDetail ? (this.tier >= 2 ? 260 : 360) : (this.software ? 70 : this.mobile ? 150 : 260) * (this.tier >= 3 ? 0.6 : 1);
     forestDetail.all = false;
     forestDetail.version++;
     retuneTrees(this.itemsGroup);
@@ -2340,6 +2485,14 @@ export class CourseView {
   /** For tests: whether the view is drawing, how many pictures it has drawn, and whether a video records. */
   drawInfo() {
     return { paused: this.paused, frames: this.frames, recording: this.recordings > 0 };
+  }
+
+  /** For tests: the trees of every forest (the woods, the placed trees drawn together), in the
+   * picture and in the shadows' set just now. */
+  forestStats() {
+    const t = { trees: 0, seen: 0, shadow: 0, placed: this.placedBatch?.forest.counts().trees ?? 0, placedApart: this.placedBatch?.hidden.filter(o => o.visible).length ?? 0 };
+    for (const f of this.forestsOf.list) { const c = f.counts(); t.trees += c.trees; t.seen += c.seen; t.shadow += c.shadow; }
+    return t;
   }
 
   /** For tests: the quality level now. */
@@ -2443,7 +2596,14 @@ export class CourseView {
     const width = Math.max(1, Math.round(r.width));
     const height = Math.max(1, Math.round(r.height));
     if (width === this.size.width && height === this.size.height) return;
+    const was = this.size.height;
     this.size = { width, height };
+    // (the map keeping its scale as its box grows or shrinks, a phone's steps making way for a bar
+    // say: more of it shows, nothing zooms; not standing on the course, where the view is the eye's)
+    if (this.fitted && was > 1 && !this.povHole && !this.eye) {
+      const d = clamp(this.controls.distance * (height / was), this.controls.minDistance, this.controls.maxDistance);
+      void this.controls.dollyTo(d, false);
+    }
     this.renderer.setSize(width, height, false);
     this.renderer.domElement.style.width = `${width}px`;
     this.renderer.domElement.style.height = `${height}px`;
@@ -2544,8 +2704,9 @@ export class CourseView {
     const p = cam.position;
     const t = this.clock.elapsedTime;
     const wind = this.wind && this.povHole ? 0.14 : 0.05;
-    this.grass.update(p, this.h(clamp(p.x, 0, doc.canvas.width), clamp(p.z, 0, doc.canvas.height)), t, wind);
-    this.tufts.update(p, t, wind, this.grass.group.visible);
+    const ground = (x: number, z: number) => this.h(clamp(x, 0, doc.canvas.width), clamp(z, 0, doc.canvas.height));
+    this.grass.update(p, ground(p.x, p.z), t, wind, ground);
+    this.tufts.update(p, t, wind, this.grass.group.visible, ground);
   }
 
   /** What a stretch of water mirrors on its banks: woods close by (high and dark) or open grass. */
@@ -2677,14 +2838,69 @@ export class CourseView {
     this.pondsAgain();
   }
 
-  /** Woods: the trees near the camera in full detail. */
-  private updateForests(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera) {
-    for (const o of this.itemsGroup.children) {
-      (o.userData.forest as Forest | undefined)?.update(eye, cam);
-      // (a hedge's bushes, inside its line's group)
-      for (const c of o.children) (c.userData.forest as Forest | undefined)?.update(eye, cam);
+  /**
+   * Standing or flying, the trees placed by hand drawn together, as the woods are (a thousand
+   * trees in a few dozen draws instead of thousands), each exactly where and how it stands; only
+   * where nothing is picked (flying, Walk, a viewer's), as picking and dragging need each tree's
+   * own. A tree with a shape of its own stays itself.
+   */
+  private placedBatch: { forest: Forest; hidden: THREE.Object3D[] } | null = null;
+  private placedBatchDirty = true;
+  private syncPlacedBatch() {
+    const want = !!this.povHole && !this.tapsEdit();
+    if (!want || this.placedBatchDirty) this.dropPlacedBatch();
+    if (!want || this.placedBatch) return;
+    this.placedBatchDirty = false;
+    const spots: TreeSpot[] = [], hidden: THREE.Object3D[] = [];
+    for (const [, entry] of this.objects) {
+      entry.obj.traverse(o => {
+        const pool = o.userData.pool as { shape: TreeSpot["shape"]; variant: number; height: number } | undefined;
+        if (!pool || !(o as THREE.LOD).isLOD || !o.visible) return;
+        const near = (o as THREE.LOD).levels[0]?.object, leaves = near?.children[1] as THREE.Mesh | undefined;
+        if (!leaves) return;
+        leaves.updateWorldMatrix(true, false);
+        const at = new THREE.Vector3().setFromMatrixPosition(leaves.matrixWorld);
+        spots.push({ x: at.x, y: at.z, ground: at.y, height: pool.height, width: 0, shape: pool.shape, variant: pool.variant, tint: new THREE.Color(), turn: 0, lean: 0, matrix: leaves.matrixWorld.clone(), leaf: (leaves.material as THREE.MeshStandardMaterial).color.clone() });
+        hidden.push(o);
+      });
     }
+    if (!spots.length) return;
+    const forest = new Forest(spots);
+    forest.group.name = "placed-trees";
+    forest.group.userData.forest = forest;
+    forest.group.userData.placed = true;
+    this.itemsGroup.add(forest.group);
+    for (const o of hidden) o.visible = false;
+    this.placedBatch = { forest, hidden };
+    this.shadowsDirty = true;
   }
+  private dropPlacedBatch() {
+    const b = this.placedBatch;
+    if (!b) return;
+    this.placedBatch = null;
+    this.itemsGroup.remove(b.forest.group);
+    b.forest.dispose();
+    for (const o of b.hidden) o.visible = true;
+    this.shadowsDirty = true;
+  }
+
+  /** Woods: the trees near the camera in full detail. */
+  private updateForests(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera, sun?: THREE.OrthographicCamera) {
+    // (which they are: found again only when the things drawn changed, not every frame)
+    const kids = this.itemsGroup.children;
+    if (this.forestsOf.children !== kids.length || this.forestsOf.first !== kids[0] || this.forestsOf.last !== kids[kids.length - 1]) {
+      const list: Forest[] = [];
+      for (const o of kids) {
+        if (o.userData.forest) list.push(o.userData.forest as Forest);
+        // (a hedge's bushes, inside its line's group)
+        for (const c of o.children) if (c.userData.forest) list.push(c.userData.forest as Forest);
+      }
+      this.forestsOf = { children: kids.length, first: kids[0], last: kids[kids.length - 1], list };
+    }
+    const doc = this.doc, ground = doc && cam ? (x: number, z: number) => this.h(clamp(x, 0, doc.canvas.width), clamp(z, 0, doc.canvas.height)) : undefined;
+    for (const f of this.forestsOf.list) f.update(eye, cam, sun, ground);
+  }
+  private forestsOf: { children: number; first?: THREE.Object3D; last?: THREE.Object3D; list: Forest[] } = { children: -1, list: [] };
 
   /** How much grass to draw: as set, or (automatically) none without a graphics card. */
   private grassQuality(): GrassQuality {
@@ -3029,6 +3245,8 @@ export class CourseView {
   }
   private syncItemsAll() {
     const doc = this.doc!;
+    // (the placed trees' batch made again from what they are now, next time it's drawn)
+    this.placedBatchDirty = true;
     const seen = new Set<string>();
     for (const item of doc.course.items) {
       if (item.type === "label" || item.type === "area" || item.type === "line") continue;
@@ -3072,6 +3290,61 @@ export class CourseView {
    */
   private syncShapes() {
     timed("3D shapes made again", () => this.syncShapesAll());
+    this.syncSeeThrough();
+  }
+
+  /** A building, a road or a path selected (its shape being changed): see-through, so the map
+   * under it shows while its corners and edges are dragged; solid again once it's let go. */
+  private seeThrough: { obj: THREE.Object3D } | null = null;
+  /** Its colours being picked: what's selected shows solid meanwhile. */
+  private colorPicking = false;
+  setColorPicking(on: boolean) {
+    if (on === this.colorPicking) return;
+    this.colorPicking = on;
+    this.syncSeeThrough();
+  }
+  private syncSeeThrough() {
+    const it = this.selectedId && !this.colorPicking ? this.item(this.selectedId) : null;
+    const key = it?.type === "structure" ? `struct:${it.id}` : it?.type === "line" && (it.kind === "road" || it.kind === "path" || it.kind === "walk") ? `line:${it.id}` : null;
+    const obj = key ? this.shapes.get(key)?.obj ?? null : null;
+    if (this.seeThrough?.obj === obj) return;
+    this.solidAgain();
+    if (!obj || !it) return;
+    const building = it.type === "structure";
+    obj.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || !m.material) return;
+      m.userData.solid = { material: m.material, castShadow: m.castShadow };
+      const see = (mat: THREE.Material) => {
+        const c = mat.clone();
+        c.transparent = true;
+        c.opacity = Math.min(mat.opacity, building ? 0.45 : 0.4);
+        // (a building's walls still hide its own far side; a road lies flat on the ground)
+        c.depthWrite = building;
+        return c;
+      };
+      m.material = Array.isArray(m.material) ? m.material.map(see) : see(m.material);
+      m.castShadow = false;
+    });
+    this.seeThrough = { obj };
+    this.shadowsDirty = true;
+    this.invalidate();
+  }
+  private solidAgain() {
+    const was = this.seeThrough;
+    if (!was) return;
+    this.seeThrough = null;
+    was.obj.traverse(o => {
+      const m = o as THREE.Mesh;
+      const solid = m.userData.solid as { material: THREE.Material | THREE.Material[]; castShadow: boolean } | undefined;
+      if (!solid) return;
+      (Array.isArray(m.material) ? m.material : [m.material]).forEach(x => x.dispose());
+      m.material = solid.material;
+      m.castShadow = solid.castShadow;
+      delete m.userData.solid;
+    });
+    this.shadowsDirty = true;
+    this.invalidate();
   }
   private syncShapesAll() {
     const doc = this.doc!;
@@ -3090,6 +3363,8 @@ export class CourseView {
       // (and made a few at a time, over the frames after: see drainSlow)
       if (slow) { this.slowQueue.set(key, { sig, make, group }); this.dirty = true; return; }
       if (entry) {
+        // (made again while see-through: its own materials back first, so they're freed with it)
+        if (this.seeThrough?.obj === entry.obj) this.solidAgain();
         entry.obj.parent?.remove(entry.obj);
         disposeObjectDeep(entry.obj);
         this.shapes.delete(key);
@@ -3375,6 +3650,14 @@ export class CourseView {
     // (fields in their real colors, their grass leaning toward the map's)
     const inks = fieldInks("natural", st.fairway);
     const nogoColor = pdga ? RESTRICTED : AREA_KINDS.nogo.color;
+    // (woods of bushes only, biggest first: where they overlap, the smaller one's brush grows, as
+    // the measured brush's medium and heavy patches lie inside its light)
+    const brushWoods = areas.filter(a => a.kind === "woods" && (a.bushes ?? 0) >= 1);
+    const brushInside = (a: AreaItem) => {
+      const k = brushWoods.indexOf(a), box = boundsOf(a.points);
+      if (k < 0) return [];
+      return brushWoods.slice(k + 1).filter(o => { const b = boundsOf(o.points); return b.minX < box.maxX && b.maxX > box.minX && b.minY < box.maxY && b.maxY > box.minY; }).map(o => o.points);
+    };
     areas.forEach((a, order) => {
       if (a.kind === "field") {
         // A field, court or play area: its ground painted as it is (on the painted map and when
@@ -3409,8 +3692,18 @@ export class CourseView {
       const c = color(a.kind) ?? meta.color;
       // (woods: no fill, the ground under the trees as it is; the trees show it, its edge line only)
       const bare = a.kind === "woods";
-      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare]), () => {
+      const tinted = this.brushTint && a.kind === "woods" && (a.bushes ?? 0) >= 1 ? levelOf(a) : 0;
+      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted]), () => {
         const g = new THREE.Group();
+        // (underbrush being painted: tinted light, medium or heavy, the heavier over the lighter)
+        if (tinted) {
+          const tc = ["", "#fde68a", "#f59e0b", "#b45309"][tinted];
+          const geo = drapedPolygon(a.points, (x, y) => this.h(x, y), doc.gridSize, 0.2 + tinted * 0.02);
+          const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: tc, transparent: true, opacity: 0.13, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 }));
+          mesh.renderOrder = 3 + tinted * 0.01;
+          g.add(mesh);
+          g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.1, true), tc, 2, { order: 5 }));
+        }
         const fill = photo ? meta.fill : Math.min(0.9, meta.fill + 0.35);
         const rule = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo";
         // (on the painted ground, or looked at only: no translucent fills, only the rules' edges)
@@ -3519,17 +3812,17 @@ export class CourseView {
         const edge = brushOnly || grass ? 0 : Math.min(1, Math.max(0, a.brushEdge ?? 0.6));
         // (`over`: the sections drawn after this one, which have their say where they overlap it)
         const plant = (key: string, outline: P[], level: "light" | "medium" | "heavy", kind: BrushKind, outside: boolean, over: P[][] = []) =>
-          held(key) || put(key, JSON.stringify([outline, level, kind, hv, st.trees, st.landscape, st.treeMix, st.conifers, here().key, cutKey, outside ? sections.map(b => b.points) : over, edge, a.points]), () => {
+          held(key) || put(key, JSON.stringify([outline, level, kind, hv, st.trees, st.landscape, st.treeMix, st.conifers, here().key, cutKey, outside ? sections.map(b => b.points) : 0, over, edge, a.points]), () => {
             this.plantings++;
             // (the wood's own level stays out of its sections; a section keeps to the wood)
-            const keepOut = (p: P, r: number) => here().test(p, r) || cutAt(p) || (outside ? inSection(p) : !pointInPolygon(p, a.points) || over.some(o => pointInPolygon(p, o)));
+            const keepOut = (p: P, r: number) => here().test(p, r) || cutAt(p) || over.some(o => pointInPolygon(p, o)) || (outside ? inSection(p) : !pointInPolygon(p, a.points));
             const brush = createUnderbrush(outline, (x, y) => this.h(x, y), st.trees, treeMixOf(st), keepOut, level, edge, a.points, kind, grass ? TALL_GRASS_BRUSH : 1);
             brush.traverse(o => { o.userData.itemId = a.id; });
             this.shadowsDirty = true;
             return brush;
           }, this.itemsGroup, true);
         const kind = a.brushKind ?? "mixed";
-        if (brushLevel) plant(`woods:${a.id}:under`, a.points, brushLevel, kind, true);
+        if (brushLevel) plant(`woods:${a.id}:under`, a.points, brushLevel, kind, true, brushOnly ? brushInside(a) : []);
         sections.forEach((b, i) => { if (b.level !== "none") plant(`woods:${a.id}:under:${i}`, b.points, b.level, b.kind ?? kind, false, sections.slice(i + 1).map(s => s.points)); });
       }
     });
@@ -3544,13 +3837,13 @@ export class CourseView {
         // (the flight where it flies, at its own heights; its shadow on the ground; and each
         // keyframe's camera on a stem from the ground, looking where it looks)
         if (f) {
-          g.add(this.fatLine(f.cam.map(c => new THREE.Vector3(c.x, c.z, c.y)), "#38bdf8", 3, { order: 9 }));
-          g.add(this.fatLine(this.drapeLine(f.cam.map(c => ({ x: c.x, y: c.y })), 0.6), "#38bdf8", 1.5, { order: 8, dashed: 8, opacity: 0.55 }));
+          g.add(this.fatLine(f.cam.map(c => new THREE.Vector3(c.x, c.z, c.y)), "#f2f2ee", 3, { order: 9 }));
+          g.add(this.fatLine(this.drapeLine(f.cam.map(c => ({ x: c.x, y: c.y })), 0.6), "#f2f2ee", 1.5, { order: 8, dashed: 8, opacity: 0.55 }));
         }
         for (const k of keys) {
           const ground = this.h(k.x, k.y), air = new THREE.Vector3(k.x, ground + k.alt, k.y);
-          g.add(this.fatLine([new THREE.Vector3(k.x, ground + 0.3, k.y), air], "#e0f2fe", 1.5, { opacity: 0.85, order: 9, dashed: 4 }));
-          g.add(this.fatLine([air, new THREE.Vector3(k.lookX, this.h(k.lookX, k.lookY) + 3, k.lookY)], "#38bdf8", 1.2, { opacity: 0.6, order: 8 }));
+          g.add(this.fatLine([new THREE.Vector3(k.x, ground + 0.3, k.y), air], "#d4d4d8", 1.5, { opacity: 0.85, order: 9, dashed: 4 }));
+          g.add(this.fatLine([air, new THREE.Vector3(k.lookX, this.h(k.lookX, k.lookY) + 3, k.lookY)], "#f2f2ee", 1.2, { opacity: 0.6, order: 8 }));
         }
         return g;
       });
@@ -3761,6 +4054,7 @@ export class CourseView {
     }
     for (const [key, entry] of this.shapes) {
       if (seen.has(key)) continue;
+      if (this.seeThrough?.obj === entry.obj) this.solidAgain();
       entry.obj.parent?.remove(entry.obj);
       disposeObjectDeep(entry.obj);
       this.shapes.delete(key);
@@ -3889,6 +4183,8 @@ export class CourseView {
       const size = lean ? 128 : 256;
       const rt = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType, generateMipmaps: false });
       const cube = new THREE.CubeCamera(1, 3000, rt);
+      // (the trees round the water, in sight or not: those that throw shadows round the eye)
+      for (const c of cube.children) c.layers.enable(TREES_SHADOW);
       cube.position.copy(next[1].at);
       cube.updateMatrixWorld(true);
       if (cube.coordinateSystem !== r.coordinateSystem) { cube.coordinateSystem = r.coordinateSystem; cube.updateCoordinateSystem(); }
@@ -3956,7 +4252,8 @@ export class CourseView {
       disposeObjectDeep(this.selectionFx);
       this.selectionFx = null;
     }
-    const fx = this.outlineFor(this.selectedId, SELECT, 1);
+    // (the area being reshaped with the brush stays outlined, as picked)
+    const fx = this.outlineFor(this.selectedId ?? this.tool.reshape ?? null, SELECT, 1);
     if (this.group.length) {
       const g = new THREE.Group();
       for (const id of this.group.slice(0, 400)) {
@@ -4043,9 +4340,30 @@ export class CourseView {
     this.fx.add(g);
   }
 
-  private setHover(id: string | null) {
-    if (id === this.hoverId) return;
+  /** What a click at a client point picks, as the select click works it out: a tree or bush
+   * drawn there when the pointer is over an area, a line or a hole's line (most trees stand in a
+   * wood) but not on an area's edge; otherwise the thing itself. */
+  clickTarget(clientX: number, clientY: number, dom: string | null = null): { id: string | null; tree: ReturnType<CourseView["treeAt"]> } {
+    const hit = dom ?? this.pick(clientX, clientY);
+    const it = hit ? this.item(hit) : null;
+    const big = (!hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit))) && !this.edgeFirst(hit, dom);
+    const tree = big && !this.readOnly ? this.treeAtScreen(clientX, clientY) : null;
+    return tree ? { id: null, tree } : { id: hit, tree: null };
+  }
+
+  /** The tree or bush the pointer is over (not an item of its own), outlined as a hovered thing is. */
+  private hoverTree: ReturnType<CourseView["treeAt"]> = null;
+  /** Whether the pointer is on the hovered area's edge (where a picked area is moved from). */
+  private hoverEdge = false;
+  private setHover(id: string | null, tree: ReturnType<CourseView["treeAt"]> = null) {
+    const edge = !!id && this.pickedEdge;
+    if (id === this.hoverId && JSON.stringify(tree) === JSON.stringify(this.hoverTree)) {
+      if (edge !== this.hoverEdge) { this.hoverEdge = edge; this.updateCursor(); }
+      return;
+    }
     this.hoverId = id;
+    this.hoverTree = tree;
+    this.hoverEdge = edge;
     if (this.hoverFx) {
       this.fx.remove(this.hoverFx);
       disposeObjectDeep(this.hoverFx);
@@ -4054,9 +4372,59 @@ export class CourseView {
     if (id && id !== this.selectedId && !this.group.includes(id)) {
       this.hoverFx = this.outlineFor(id, "#ffffff", 0.5);
       if (this.hoverFx) this.fx.add(this.hoverFx);
+    } else if (tree) {
+      // (a ring round its crown, on the ground)
+      const at = this.treeSpotOf(tree);
+      if (at) {
+        const ring: P[] = [];
+        for (let i = 0; i < 48; i++) ring.push({ x: at.x + Math.cos((i / 48) * Math.PI * 2) * at.r, y: at.y + Math.sin((i / 48) * Math.PI * 2) * at.r });
+        const g = new THREE.Group();
+        g.add(this.fatLine(this.drapeLine(ring, 0.4, true), "#ffffff", 2.5, { opacity: 0.5, order: 9 }));
+        this.hoverFx = g;
+        this.fx.add(g);
+      }
     }
     this.updateCursor();
     this.invalidate();
+  }
+
+  /** Where a tree that isn't an item of its own stands, and how wide its crown is. */
+  private treeSpotOf(tree: NonNullable<ReturnType<CourseView["treeAt"]>>): { x: number; y: number; r: number } | null {
+    if (tree.kind === "spot") return { x: tree.x, y: tree.y, r: Math.max(1.5, tree.width / 2) };
+    const lidar = this.doc?.course.lidar, t = lidar?.trees[tree.k];
+    if (!t) return null;
+    const [x, y, , r] = grownTree(t, lidar!.growYears ?? 0);
+    return { x, y, r: Math.max(1.5, r) };
+  }
+
+  /** What a hovered thing is called, for the tip after the pointer rests on it. */
+  private hoverName(id: string | null, tree: ReturnType<CourseView["treeAt"]>) {
+    if (tree) return tree.kind === "measured" ? "Measured tree" : tree.conifer ? "Pine" : tree.height < 9 ? "Bush" : "Tree";
+    if (!id) return null;
+    const it = this.item(id);
+    if (!it) { const h = this.hole(id); return h ? `Hole ${this.num(h.id)}` : null; }
+    if (it.type === "area") {
+      const name = brushOnly(it) ? `${(it.density ?? 1) < 0.75 ? "Light" : (it.density ?? 1) > 1.4 ? "Heavy" : "Medium"} underbrush` : it.label || AREA_KINDS[it.kind].label;
+      return this.pickedEdge ? `${name} edge` : name;
+    }
+    if (it.type === "line") return it.label || LINE_KINDS[it.kind].label;
+    return this.nameOf(id);
+  }
+
+  /** After the pointer rests a moment on something, its name beside it (what a click picks); it
+   * goes as soon as the pointer moves on. */
+  private restTimer = 0;
+  private restKey = "";
+  private restTip(p: { x: number; y: number }, id: string | null, tree: ReturnType<CourseView["treeAt"]>) {
+    const key = id ?? (tree ? JSON.stringify(tree) : "");
+    if (key === this.restKey && key) return;
+    this.restKey = key;
+    window.clearTimeout(this.restTimer);
+    this.tip(null);
+    if (!key || id === this.selectedId) return;
+    const name = this.hoverName(id, tree);
+    if (!name) return;
+    this.restTimer = window.setTimeout(() => { const q = this.lastPointer; if (q && this.restKey === key) this.tip(name, q.x, q.y); }, 450);
   }
 
   // ------------------------------------------------------------------ labels and badges (DOM)
@@ -4405,8 +4773,13 @@ export class CourseView {
     };
     // (each crown as wide as the woods draw it)
     const drawnR = (conifer: boolean | number, variant: number, height: number, width: number) => woodsCrownWidth(conifer ? "conifer" : "broadleaf", variant, height, width) / 2;
+    // (only what's drawn just now can be picked: none with the trees hidden, none of a wood or its
+    // underbrush out of sight, and none past where a forest stops drawing them)
+    if (this.treesHidden) return [];
+    const shown = (o: THREE.Object3D | null) => { for (let x = o; x; x = x.parent) if (!x.visible) return false; return true; };
+    const measuredShown = this.itemsGroup.children.some(g => g.userData.measured && shown(g));
     const lidar = this.doc?.course.lidar, ls = this.lidarState;
-    if (lidar && ls) {
+    if (lidar && ls && measuredShown) {
       for (const k of ls.stand) {
         const tr = lidar.trees[k];
         if (!tr) continue;
@@ -4416,14 +4789,17 @@ export class CourseView {
     }
     for (const g of this.itemsGroup.children) {
       const spots = g.userData.spots as TreeSpot[] | undefined;
-      if (!spots) continue;
+      if (!spots || !shown(g)) continue;
       // (the measured forest: its measured trees are tested above by index; its saplings here)
       const measuredCount = g.userData.measured ? (lidar?.trees.length ?? 0) : 0;
       const indexOf = g.userData.indexes as number[] | undefined;
-      spots.forEach((s, i) => {
+      const one = (s: TreeSpot, i: number) => {
         if (measuredCount && indexOf && indexOf[i] < measuredCount) return;
         test(s.x, s.y, s.ground, s.height, s.shape === "bush" ? s.width / 2 : drawnR(s.shape === "conifer", s.variant, s.height, s.width), { kind: "spot", x: s.x, y: s.y, height: s.height, width: s.width, conifer: s.shape === "conifer" });
-      });
+      };
+      const forest = g.userData.forest as Forest | undefined;
+      if (forest && !measuredCount) forest.eachDrawn(s => one(s, -1));
+      else spots.forEach(one);
     }
     // Nearest first; but a nearer crown only grazed at its thin edge gives way to one behind that
     // the pointer is well into
@@ -4575,6 +4951,17 @@ export class CourseView {
         deg = ((deg % 360) + 360) % 360;
         return it.type === "tee" ? { rotation: deg, aimFixed: true } : { rotation: deg };
       }), { title: sel.type === "mando" ? "Drag to turn the arrow · Shift snaps to 15°" : "Drag to turn it · Shift snaps to 15°" });
+      // (a tee's pad: its length from its back edge, its width from its side, drawn as it is)
+      if (sel.type === "tee") {
+        const axes = (t: TeeItem) => { const a = teeAim(this.doc!.course, t) * DEG; return { f: { x: Math.cos(a), y: Math.sin(a) }, s: { x: -Math.sin(a), y: Math.cos(a) } }; };
+        const at = (t: TeeItem, v: P, d: number) => { const x = t.x + v.x * d, y = t.y + v.y * d; return new THREE.Vector3(x, this.h(x, y) + 0.3, y); };
+        add("radius", () => { const t = this.item(id) as TeeItem | null; return t ? at(t, axes(t).f, -t.padLength / 2) : null; },
+          e => this.planeDrag(e, id, (p, it) => { const t = it as TeeItem, f = axes(t).f; return { padLength: Math.max(4, Math.min(30, Math.round(Math.abs((p.x - t.x) * f.x + (p.y - t.y) * f.y) * 4) / 2)) }; }),
+          { title: "Drag to make the pad longer or shorter" });
+        add("radius", () => { const t = this.item(id) as TeeItem | null; return t ? at(t, axes(t).s, t.padWidth / 2) : null; },
+          e => this.planeDrag(e, id, (p, it) => { const t = it as TeeItem, sv = axes(t).s; return { padWidth: Math.max(2, Math.min(20, Math.round(Math.abs((p.x - t.x) * sv.x + (p.y - t.y) * sv.y) * 4) / 2)) }; }),
+          { title: "Drag to make the pad wider or narrower" });
+      }
     }
   }
 
@@ -4770,8 +5157,10 @@ export class CourseView {
     }
     // A hand-made flyover (while the hole is selected): each keyframe's camera spot (numbered) and
     // what it looks at, to drag
+    // (a custom camera path's keyframes are moved in the Flyover editor, on its map from above; on
+    // the map, the path only shows)
     const keys = h0.flyKeys;
-    if (keys && keys.length >= 2 && this.selectedId === holeId) {
+    if (keys && keys.length >= 2 && this.selectedId === holeId && FLY_KEYS_ON_MAP) {
       const dragKey = (index: number, look: boolean): Drag | null => {
         const list = hole()?.flyKeys?.map(k => ({ ...k }));
         const k0 = list?.[index];
@@ -5500,7 +5889,16 @@ export class CourseView {
     try { return this.pickIn(clientX, clientY); } finally { this.eye = was; }
   }
 
+  /** Whether the last pick was an area's edge. */
+  private pickedEdge = false;
+  /** Whether a press there goes to the area's edge before a tree drawn there: only when that area
+   * is the one picked (to move it by its edge); otherwise the tree, as it's what's seen there. */
+  private edgeFirst(hit: string | null, dom: string | null) {
+    return !!hit && !dom && this.pickedEdge && hit === this.selectedId;
+  }
+
   private pickIn(clientX: number, clientY: number): string | null {
+    this.pickedEdge = false;
     const doc = this.doc;
     if (!doc) return null;
     const r = this.container.getBoundingClientRect();
@@ -5579,7 +5977,18 @@ export class CourseView {
       if (d < tol && (!near || d < near.d)) near = { id: s.holeId, d };
     }
     if (near) return near.id;
-    const areas = (doc.course.items.filter(i => i.type === "area") as AreaItem[]).map(a => ({ id: a.id, ...this.shapeOf(a) })).filter(a => inBounds(p, a.box) && pointInPolygon(p, a.pts));
+    // An area's edge, within a few pixels (its edge is what's drawn of it): the nearest, the smaller
+    // where two run together; then the inside of the smallest round the pointer
+    const shapes = (doc.course.items.filter(i => i.type === "area") as AreaItem[]).map(a => ({ id: a.id, ...this.shapeOf(a) }));
+    const edgeTol = 6 * reach * upp;
+    let edge: { id: string; d: number; size: number } | null = null;
+    for (const a of shapes) {
+      if (a.pts.length < 3 || pointBoundsGap(p, a.box) >= edgeTol) continue;
+      const d = distanceToPath(p, [...a.pts, a.pts[0]]), size = Math.abs(polygonArea(a.pts));
+      if (d < edgeTol && (!edge || d < edge.d - upp || (d < edge.d + upp && size < edge.size))) edge = { id: a.id, d, size };
+    }
+    if (edge) { this.pickedEdge = true; return edge.id; }
+    const areas = shapes.filter(a => inBounds(p, a.box) && pointInPolygon(p, a.pts));
     if (areas.length) return areas.sort((a, b) => polygonArea(a.pts) - polygonArea(b.pts))[0].id;
     // Inside a fairway: its hole
     for (const s of doc.stats) {
@@ -5854,11 +6263,13 @@ export class CourseView {
     if (Math.abs(da) > 1e-4) {
       const under = this.groundAt(cx, cy);
       if (under) {
-        // (camera and target turned together about the vertical through that ground point)
-        const pos = this.controls.getPosition(new THREE.Vector3(), true), tgt = this.controls.getTarget(new THREE.Vector3(), true);
-        const up = new THREE.Vector3(0, 1, 0);
-        const np = pos.sub(under).applyAxisAngle(up, da).add(under), nt = tgt.sub(under).applyAxisAngle(up, da).add(under);
-        void this.controls.setLookAt(np.x, np.y, np.z, nt.x, nt.y, nt.z, false);
+        // (camera and target turned together about the vertical through that ground point: the
+        // heading turned and the target moved, not a new look-at, which looking straight down (2D)
+        // has no heading in and would put north back up)
+        const tgt = this.controls.getTarget(new THREE.Vector3(), true);
+        const nt = tgt.sub(under).applyAxisAngle(new THREE.Vector3(0, 1, 0), da).add(under);
+        void this.controls.rotate(da, 0, false);
+        void this.controls.moveTo(nt.x, nt.y, nt.z, false);
       } else void this.controls.rotate(da, 0, false);
     }
     if (Math.abs(d / was.d - 1) > 1e-3) this.zoomAt(cx, cy, was.d / d, false);
@@ -6086,7 +6497,7 @@ export class CourseView {
   private menuFor(x: number, y: number, domItem: string | null): { itemId: string | null; under: string | null } {
     const hit = domItem ?? this.pick(x, y);
     const it = hit ? this.item(hit) : null;
-    const big = !!hit && !domItem && (it ? it.type === "area" || it.type === "line" || it.type === "structure" : !!this.hole(hit));
+    const big = !!hit && !domItem && !this.edgeFirst(hit, domItem) && (it ? it.type === "area" || it.type === "line" || it.type === "structure" : !!this.hole(hit));
     return big && !this.readOnly && this.treeAtScreen(x, y) ? { itemId: null, under: hit } : { itemId: hit, under: null };
   }
 
@@ -6122,6 +6533,9 @@ export class CourseView {
   }
 
   private onPointerDown(e: PointerEvent) {
+    window.clearTimeout(this.restTimer);
+    this.restKey = "";
+    this.tip(null);
     const target = e.target as HTMLElement;
     if (!this.doc) return;
     this.glide = null;
@@ -6350,6 +6764,13 @@ export class CourseView {
       // finger too, so the map stays put (two fingers still move it)
       const shape = this.drawn(tool) === "line" && (tool.shape === "box" || tool.shape === "circle") ? "freehand" : tool.shape;
       const shaped = shape !== "points" && !this.drawPts.length && !this.shapeAnchor;
+      // (painting onto an area that's there, or taking from it, stepping it or putting it back: the
+      // areas themselves changed; painting on open ground makes a new one, as it always has)
+      if (shape === "paint" && this.paintsOver(e)) {
+        e.stopPropagation();
+        this.gesture(e, { drag: s => this.areaBrushDrag(s), click: ev => { const d = this.areaBrushDrag(ev); d?.end(ev); } });
+        return;
+      }
       if (shaped) e.stopPropagation();
       else stop();
       this.gesture(e, {
@@ -6411,12 +6832,15 @@ export class CourseView {
     // a click opens the tree's menu (cut it, make it the course's own, or select the wood)
     const hitItem = hit ? this.item(hit) : null;
     // (over a hole's line or fairway too: a tree stands above it; tees, baskets, signs and the
-    // course's own trees still come first)
-    const overBig = !hit || (!!hitItem && (hitItem.type === "area" || hitItem.type === "line" || hitItem.type === "structure")) || (!hitItem && !!this.hole(hit));
+    // course's own trees still come first; on an area's edge, the area)
+    const overBig = (!hit || (!!hitItem && (hitItem.type === "area" || hitItem.type === "line" || hitItem.type === "structure")) || (!hitItem && !!this.hole(hit))) && !this.edgeFirst(hit, domItem);
     if (overBig && !e.shiftKey && !tool.dragSelect && !this.readOnly) {
       const tree = this.treeAtScreen(e.clientX, e.clientY);
       if (tree) {
-        const moves = !!hitItem && hit === this.selectedId && !hitItem.locked;
+        // (a press on a tree or bush never moves the area or line it stands on, picked or not: a
+        // drag from it moves the map, and a picked area or line moves from where no leaves are, or
+        // its handles; a picked house under the leaves moves, as its roof is what's picked there)
+        const moves = !!hitItem && hit === this.selectedId && !hitItem.locked && hitItem.type === "structure";
         if (moves) e.stopPropagation(); else stop();
         this.gesture(e, {
           // (picked like any tree: the same panel, moved once picked, deleted with Del)
@@ -6473,11 +6897,21 @@ export class CourseView {
       this.gesture(e, { click: () => this.cb.onSelect(hit), drag: boxing ? s => this.boxDrag(s, false) : s => this.panDrag(s) });
       return;
     }
-    e.stopPropagation();
+    // An area picked moves only from its edge (its line, within a few pixels): a drag from inside
+    // it moves the map, so a wood, the tall grass or a fairway is never slid by accident
     const picked = hit === this.selectedId;
-    if (!picked) this.cb.onSelect(hit);
     // (the field already picked: a click picks the part of it there)
     const field = picked && item.type === "area" && item.kind === "field" ? item : null;
+    if (picked && item.type === "area" && !(this.pickedEdge && !domItem)) {
+      stop();
+      this.gesture(e, {
+        drag: s => this.panDrag(s),
+        ...(field ? { click: (ev: PointerEvent) => { const g = this.groundAt(ev.clientX, ev.clientY); this.cb.onFieldPart?.(g ? fieldPartAt(field, { x: g.x, y: g.z }) : null); } } : {})
+      });
+      return;
+    }
+    e.stopPropagation();
+    if (!picked) this.cb.onSelect(hit);
     this.gesture(e, {
       drag: s => this.itemDrag(s, hit),
       ...(field ? { click: (ev: PointerEvent) => { const g = this.groundAt(ev.clientX, ev.clientY); this.cb.onFieldPart?.(g ? fieldPartAt(field, { x: g.x, y: g.z }) : null); } } : {})
@@ -6676,6 +7110,97 @@ export class CourseView {
 
   // ------------------------------------------------------------------ the brush (ground, painting)
 
+  /** Whether a press with the brush changes areas that are there (not a new one): anything but
+   * Add, Reshape, or an Add from inside an area of the kind. */
+  private paintsOver(e: { clientX: number; clientY: number }) {
+    const k = this.paintKind(), t = this.tool, doc = this.doc;
+    if (!k || !doc || this.readOnly) return false;
+    if (this.brushMode(k) !== "add" || t.reshape) return true;
+    const g = this.groundAt(e.clientX, e.clientY);
+    if (!g) return false;
+    const p = { x: g.x, y: g.z };
+    return doc.course.items.some(i => i.type === "area" && !i.locked && kindOf(i).kind === k.kind && kindOf(i).brush === k.brush && pointInPolygon(p, i.points));
+  }
+
+  /** What the brush does to this kind, as its row shows it: a level only for kinds with levels,
+   * Restore only for underbrush the import found; otherwise Add. */
+  private brushMode(k: PaintKind) {
+    const m = this.tool.areaBrush ?? "add";
+    if ((m === "thinner" || m === "thicker") && k.kind !== "woods") return "add";
+    if (m === "restore" && !(k.brush && this.doc?.course.site.brushFound)) return "add";
+    return m;
+  }
+
+  /** What the import found, as areas by level (for Restore), worked out once a course. */
+  private found: { key: unknown; areas: AreaItem[] } | null = null;
+
+  /** While a stroke is under way: the outlines it leaves, drawn over the map (the course itself
+   * changed only when it's let go: a wood's trees grown again at every step would stall it). */
+  private brushPreview: THREE.Object3D | null = null;
+  private showPreview(areas: AreaItem[] | null) {
+    if (this.brushPreview) { this.fx.remove(this.brushPreview); disposeObjectDeep(this.brushPreview); this.brushPreview = null; }
+    if (areas?.length) {
+      const g = new THREE.Group();
+      for (const a of areas) {
+        g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.3, true), "#000000", 4.5, { opacity: 0.35, order: 28, depthTest: false }));
+        g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.35, true), SELECT, 2.5, { order: 29, depthTest: false }));
+      }
+      this.brushPreview = g;
+      this.fx.add(g);
+    }
+    this.invalidate();
+  }
+
+  /** A stroke that changes the areas of a kind: the brush's track, and the outlines it leaves shown
+   * as it goes (worked out from the areas as they were when it began); when let go, the course
+   * changed, as one undo step. */
+  private areaBrushDrag(start: PointerEvent): { move: (ev: PointerEvent) => void; end: (ev: PointerEvent) => void } | null {
+    const doc = this.doc, k = this.paintKind();
+    if (!doc || !k || this.readOnly) return null;
+    const g0 = this.groundAt(start.clientX, start.clientY);
+    if (!g0) return null;
+    const t = this.tool, mode = this.brushMode(k), r = t.brush?.size ?? 20;
+    const base = doc.course.items, a = { x: g0.x, y: g0.z }, path: P[] = [a];
+    const bf = doc.course.site.brushFound;
+    if (mode === "restore" && bf && this.found?.key !== bf) this.found = { key: bf, areas: foundAreas(bf) };
+    const found = mode === "restore" ? this.found?.areas ?? [] : [];
+    const step = Math.max(1.5, 6 / Math.max(0.01, this.viewInfo().pxPerUnit), r / 5);
+    let sent = 0;
+    const run = (done: boolean) => {
+      const out = strokeOutline(path, r);
+      let edit: ReturnType<typeof brushStroke> = null;
+      if (out) {
+        try { edit = brushStroke(base, k, mode, simplify(out, Math.max(0.4, r / 14)), a, t.reshape ?? null, found); }
+        catch { /* (a shape the cutting couldn't make sense of: this step left out) */ }
+      }
+      if (!done) { this.showPreview(edit ? [...edit.update, ...edit.add] : null); return; }
+      this.showPreview(null);
+      if (edit) this.cb.onAreas?.(applyEdit(base, edit), true);
+    };
+    this.showBrush(a, r);
+    return {
+      move: ev => {
+        const g = this.groundAt(ev.clientX, ev.clientY);
+        if (!g) return;
+        const b = { x: g.x, y: g.z };
+        if (dist(path[path.length - 1], b) >= step) path.push(b);
+        this.showBrush(b, r);
+        const now = performance.now();
+        if (now - sent > 60) { sent = now; run(false); }
+      },
+      end: () => { run(true); if (COARSE) this.showBrush(null, 0); }
+    };
+  }
+
+  /** The brush's ring in the middle of the map at its true size, while its size is being slid on a
+   * phone's edge (null: hidden). */
+  previewBrush(r: number | null) {
+    if (r === null) { this.showBrush(null, 0); return; }
+    const box = this.container.getBoundingClientRect();
+    const g = this.groundAt(box.left + box.width / 2, box.top + this.topInset + (box.height - this.topInset - this.bottomInset) / 2);
+    if (g) this.showBrush({ x: g.x, y: g.z }, r);
+  }
+
   private brushRing: { obj: THREE.Object3D; r: number } | null = null;
   /** The brush's circle on the ground under the pointer (null: hidden). Made once for a size and
    * moved after (made again every move, its line's material went with it, and that's slow). */
@@ -6743,6 +7268,8 @@ export class CourseView {
         if (frame) cancelAnimationFrame(frame);
         this.setDragging(false);
         send(true);
+        // (a finger lifted: the ring goes with it, there's no hover to show where it would paint)
+        if (COARSE) this.showBrush(null, 0);
       }
     };
   }
@@ -6768,6 +7295,8 @@ export class CourseView {
 
   /** Ends drawing an area or line (Enter, double-click, or clicking the first point). */
   finishDrawing() {
+    // (a painted shape done with a finger: its ring goes too)
+    if (COARSE && this.brushRing?.obj.visible) this.showBrush(null, 0);
     if (this.plotHole) return this.finishPlot();
     const kind = this.drawn();
     const pts = this.drawPts;
@@ -7307,7 +7836,7 @@ export class CourseView {
   private povTapPick(ev: PointerEvent) {
     const hit = this.pick(ev.clientX, ev.clientY);
     const it = hit ? this.item(hit) : null;
-    const big = !hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit));
+    const big = (!hit || (!!it && (it.type === "area" || it.type === "line" || it.type === "structure")) || (!it && !!this.hole(hit))) && !this.edgeFirst(hit, null);
     const tree = big && !this.readOnly ? this.treeAtScreen(ev.clientX, ev.clientY) : null;
     if (tree) this.cb.onAdoptTree(tree, this.lookOf(tree));
     else this.cb.onSelect(hit);
@@ -7483,8 +8012,9 @@ export class CourseView {
       const target = document.elementFromPoint(p.x, p.y) as HTMLElement | null;
       if (this.tool.mode === "select") {
         const dom = (target?.closest?.("[data-item-id]") as HTMLElement | null)?.dataset.itemId ?? null;
-        const over = dom ?? (target?.closest?.("[data-handle]") ? null : this.pick(p.x, p.y));
-        this.setHover(this.readOnly ? this.holeFor(over) : over);
+        if (this.readOnly) this.setHover(this.holeFor(dom ?? (target?.closest?.("[data-handle]") ? null : this.pick(p.x, p.y))));
+        else if (target?.closest?.("[data-handle]")) this.setHover(null);
+        else { const t = this.clickTarget(p.x, p.y, dom); this.setHover(t.id, t.tree); this.restTip(p, t.id, t.tree); }
       } else {
         this.setHover(null);
         this.updateGhost(g);
@@ -7500,8 +8030,8 @@ export class CourseView {
     else if (t.mode !== "select") c = "crosshair";
     else if (this.hoverId) {
       const it = this.item(this.hoverId);
-      c = !it || ((it.type === "area" || it.type === "line" || it.type === "structure") && this.hoverId !== this.selectedId && !this.group.includes(this.hoverId)) ? "pointer" : "move";
-    }
+      c = !it || ((it.type === "area" || it.type === "line" || it.type === "structure") && this.hoverId !== this.selectedId && !this.group.includes(this.hoverId)) ? "pointer" : it.type === "area" && !this.hoverEdge && !this.group.includes(this.hoverId) ? "grab" : "move";
+    } else if (this.hoverTree) c = "pointer";
     this.container.style.cursor = c;
   }
 
