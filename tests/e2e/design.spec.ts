@@ -1125,6 +1125,21 @@ plain("tee sign extras: text filled in for each hole, a picture, the hole's spon
   plainExpect(s2).toContain("Second only");
 });
 
+plain("a QR code (or anything added) hidden in Layers leaves the page: the course map and the tee signs", () => {
+  const doc = sample();
+  const art = { contours: null, hillshade: null };
+  const qr = { id: "q", kind: "qr" as const, x: 0.8, y: 0.05, w: 0.1, url: "https://example.org/course" };
+  doc.style.theme = "forest";
+  doc.style.mapExtras = [qr];
+  doc.style.sign = { extras: [qr] };
+  plainExpect(renderPoster(doc, art).svg).toContain('data-el="x:q"');
+  plainExpect(renderTeeSign(doc, doc.holes[0].id, "18x12", art)!.svg).toContain('data-el="x:q"');
+  doc.style.mapExtras = [{ ...qr, hidden: true }];
+  doc.style.sign = { extras: [{ ...qr, hidden: true }] };
+  plainExpect(renderPoster(doc, art).svg).not.toContain('data-el="x:q"');
+  plainExpect(renderTeeSign(doc, doc.holes[0].id, "18x12", art)!.svg).not.toContain('data-el="x:q"');
+});
+
 plain("one sponsor on its own: placed by itself, only on its own holes", () => {
   const doc = sample();
   const [h1, h2] = doc.holes;

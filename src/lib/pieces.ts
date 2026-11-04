@@ -135,7 +135,8 @@ export const extrasSvg = (extras: PrintExtra[] | undefined, sponsors: Sponsor[] 
   const onHole = (holes?: string[]) => !holeId || !holes?.length || holes.includes(holeId);
   const out: string[] = [];
   for (const e of (extras ?? []) as Extra[]) {
-    if (!onHole(e.holes)) continue;
+    // (hidden in Layers: not on the page)
+    if (e.hidden || !onHole(e.holes)) continue;
     const X = e.x * W, Y = e.y * H, w = e.w * W;
     let body = "";
     if (e.kind === "text") {
