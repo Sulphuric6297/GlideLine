@@ -2447,7 +2447,7 @@ export class CourseView {
       this.sun.shadow.map = null;
       this.shadowsDirty = true;
     }
-    forestDetail.nearFt = this.streetDetail ? (this.tier >= 2 ? 260 : 360) : (this.software ? 70 : this.mobile ? 150 : 260) * (this.tier >= 3 ? 0.6 : 1);
+    forestDetail.nearFt = this.streetDetail ? (this.tier >= 2 ? 260 : 360) : (this.software ? 70 : this.mobile ? 150 : 700) * (this.tier >= 3 ? 0.6 : 1);
     forestDetail.all = false;
     forestDetail.version++;
     retuneTrees(this.itemsGroup);
@@ -3791,8 +3791,7 @@ export class CourseView {
           const mat = new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: floor ? Math.min(fill, 0.45) : fill, depthWrite: false, polygonOffset: true, polygonOffsetFactor: floor ? -1 : -4, polygonOffsetUnits: floor ? -2 : -8 });
           // (up close, what it's made of: a fairway's mown grass, a parking lot's asphalt, a woods' floor)
           const scan: [SurfaceLayer, number] | null = a.kind === "fairway" || a.kind === "green" ? ["grass", 0.9] : a.kind === "rough" ? ["grass", 1] : a.kind === "sand" ? ["sand", 1]
-            // (a woods' floor on the ground's own: leaf litter, not a coat of paint)
-            : a.kind === "parking" ? ["asphalt", 1] : floor && !photo ? ["leaves", 1] : null;
+            : a.kind === "parking" ? ["asphalt", 1] : null;
           if (scan) addSurfaceDetail(mat, this.ground.detail, layerOf(scan[0]), scan[1], a.kind === "fairway" || a.kind === "green", soft);
           const mesh: THREE.Mesh = new THREE.Mesh(geo, mat);
           mesh.renderOrder = floor ? 0.5 : a.kind === "parking" ? tierOrder("road") : 2 + order * 0.001;

@@ -679,8 +679,8 @@ export const ezTree = (shape: TreeShape, spec: TreeSpec, detail: Detail): TreePr
     const thin = CUSTOM[spec.preset]?.thin;
     const versions: [Detail, THREE.BufferGeometry, THREE.BufferGeometry][] = [
       ["near", bark0, leaves0],
-      ["mid", barkUpTo(bark0, levels, 1), thinLeaves(leaves0, ...(thin?.[0] ?? (bush ? [4, 1.9] : [6, 2.3])))],
-      ["far", barkUpTo(bark0, levels, pine ? 0 : 1), thinLeaves(leaves0, ...(thin?.[1] ?? (bush ? [12, 3.2] : [26, 4.6])))],
+      ["mid", barkUpTo(bark0, levels, 1), thinLeaves(leaves0, ...(thin?.[0] ?? (bush ? [4, 1.9] : [4, 1.9])))],
+      ["far", barkUpTo(bark0, levels, pine ? 0 : 1), thinLeaves(leaves0, ...(thin?.[1] ?? (bush ? [12, 3.2] : [12, 3.2])))],
       // (underbrush past arm's reach: the main stems and a few big leaf clusters; our own thin
       // growths, their leaves alone)
       ["brush", barkUpTo(bark0, levels, bush && !thin ? 1 : 0), thinLeaves(leaves0, ...(thin?.[2] ?? (bush ? [30, 5] : [40, 5.6])))]
