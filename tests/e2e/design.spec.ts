@@ -767,7 +767,7 @@ test("tall grass is painted its own way: lighter, straw-colored tufts, not the g
 test("a hole's fairway turned off leaves the painted map: no fairway painted along its line, only the grass", async ({ page }) => {
   test.setTimeout(240_000);
   await blankCourse(page);
-  await addHole(page, { x: 150, y: 950 }, { x: 650, y: 950 });
+  await addHole(page, { x: 150, y: 950 }, { x: 450, y: 950 });
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "3 Map" }).click();
   await woodsAt(page, "Drawn only");
