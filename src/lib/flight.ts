@@ -145,11 +145,11 @@ const holdHeights = (spots: P[], alt: number[], rate: number, ground: (x: number
   const step = Math.max(0.5, ds.reduce((a, b) => a + b, 0) / Math.max(1, spots.length - 1));
   // (under the trees: the ground smoothed over longer, a drone's steady glide over its rises and
   // dips, never nearer it than 4 ft)
-  const want = smoothEnds(g, Math.max(1, Math.round((under ? 30 : 8) / step)), 3).map((v, i) => v + alt[i]);
+  const want = smoothEnds(g, Math.max(1, Math.round((under ? 20 : 8) / step)), 3).map((v, i) => v + alt[i]);
   const lim = spots.map((p, i) => limitsAt(p, g[i], want[i], alt[i], obstacles, under));
   const w = Math.max(1, Math.round(EASE * rate)), least = 6 / rate;
   const over = (i: number, above = lim[i].above) => {
-    lim[i] = { lo: Math.max(lim[i].lo, above), hi: Infinity, above: Math.max(lim[i].above, above) };
+    lim[i] = { lo: Math.max(lim[i].lo, above), hi: Infinity, above: Math.max(lim[i].above, above), through: false };
   };
   let z = want;
   for (let round = 0; round < (under ? 1 : 12); round++) {
@@ -243,11 +243,11 @@ const slipAside = (spots: P[], alt: number[], rate: number, ground: (x: number, 
   };
   // (how many spots a push moves it over, either side)
   const reaches = (v: number) => 6 * w + Math.ceil(Math.abs(v) / (SLIP * step));
-  // (never aside into trees it would have to climb over where it went straight past them: then it
-  // keeps its way there, to duck under what it slipped round)
+  // (never aside into trees it would have to climb over, or duck under, where it went straight past
+  // them: then it keeps its way there, to duck under what it slipped round)
   const over = (p: P, i: number) => {
-    const g = ground(p.x, p.y);
-    return limitsAt(p, g, g + alt[i], alt[i], obstacles, under).lo > g + alt[i] + 1e-6;
+    const g = ground(p.x, p.y), at = limitsAt(p, g, g + alt[i], alt[i], obstacles, under);
+    return at.lo > g + alt[i] + 1e-6 || (under && at.hi < g + alt[i] - 1e-6);
   };
   const was = spots.map(over);
   for (let round = 0; round < 12; round++) {
