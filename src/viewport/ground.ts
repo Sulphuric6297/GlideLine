@@ -452,7 +452,9 @@ export class Ground {
     const { width, height } = doc.canvas;
     const terrain = new THREE.Mesh(
       this.draped(doc, 0, 0, width, height, 0),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.97, metalness: 0 })
+      // (lit by the sun and the sky's light as the map over it is, never mirroring the sky: at a low
+      // angle a bright sky washed the grass out to white)
+      new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 1, metalness: 0, envMapIntensity: 0 })
     );
     addGroundDetail(terrain.material as THREE.Material, this.detail);
     terrain.name = "terrain-mesh";

@@ -292,12 +292,13 @@ const SCAN_GLSL = /* glsl */ `
       float mid = smoothstep( 40.0, 150.0, d ) * ( 1.0 - smoothstep( 320.0, 800.0, d ) );
       float mid2 = smoothstep( 250.0, 600.0, d ) * ( 1.0 - smoothstep( 1500.0, 3000.0, d ) ), far = smoothstep( 1200.0, 2500.0, d );
       vec3 g = vec3( 1.0 );
-      if ( mid > 0.01 ) g *= mix( vec3( 1.0 ), dgGrain( l1, f, 2.6 ), mid );
-      if ( mid2 > 0.01 ) g *= mix( vec3( 1.0 ), dgGrain( l1, f, 9.0 ), mid2 );
-      if ( far > 0.01 ) g *= mix( vec3( 1.0 ), dgGrain( l1, f, 37.0 ), far );
+      if ( mid > 0.01 ) g *= mix( vec3( 1.0 ), dgGrain( l1, f, 2.6 ), mid * 0.6 );
+      if ( mid2 > 0.01 ) g *= mix( vec3( 1.0 ), dgGrain( l1, f, 9.0 ), mid2 * 0.6 );
+      if ( far > 0.01 ) g *= mix( vec3( 1.0 ), dgGrain( l1, f, 37.0 ), far * 0.6 );
       g *= dgPatches( f, l1, d );
       g = mix( vec3( 1.0 ), g, plain / all );
-      c1 *= g; c2 *= g;
+      // (no glints: a blade's highlight in the scan is nearly white)
+      c1 = min( c1 * g, vec3( 1.3 ) ); c2 = min( c2 * g, vec3( 1.3 ) );
     }
     #endif
     vec3 nrm = ( n1 * w1 + n2 * w2 ) / sum;
@@ -376,7 +377,9 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
               dgDeep = deep; dgClumpK = clump;
               dgMown = dgGrown * ( 1.0 - smoothstep( 0.26, 0.36, tall ) ) * smoothstep( 0.8, 0.95, fld.g );
               dgMownK = dgMown * ( 1.0 - smoothstep( 700.0, 1500.0, dcam ) );
-              dgKeep = mix( dgKeep, 0.4, dgGrown );
+              // (mostly the course's own green: the scans give it grain and a little of real grass's olive,
+              // not their whole color, which is paler and went to white speckle seen along the ground)
+              dgKeep = mix( dgKeep, 0.72, dgGrown );
             }
           }
           #endif

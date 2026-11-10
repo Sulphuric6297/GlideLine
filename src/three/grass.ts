@@ -153,7 +153,8 @@ const VERT_BODY = /* glsl */ `
   tint = mix( tint * vec3( 0.86, 1.0, 0.94 ), tint * vec3( 1.12, 1.06, 0.74 ), smoothstep( 0.25, 0.85, stretch ) );
   vec3 straw = vec3( 0.66, 0.6, 0.36 );
   vGrass = tint * ( 0.93 + 0.14 * r4 );
-  vGrass = max( vec3( 0.0 ), mix( vec3( dot( vGrass, vec3( 0.2126, 0.7152, 0.0722 ) ) ), vGrass, 1.25 ) ) * 0.94;
+  // (as deep as the ground they stand on: brighter, a lawn seen along its length went pale)
+  vGrass = max( vec3( 0.0 ), mix( vec3( dot( vGrass, vec3( 0.2126, 0.7152, 0.0722 ) ) ), vGrass, 1.3 ) ) * mix( 0.6, 0.94, uPhotoMix );
   // (long grass: some blades gone to straw)
   vGrass = mix( vGrass, straw * ( 0.75 + 0.25 * r1 ), wild * smoothstep( 0.55, 1.0, r3 ) * 0.55 );
   vTip = t;
