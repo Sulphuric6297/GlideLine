@@ -104,7 +104,7 @@ export function ExportPanel() {
   const [videoPick, setVideoPick] = useState<string>("all");
   const [signPick, setSignPick] = useState<string>("all");
   const video = useVideoSettings();
-  const flyLook = useEditor(e => e.flyLook);
+  const flyGround = useEditor(e => e.flyGround);
   const readOnly = useCourse(s => s.readOnly);
   const geo = !!doc.site.bounds;
   const complete = playable(doc);
@@ -430,7 +430,7 @@ export function ExportPanel() {
         </div>
         {/* (the same setting as the tee view's: the ground flyovers show, on screen and in videos) */}
         <Field label="Ground">
-          <div data-testid="video-ground"><Segmented label="Ground" value={flyLook} onChange={v => useEditor.getState().set({ flyLook: v })} options={[{ value: "painted", label: "Painted map" }, { value: "photo", label: "Photo" }]} /></div>
+          <div data-testid="video-ground"><Segmented label="Ground" value={flyGround} onChange={v => useEditor.getState().set({ flyGround: v })} options={[{ value: "ground", label: "Course ground" }, { value: "painted", label: "Painted map" }, { value: "photo", label: "Photo" }]} /></div>
         </Field>
         {/* (the camera is set where its flight is seen: the view from the tee, its Settings) */}
         <div className="flex flex-wrap gap-1.5 mb-3" data-testid="video-camera">

@@ -234,16 +234,20 @@ type EditorStore = {
   stumps: boolean;
   /** Every tree hidden, to see the photo under them (this screen only, not kept). */
   hideTrees: boolean;
-  /** The ground from a tee, in flyovers and videos: the painted map (the Design look) or the photo. */
-  flyLook: "painted" | "photo";
+  /** The ground from a tee, in flyovers and videos: the course's own ground (as Design shows it
+   * with the photo off), the painted map, or the photo. (Named anew when the ground's own became
+   * the usual: a course's old pick, kept on this device, was only ever the old default.) */
+  flyGround: "ground" | "painted" | "photo";
+  /** While a video records on the course's own ground: the photo out of the picture. */
+  recordingBare: boolean;
   set: (patch: Partial<Omit<EditorStore, "set">>) => void;
 };
 
 // The View panel's This screen settings: each course's own (on this device), so a course looks
 // as it was left, whatever another course was set to; a course not set yet starts from these
-const DISPLAY = ["photo", "contours", "shading", "groundDetail", "grass", "wind", "flyLook"] as const;
+const DISPLAY = ["photo", "contours", "shading", "groundDetail", "grass", "wind", "flyGround"] as const;
 type Display = Pick<EditorStore, (typeof DISPLAY)[number]>;
-const DISPLAY_DEFAULTS: Display = { photo: true, contours: true, shading: true, groundDetail: true, grass: "auto", wind: true, flyLook: "painted" };
+const DISPLAY_DEFAULTS: Display = { photo: true, contours: true, shading: true, groundDetail: true, grass: "auto", wind: true, flyGround: "ground" };
 const displayKey = (id: string | undefined) => `dg.display:${id ?? "new"}`;
 /** (one key for every course, before each had its own: the first course opened keeps it) */
 const OLD_DISPLAY_KEY = "dg.display";
@@ -302,6 +306,7 @@ export const useEditor = create<EditorStore>()(set => ({
   flyKey: null,
   flyCam: false,
   flyLoading: null,
+  recordingBare: false,
   drawPoints: 0,
   ...DISPLAY_DEFAULTS,
   stumps: false,

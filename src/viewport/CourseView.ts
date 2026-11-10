@@ -34,10 +34,11 @@ import { VIDEO_HOLD, titleStrength } from "../lib/video";
 import { drawOverlay, holeTitle, overlayShow, type HoleTitle } from "./flyTitle";
 import { Forest, forestDetail, type TreeSpot, TREES_SEEN, TREES_SHADOW, woodsCrownWidth } from "../three/treeKit";
 import { leafThin, treeLodZoom } from "../three/ezShapes";
+import { BRUSH } from "../lib/brushSpots";
 import { brushOnly } from "../lib/brushSpots";
 import { applyEdit, brushStroke, kindOf, levelOf, type BrushKind as PaintKind } from "../lib/areaBrush";
 import { foundAreas } from "../lib/undergrowth";
-import { GRASS, Grass, grassBlades, type GrassQuality } from "../three/grass";
+import { GRASS, Grass, grassBlades, grassReach, type GrassQuality } from "../three/grass";
 import { Tufts } from "../three/tufts";
 import { setWaterSky, waterMaterial, waterUniforms } from "../three/water";
 import { addSurfaceDetail, groundShader, layerOf, type SurfaceLayer } from "../three/groundDetail";
@@ -570,6 +571,8 @@ export class CourseView {
       // Without a graphics card, or on a phone, fewer trees in full detail
       if (this.software) { forestDetail.nearFt = 70; forestDetail.melt = false; grassBlades.perSpot = 1; groundShader.card = false; }
       if (this.software || this.mobile) { leafThin.mid = [6, 2.3]; leafThin.far = [26, 4.6]; }
+      // (a computer with a graphics card: grass and tufts much farther out, and from higher up)
+      else Object.assign(grassReach, { blades: 1.6, tufts: 2.6, height: 520 });
       // (soft shadow edges: 32 looks a pixel, too many to do in software every frame)
       if (!this.software) softenShadows(this.mobile);
       else if (this.mobile) forestDetail.nearFt = 150;
@@ -712,6 +715,7 @@ export class CourseView {
       const under = /:under(:|$)/.test(key);
       if (under || key.startsWith("woods:") || key === "painted-woods") entry.obj.visible = !hide && !(under && this.dragging && this.brushRests());
     }
+    if (this.farBrush) this.farBrush.forest.group.visible = !hide && !(this.dragging && this.brushRests());
     const doc = this.doc;
     if (doc) for (const item of doc.course.items) if (item.type === "tree") { const e = this.objects.get(item.id); if (e) e.obj.visible = !hide; }
   }
@@ -1305,8 +1309,11 @@ export class CourseView {
     // never swung back to straight ahead)
     const keepLook = !!holeId && !!this.povHole && stand?.face !== undefined;
     if (holeId === this.povHole) { if (!keepLook) this.povLook = { yaw: 0, pitch: 0 }; this.invalidate(); return; }
+    const stood = !!this.povHole;
     this.povHole = holeId;
     if (!keepLook) this.povLook = { yaw: 0, pitch: 0 };
+    // (onto the course or off it: the map's outlines go or come back)
+    if (stood !== !!holeId && this.doc) this.syncShapes();
     if (!holeId) this.freeCam(false);
     this.detailReady = this.updateDetail().catch(() => {});
     this.controls.enabled = !holeId;
@@ -3328,6 +3335,37 @@ export class CourseView {
   private syncShapes() {
     timed("3D shapes made again", () => this.syncShapesAll());
     this.syncSeeThrough();
+    this.syncFarBrush();
+  }
+
+  /**
+   * Underbrush far off, every wood's as one: each wood draws its own bushes out to a few hundred
+   * feet (dozens of draws a wood); past that they are all drawn together in their lightest
+   * version, a couple of dozen draws for the whole course, so a wood across the course still has
+   * its underbrush. A computer with a graphics card only.
+   */
+  private farBrush: { forest: Forest; key: string } | null = null;
+  private syncFarBrush() {
+    const under = this.software || this.mobile ? [] : [...this.shapes].filter(([k]) => /:under(:|$)/.test(k)).map(([, e]) => e.obj);
+    const key = under.map(o => o.uuid).join("|");
+    if (key === (this.farBrush?.key ?? "")) return;
+    if (this.farBrush) {
+      this.farBrush.forest.group.removeFromParent();
+      this.farBrush.forest.dispose();
+      this.farBrush = null;
+    }
+    const spots = under.flatMap(o => (o.userData.spots as TreeSpot[] | undefined) ?? []);
+    if (!spots.length) return;
+    const from = Math.min(...Object.values(BRUSH).map(b => b.reach));
+    const forest = new Forest(spots, 1500, { levels: ["brush", "brush", "brush"], nearFt: 1e9, midFt: 2e9, minFt: from });
+    forest.group.name = "far-underbrush";
+    forest.group.userData.forest = forest;
+    forest.group.userData.underbrush = true;
+    // (too small out there to throw a shadow worth its cost)
+    forest.group.traverse(o => { o.castShadow = false; });
+    this.itemsGroup.add(forest.group);
+    this.farBrush = { forest, key };
+    this.showTrees();
   }
 
   /** A building, a road or a path selected (its shape being changed): see-through, so the map
@@ -3431,6 +3469,8 @@ export class CourseView {
     // A map only looked at (shared to view, the public page): what stands there, rendered, and
     // the rules (OB, hazards, mandos); not the editor's outlines and dashes
     const clean = this.readOnly;
+    // Standing on the course or flying it: the place itself, none of the map's outlines
+    const standing = !!this.povHole;
     // Paths and roads stack where they cross as the style says (bottom first): each tier drawn
     // after the ones under it
     const tiers: PathTier[] = st.pathOrder?.length === 4 ? st.pathOrder : ["dirt", "gravel", "walkway", "road"];
@@ -3733,7 +3773,7 @@ export class CourseView {
       // (woods: no fill, the ground under the trees as it is; the trees show it, its edge line only)
       const bare = a.kind === "woods";
       const tinted = this.brushTint && a.kind === "woods" && (a.bushes ?? 0) >= 1 ? levelOf(a) : 0;
-      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted]), () => {
+      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted, standing]), () => {
         const g = new THREE.Group();
         // (underbrush being painted: tinted light, medium or heavy, the heavier over the lighter)
         if (tinted) {
@@ -3746,8 +3786,8 @@ export class CourseView {
         }
         const fill = photo ? meta.fill : Math.min(0.9, meta.fill + 0.35);
         const rule = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo";
-        // (on the painted ground, or looked at only: no translucent fills, only the rules' edges)
-        if ((painted || clean) && a.kind !== "water") {
+        // (on the painted ground: no fills, it has them painted; only the rules' edges)
+        if (painted && a.kind !== "water") {
           if (rule) g.add(this.fatLine(this.drapeLine(a.points, LIFT, true), c, 3, { order: 4, dashed: a.kind === "ob" ? undefined : 6 }));
           if (a.ob === true && a.kind !== "ob") obEdge(a, g);
           hazardEdge(a, g);
@@ -3814,7 +3854,7 @@ export class CourseView {
         const w = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo" ? 3 : 1.5;
         // (grass and sand with a soft edge: no hard line round them, unless over the photo)
         const softKind = !photo && (a.kind === "fairway" || a.kind === "rough" || a.kind === "green" || a.kind === "sand");
-        if (w === 3 || (!clean && !softKind)) g.add(this.fatLine(this.drapeLine(a.points, LIFT, true), c, w, { order: 4, dashed: a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo" ? 6 : undefined }));
+        if (w === 3 || (!clean && !standing && !softKind)) g.add(this.fatLine(this.drapeLine(a.points, LIFT, true), c, w, { order: 4, dashed: a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo" ? 6 : undefined }));
         // Marked OB (water, say): its red OB edge; a hazard, its dashed hazard edge
         if (a.ob === true && a.kind !== "ob") obEdge(a, g);
         hazardEdge(a, g);
@@ -6112,6 +6152,7 @@ export class CourseView {
     // of bushes drawn at every step make the drag crawl there; a computer keeping up shows them)
     const rest = on && this.brushRests();
     for (const [key, entry] of this.shapes) if (/:under(:|$)/.test(key)) entry.obj.visible = !rest && !this.treesHidden;
+    if (this.farBrush) this.farBrush.forest.group.visible = !rest && !this.treesHidden;
     if (!on) {
       this.handleKey = "";
       this.syncHandles();

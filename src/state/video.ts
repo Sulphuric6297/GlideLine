@@ -58,16 +58,22 @@ export const recordVideo = (holeIds: string[]) => {
     try {
       // (no number while it can't be told: the map being painted, a hole being sharpened)
       let at: number | null = null;
-      // The ground in the Design look (unless the photo was asked for)
-      const photo = useEditor.getState().flyLook === "photo";
-      if (!photo) job.progress(null, "Painting the map");
-      const ground = photo ? null : await paintedGround(doc);
+      // The ground the video shows: the course's own (the photo out of the picture while it
+      // records), the painted map, or the photo
+      const look = useEditor.getState().flyGround;
+      if (look === "painted") job.progress(null, "Painting the map");
+      const ground = look === "painted" ? await paintedGround(doc) : null;
+      if (look === "ground") {
+        useEditor.getState().set({ recordingBare: true });
+        // (the view takes it in before the first frame)
+        await new Promise(r => setTimeout(r, 400));
+      }
       if (ctrl.signal.aborted) throw new DOMException("Cancelled", "AbortError");
       const video = await view.recordFlyover(holeIds, {
         width, height, fps, signal: ctrl.signal, ground,
         onProgress: f => { at = f; job.progress(f); },
         onHole: (id, i, count, stage) => {
-          if (stage === "sharpening" && photo) return;
+          if (stage === "sharpening" && look !== "painted") return;
           job.progress(at, stage === "sharpening" ? `Sharpening hole ${holeLabel(doc, id)}` : `Recording hole ${holeLabel(doc, id)}${count > 1 ? ` (${i + 1} of ${count})` : ""}`);
         }
       });
@@ -78,6 +84,7 @@ export const recordVideo = (holeIds: string[]) => {
       throw err;
     } finally {
       off();
+      useEditor.getState().set({ recordingBare: false });
     }
   }, { kind: "video", cancellable: true });
 };

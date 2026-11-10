@@ -104,6 +104,24 @@ export const grassMaps = (doc: ViewDoc): GrassMaps | null => {
       poly(corridor(linePath(l), t => along(t) + 1, 8), field(0, 0), null);
     } else stroke(linePath(l), w + 1, field(0, 0));
   }
+  // Worn ground round each tee, where everyone stands and walks off: thin grass over dirt
+  const wornTint = blend("#7a6242", doc.groundColor, 0.3);
+  for (const tee of doc.course.items.filter(i => i.type === "tee") as TeeItem[]) {
+    // (most of it out in front, where the run-up and the follow-through are)
+    const r = Math.max(13, tee.padLength * 1.6) * (doc.unitsPerFoot || 1), aim = (teeAim(doc.course, tee) * Math.PI) / 180;
+    const cx = tee.x + Math.cos(aim) * r * 0.3, cy = tee.y + Math.sin(aim) * r * 0.3;
+    for (const [g, style] of [[f.g, field(0.12, 0.3)], [t.g, wornTint]] as const) {
+      // (thinning out toward its edge, in rings)
+      for (const [k, a] of [[1, 0.35], [0.78, 0.5], [0.55, 0.8]] as const) {
+        g.globalAlpha = a;
+        g.beginPath();
+        g.ellipse(cx, cy, r * k, r * k * 0.7, aim, 0, Math.PI * 2);
+        g.fillStyle = style;
+        g.fill();
+      }
+      g.globalAlpha = 1;
+    }
+  }
   for (const tee of doc.course.items.filter(i => i.type === "tee") as TeeItem[]) {
     if (tee.surface === "natural") continue;
     poly(rectCorners({ x: tee.x, y: tee.y }, tee.padLength + 0.6, tee.padWidth + 0.6, teeAim(doc.course, tee)), field(0, 0), null);

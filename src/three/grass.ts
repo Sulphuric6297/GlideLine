@@ -61,6 +61,7 @@ uniform float uHole;
 uniform float uWidth;
 uniform float uDensity;
 uniform float uZoom;
+uniform float uRise;
 uniform float uTime;
 uniform float uWind;
 varying vec3 vGrass;
@@ -112,7 +113,8 @@ const VERT_BODY = /* glsl */ `
   // Fewer blades farther away (and none inside the inner patch, for the outer one)
   float keep = fld.g * uDensity * ( 1.0 - smoothstep( uFar * 0.8, uFar, d ) ) * step( uHole, d + r4 * 6.0 );
   // (toward the patch's edge the blades sink into the ground, none there one frame and gone the next)
-  float sink = 1.0 - smoothstep( uFar * 0.55, uFar * 0.97, d );
+  // (only over its last stretch: sinking sooner left the ground bare well inside the patch)
+  float sink = ( 1.0 - smoothstep( uFar * 0.8, uFar * 0.98, d ) ) * uRise;
   float alive = inside * step( r2, keep );
   // How tall it grows here, read a little off to one side so long grass meets short grass along a
   // ragged edge, not a ruled line (where blades grow at all stays exact: none on pads or paths)
@@ -162,6 +164,10 @@ const VERT_BODY = /* glsl */ `
 
 /** How many blades grow from a spot (one without a graphics card, where each is the processor's work). */
 export const grassBlades = { perSpot: 3 };
+/** How much farther than the usual the blades and the tufts are drawn (a computer with a graphics
+ * card: farther, so the course never looks bare as the eye draws back) and how high above the
+ * ground the eye can be before they're gone. CourseView sets it before any are made. */
+export const grassReach = { blades: 1, tufts: 1, height: 320 };
 /** A spot's blades: each a tapered strip, base to tip (x across -0.5..0.5, y up 0..1), and which
  * of the spot's blades each corner belongs to (`k`: the shader sets each its own way). */
 const bladeGeometry = () => {
@@ -330,6 +336,7 @@ export class Grass implements GrassUniformSource {
       uWidth: { value: width },
       uDensity: { value: 1 },
       uZoom: this.zoomU,
+      uRise: this.riseU,
       uTime: { value: 0 },
       uWind: { value: 0.12 }
     };
@@ -352,6 +359,9 @@ export class Grass implements GrassUniformSource {
   /** How much the eye is zoomed in (1: not): blades far off, brought close by the zoom, keep a
    * blade's width in the picture (they are drawn wider with distance only so as not to flicker). */
   private zoomU = { value: 1 };
+  /** 1 near the ground, 0 from as high as the grass is drawn at all: it sinks away as the eye
+   * rises, never there one moment and gone the next. */
+  private riseU = { value: 1 };
   set zoom(z: number) { this.zoomU.value = Math.max(1, z); }
 
   /** The maps as textures (what grows where, its color) and the plan rectangle they cover: the
@@ -443,7 +453,8 @@ export class Grass implements GrassUniformSource {
       this.patches.push({ blocks, mat, span, count, uniforms, far, hole });
     };
     add(lv.innerR, lv.inner, 0.034, 45, lv.innerR, 0);
-    add(lv.outerR, lv.outer, 0.05, 50, lv.outerR, lv.innerR * 0.85);
+    const outerR = Math.round(lv.outerR * grassReach.blades);
+    add(outerR, lv.outer, 0.05, 50, outerR, lv.innerR * 0.85);
   }
 
   /**
@@ -452,7 +463,9 @@ export class Grass implements GrassUniformSource {
    */
   update(eye: THREE.Vector3, groundY: number, time: number, wind: number, height: (x: number, z: number) => number = () => groundY) {
     const above = eye.y - groundY;
-    const show = this.quality > 0 && !!this.field && !!this.heights && above < 320;
+    const top = grassReach.height;
+    const show = this.quality > 0 && !!this.field && !!this.heights && above < top;
+    this.riseU.value = 1 - Math.min(1, Math.max(0, (above - top * 0.6) / (top * 0.4))) ** 2;
     this.group.visible = show;
     this.blades = 0;
     if (!show) return;
@@ -465,7 +478,8 @@ export class Grass implements GrassUniformSource {
       p.uniforms.uTime.value = time;
       p.uniforms.uWind.value = wind;
       // Seen from higher up, fewer blades are needed
-      p.uniforms.uDensity.value = above > 120 ? 0.5 : 1;
+      // (thinning as it rises, not halved at a step)
+      p.uniforms.uDensity.value = 1 - 0.5 * Math.min(1, Math.max(0, (above - 90) / 130));
       p.blocks.update(ox, oz, eye, p.far, p.hole, height, GRASS.max);
       this.blades += p.blocks.count;
     }

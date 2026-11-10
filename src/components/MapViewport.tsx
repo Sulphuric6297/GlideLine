@@ -134,9 +134,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   const viewOnly = useCourse(s => s.readOnly);
   const pv = doc.style.publicView ?? {};
   const show = viewOnly
-    // (a viewer's map and 3D are the editor's own: the course's ground, or the photo; the painted
-    // map only from a tee and in flyovers, as the editor has it)
-    ? { photo: pv.ground === "photo", contours: !!pv.contours, shading: pv.shading ?? true, painted: !!ed.teeView && pv.ground !== "photo" }
+    // (a viewer's map and 3D are the editor's own: the course's ground, or the photo)
+    ? { photo: pv.ground === "photo", contours: !!pv.contours, shading: pv.shading ?? true, painted: false }
     : { photo: ed.photo, contours: ed.contours, shading: ed.shading, painted: false };
   const terrain = useMemo(() => terrainStats(doc.terrainHeights), [doc.terrainHeights]);
   const contours = useMemo(() => (show.contours ? contoursOf(doc.terrainHeights, doc.gridSize, doc.canvas.width, doc.canvas.height) : { segments: [], interval: 1 }), [show.contours, doc.terrainHeights, doc.gridSize, doc.canvas]);
@@ -152,13 +151,15 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   const issues = useMemo(() => (ed.step === "design" ? openIssues(doc, courseIssues(doc)).open : null), [ed.step, doc]);
   // From a tee and in flyovers: the ground in the Design look (the painted map), not the photo
   // (from a tee: the editor's own pick, or for a viewer the course's look for viewers)
-  const paintedOn = ((!!ed.teeView && !viewOnly && ed.flyLook === "painted") || show.painted) && !!doc.holes.length;
+  const paintedOn = ((!!ed.teeView && !viewOnly && ed.flyGround === "painted") || show.painted) && !!doc.holes.length;
+  // (from a tee, flying and in a video, on the course's own ground: the photo out of the picture)
+  const bare = !viewOnly && ed.flyGround === "ground" && (!!ed.teeView || ed.recordingBare);
   // (painted ahead while the course rests with a hole picked, so a flyover has less to wait for;
   // not while it's being changed: that would paint it over and over)
   const [restingDoc, setRestingDoc] = useState(doc);
   useEffect(() => { const t = window.setTimeout(() => setRestingDoc(doc), 1500); return () => window.clearTimeout(t); }, [doc]);
   const warmHole = ed.selectedId && doc.holes.some(h => h.id === ed.selectedId) ? ed.selectedId : ed.activeHoleId;
-  const warm = !ed.teeView && ed.flyLook === "painted" && restingDoc === doc && doc.holes.length > 0 && ed.step !== "map";
+  const warm = !ed.teeView && ed.flyGround === "painted" && restingDoc === doc && doc.holes.length > 0 && ed.step !== "map";
   // (painted ahead gently: only while the view is still, a few ms at a time)
   const [painted, paintedFresh] = usePaintedGround(paintedOn || warm, !paintedOn);
   useEffect(() => {
@@ -190,14 +191,14 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
     heights: doc.terrainHeights,
     terrain,
     // (no photo while the painted map is on its way)
-    background: { url: doc.background, rect: { x: 0, y: 0, width: doc.canvas.width, height: doc.canvas.height }, opacity: show.photo && !paintedOn ? 1 : 0 },
+    background: { url: doc.background, rect: { x: 0, y: 0, width: doc.canvas.width, height: doc.canvas.height }, opacity: show.photo && !paintedOn && !bare ? 1 : 0 },
     overlay: shadeUrl ? "shaded" : contours.segments.length ? "contours" : "off",
     contours,
     shadeUrl,
     groundDetail: ed.groundDetail,
     groundPaint: doc.groundPaint,
     groundColor: l3?.rough ?? natural.colors.rough
-  }), [doc, stats, ed.activeHoleId, issues, terrain, show.photo, shadeUrl, contours, ed.groundDetail, natural, viewStyle, paintedOn, l3]);
+  }), [doc, stats, ed.activeHoleId, issues, terrain, show.photo, shadeUrl, contours, ed.groundDetail, natural, viewStyle, paintedOn, l3, bare]);
 
   useEffect(() => { view?.setDoc(viewDoc); }, [view, viewDoc]);
   useEffect(() => { void view?.setPaintedGround(paintedOn ? painted : null); }, [view, paintedOn, painted]);

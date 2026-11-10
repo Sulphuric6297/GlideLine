@@ -590,7 +590,9 @@ export class Forest {
 
   /** `maxFt`: not drawn past this far from the eye; `ladder`: its versions close, middle and far
    * off, and where the first gives way (underbrush: lighter ones, the middle only close by). */
-  constructor(spots: TreeSpot[], private maxFt = Infinity, private ladder: { levels: [Detail, Detail, Detail]; nearFt?: number; midFt?: number } = { levels: ["near", "mid", "far"] }) {
+  /** `ladder.minFt`: only from this far off (the far underbrush of every wood, drawn as one: each
+   * wood's own draws its bushes up to there). */
+  constructor(spots: TreeSpot[], private maxFt = Infinity, private ladder: { levels: [Detail, Detail, Detail]; nearFt?: number; midFt?: number; minFt?: number } = { levels: ["near", "mid", "far"] }) {
     this.group.name = "forest";
     const byShape = new Map<string, TreeSpot[]>();
     for (const s of spots) {
@@ -715,7 +717,10 @@ export class Forest {
     // both, and a little more each side, for the way the eye goes before the trees are sorted again)
     const reach = Number.isFinite(this.maxFt) ? this.maxFt / (1 + LOD_BAND) : 0;
     const melt = forestDetail.melt && !all;
-    const bands = !melt ? [[0, 0], [0, 0], [0, 0]] : [[0, nearFt], [nearFt, midFt], [midFt, reach]];
+    const minFt = this.ladder.minFt ?? 0;
+    const bands = !melt ? [[0, 0], [0, 0], [0, 0]] : [[minFt, nearFt], [nearFt, midFt], [midFt, reach]];
+    // (from minFt on: a little sooner where it melts in, for the way the eye goes before the next sort)
+    const min2 = Math.max(0, minFt - (melt ? 40 : 0)) ** 2;
     if (bands.some(([a, b], l) => this.lodNow[l][0] !== a || this.lodNow[l][1] !== b)) {
       this.lodNow = bands;
       for (const { at, level } of this.lod) {
@@ -734,7 +739,7 @@ export class Forest {
         const dx = s.x - eye.x, dz = s.y - eye.z, dy = s.ground + s.height * 0.5 - eye.y;
         // (as far as it looks: zoomed in, a tree changes and ends that much farther off)
         const d2 = (dx * dx + dz * dz + dy * dy) / zoom2;
-        if (!all && d2 > this.maxFt * this.maxFt) return;
+        if (!all && (d2 > this.maxFt * this.maxFt || d2 < min2)) return;
         const l = all || d2 < r2 ? 0 : d2 < m2 ? 1 : 2;
         const mat = this.matrices[si][i];
         if (shade) {
