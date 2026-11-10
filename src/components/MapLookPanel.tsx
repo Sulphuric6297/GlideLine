@@ -133,12 +133,16 @@ function PartColors({ p, s }: { p: LookPart; s: MapStyle }) {
  * them all, on the map and in 3D alike. */
 function FairwayHoles() {
   const holes = useCourse(c => c.doc.holes);
+  // (a phone's tool sheet: one row to swipe, as its other picks are)
+  const row = useContext(InToolSheet);
   if (!holes.length) return null;
   return (
     <div className="mt-2.5" data-testid="fairway-holes">
       <div className="text-xs text-zinc-400 mb-1.5">Holes with a fairway</div>
+      <div className={row ? "overflow-x-auto dg-noscrollbar touch-pan-x touch-pan-y -mx-3 px-3 [&>div]:flex-nowrap [&>div>button]:shrink-0" : ""}>
       <HoleChips label="Holes with a fairway" all={null} picked={holes.filter(h => h.fairway).map(h => h.id)}
         onChange={v => changeDoc(d => ({ holes: d.holes.map(h => (h.fairway === v.includes(h.id) ? h : { ...h, fairway: v.includes(h.id) })) }))} />
+      </div>
     </div>
   );
 }
