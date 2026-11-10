@@ -387,6 +387,13 @@ const mats = new Map<string, THREE.Material>();
  * do). CourseView sets it for each picture.
  */
 export const treeNearFade = { value: 0 };
+/**
+ * One version of a tree giving way to the next as the eye draws back: over this share past the
+ * distance where it changes, the nearer version melts out and the farther one in, in a fine dither
+ * (each the other's gaps, so the tree is whole all the way), never a swap from one frame to the
+ * next. A forest's meshes say where theirs come in and go out (`aLod`: feet; 0: no fade).
+ */
+export const LOD_BAND = 0.2;
 /** The fade on a tree material (with whatever else its shader has). */
 const withNearFade = (m: THREE.Material) => {
   const own = m.onBeforeCompile.bind(m);
@@ -394,18 +401,27 @@ const withNearFade = (m: THREE.Material) => {
     own(shader, r);
     shader.uniforms.uNearFade = treeNearFade;
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;\nattribute vec2 aLod;\nvarying vec2 vLod;")
       .replace("#include <project_vertex>", `#include <project_vertex>
         {
           vec4 tw = vec4( transformed, 1.0 );
+          vLod = vec2( 1.0, 0.0 );
           #ifdef USE_INSTANCING
             tw = instanceMatrix * tw;
+            // (the whole tree as one: how far its middle is)
+            float ld = distance( ( modelMatrix * instanceMatrix * vec4( 0.0, 0.5, 0.0, 1.0 ) ).xyz, cameraPosition );
+            if ( aLod.x > 0.0 ) vLod.x = smoothstep( aLod.x, aLod.x * ${(1 + LOD_BAND).toFixed(2)}, ld );
+            if ( aLod.y > 0.0 ) vLod.y = smoothstep( aLod.y, aLod.y * ${(1 + LOD_BAND).toFixed(2)}, ld );
           #endif
           vTreeW = ( modelMatrix * tw ).xyz;
         }`);
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;\nuniform float uNearFade;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;\nvarying vec2 vLod;\nuniform float uNearFade;")
       .replace("#include <clipping_planes_fragment>", `#include <clipping_planes_fragment>
+        if ( vLod.x < 1.0 || vLod.y > 0.0 ) {
+          float ln = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+          if ( ln >= vLod.x || ln < vLod.y ) discard;
+        }
         if ( uNearFade > 0.0 ) {
           float keep = smoothstep( uNearFade * 0.45, uNearFade, distance( vTreeW, cameraPosition ) );
           float n = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );

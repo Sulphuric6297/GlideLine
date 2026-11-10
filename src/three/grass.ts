@@ -109,7 +109,9 @@ const VERT_BODY = /* glsl */ `
   vec4 fld = texture2D( uField, fuv );
   float d = distance( wp, uEye.xz );
   // Fewer blades farther away (and none inside the inner patch, for the outer one)
-  float keep = fld.g * uDensity * ( 1.0 - smoothstep( uFar * 0.72, uFar, d ) ) * step( uHole, d + r4 * 6.0 );
+  float keep = fld.g * uDensity * ( 1.0 - smoothstep( uFar * 0.8, uFar, d ) ) * step( uHole, d + r4 * 6.0 );
+  // (toward the patch's edge the blades sink into the ground, none there one frame and gone the next)
+  float sink = 1.0 - smoothstep( uFar * 0.55, uFar * 0.97, d );
   float alive = inside * step( r2, keep );
   // How tall it grows here, read a little off to one side so long grass meets short grass along a
   // ragged edge, not a ruled line (where blades grow at all stays exact: none on pads or paths)
@@ -123,7 +125,7 @@ const VERT_BODY = /* glsl */ `
   float rk = gHash( wp * 1.9 + aK * 3.7 );
   float ka = aK * 2.4 + r1 * 6.2832;
   vec2 off = vec2( cos( ka ), sin( ka ) ) * 0.17 * min( 1.0, aK ) * ( 0.5 + 0.9 * rk );
-  float bh = tall * ( 0.6 + 0.8 * r1 ) * mix( 1.0, 0.4 + 1.2 * tuft, wild * 0.85 ) * ( 0.85 + 0.3 * stretch ) * ( 1.0 - 0.16 * aK * ( 0.4 + rk ) ) * alive;
+  float bh = tall * ( 0.6 + 0.8 * r1 ) * mix( 1.0, 0.4 + 1.2 * tuft, wild * 0.85 ) * ( 0.85 + 0.3 * stretch ) * ( 1.0 - 0.16 * aK * ( 0.4 + rk ) ) * sink * alive;
   // (thin as a blade is; a little wider far off, where a true width would be less than a pixel and flicker)
   float bw = uWidth * ( 0.75 + 0.5 * r3 ) * ( 1.0 + d / uNear ) * min( 1.0, 0.55 + tall * 0.45 ) * mix( 1.0, 0.8, wild ) * alive;
   float yaw = r3 * 6.2832 + aK * 2.1 + rk * 1.5;

@@ -27,7 +27,8 @@ const VERT_BODY = /* glsl */ `
   float drift = gNoise( wp * 0.035 + 3.0 );
   float keep = fld.g * ( 0.3 * lawn + 0.7 * wild ) * uDensity * smoothstep( 0.25, 0.75, drift + 0.25 * wild ) * ( 1.0 - smoothstep( uFar * 0.7, uFar, d ) );
   float alive = inside * step( r2, keep );
-  float s = uSize * ( 0.65 + 0.7 * r1 ) * mix( 0.8, 1.6, smoothstep( 0.6, 2.5, tall ) ) * alive;
+  // (toward their reach they sink into the ground, never there one frame and gone the next)
+  float s = uSize * ( 0.65 + 0.7 * r1 ) * mix( 0.8, 1.6, smoothstep( 0.6, 2.5, tall ) ) * ( 1.0 - smoothstep( uFar * 0.5, uFar * 0.95, d ) ) * alive;
   float yaw = r3 * 6.2832;
   float c = cos( yaw ), sn = sin( yaw );
   vec3 p = position * s;
