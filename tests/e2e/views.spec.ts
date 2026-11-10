@@ -100,6 +100,8 @@ test("under the 3D trees the painted ground is grass, not painted treetops (the 
   // (slow under software rendering: the view from the tee drawn frame by frame)
   test.setTimeout(240_000);
   await blankCourse(page);
+  // (the painted map from a tee: the course's own ground is the usual)
+  await page.evaluate(() => (window as any).__dgEditor().set({ flyGround: "painted" }));
   await addHole(page, { x: 400, y: 700 }, { x: 750, y: 700 });
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").first().click();
@@ -176,6 +178,8 @@ test("from a tee, the hole's ground is painted sharper (over the whole site's pa
   // (slow under software rendering: the view from the tee drawn frame by frame)
   test.setTimeout(240_000);
   await blankCourse(page);
+  // (the painted map from a tee: the course's own ground is the usual)
+  await page.evaluate(() => (window as any).__dgEditor().set({ flyGround: "painted" }));
   await addHole(page, { x: 400, y: 700 }, { x: 750, y: 700 });
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").first().click();
