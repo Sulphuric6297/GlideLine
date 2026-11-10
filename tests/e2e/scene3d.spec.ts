@@ -70,7 +70,8 @@ test("3D grass: blades near the ground when tilted, none from straight above; th
   await page.getByTestId("scene-panel").getByRole("radio", { name: "Medium" }).click();
   await expect.poll(() => grassSetting(page)).toBe(2);
   await page.reload();
-  await expect.poll(() => grassSetting(page)).toBe(2);
+  // (the course opens again first: about 4.5 s on the test machine by itself, more beside other tests)
+  await expect.poll(() => grassSetting(page), { timeout: 30_000 }).toBe(2);
   await page.keyboard.press("3");
   await page.getByTestId("scene-button").click();
   await page.getByTestId("scene-panel").getByRole("radio", { name: "Low", exact: true }).click();
