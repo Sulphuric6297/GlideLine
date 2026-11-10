@@ -7,11 +7,12 @@ import { ArrowDown, ArrowUp, ChevronRight, RotateCcw } from "lucide-react";
 import { defaultStyle } from "../lib/course";
 import { COLOR_PICKS, tallGrassOf, treeMixOf } from "../lib/landscapes";
 import { LIGHT_MODES, LOOK_THEMES, PART_CHOICES, compassName, latitudeOf, lightOf, lookParts, partChanged, sunArc, sunFromOf, themeOf, type LookPart, type LookParts } from "../lib/mapLook";
-import { useCourse } from "../state/course";
+import { changeDoc, useCourse } from "../state/course";
 import { brushOnly } from "../lib/brushSpots";
 import type { MapStyle, PathTier } from "../types";
 import { ELEVATION_LOOKS, FineTuning, setStyle } from "./DesignPanel";
 import { ColorInput, Slider, Toggle, useKeepInPlace } from "./ui";
+import { HoleChips } from "./ApplyToHoles";
 import { SHOW_EVENT } from "./showSetting";
 import { InToolSheet } from "./pageToolState";
 
@@ -125,6 +126,20 @@ function PartColors({ p, s }: { p: LookPart; s: MapStyle }) {
       <ColorInput label={COLOR_LABEL[p]} value={value} onChange={v => setStyle({ [field]: v, ...(p === "trees" ? { treeMix: [] } : {}) }, false)} onDone={commit} />
       {p === "grass" && <ColorInput label="Tall grass" value={tallGrassOf(s)} onChange={v => setStyle({ tallGrass: v }, false)} onDone={commit} />}
     </>
+  );
+}
+
+/** Which holes have a fairway: each hole's own Draw the fairway (its panel in Design), here for
+ * them all, on the map and in 3D alike. */
+function FairwayHoles() {
+  const holes = useCourse(c => c.doc.holes);
+  if (!holes.length) return null;
+  return (
+    <div className="mt-2.5" data-testid="fairway-holes">
+      <div className="text-xs text-zinc-400 mb-1.5">Holes with a fairway</div>
+      <HoleChips label="Holes with a fairway" all={null} picked={holes.filter(h => h.fairway).map(h => h.id)}
+        onChange={v => changeDoc(d => ({ holes: d.holes.map(h => (h.fairway === v.includes(h.id) ? h : { ...h, fairway: v.includes(h.id) })) }))} />
+    </div>
   );
 }
 
@@ -242,6 +257,7 @@ export function MapLookPanel() {
                       </>
                     )}
                     {p === "fairway" && <LookSlider value={parts.fairway.bright} label="Brightness" min={0.8} max={1.3} step={0.02} format={pct} onDone={v => setPart("fairway", { bright: v })} />}
+                    {p === "fairway" && <FairwayHoles />}
                     {p === "paths" && <PathOrder s={s} />}
                   </>
                 )}

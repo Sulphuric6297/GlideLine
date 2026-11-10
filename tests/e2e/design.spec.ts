@@ -803,6 +803,18 @@ test("a hole's fairway turned off leaves the painted map: no fairway painted alo
   await expect(painting).not.toHaveAttribute("href", before!);
   const off = await fair();
   expect(off).toBeLessThan(on * 0.35);
+  // The same switch in the Map step: Fairways in the map style lists the holes with one
+  await page.getByTestId("part-fairway").click();
+  const chip = page.getByTestId("fairway-holes").getByRole("button", { name: "Hole 1" });
+  await expect(chip).toHaveAttribute("aria-pressed", "false");
+  await chip.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+  expect((await course(page)).holes[0].fairway).toBe(true);
+  // And under the ⋯ of the hole's number picked on the map
+  await page.evaluate(() => { const d = (window as any).__dgCourse(); (window as any).__dgEditor().set({ designSel: `label:num:${d.holes[0].id}` }); });
+  await page.getByTestId("piece-more").click();
+  await page.getByTestId("piece-more-menu").getByLabel("Fairway").uncheck();
+  expect((await course(page)).holes[0].fairway).toBe(false);
 });
 
 plain("tall grass: in the legend, its color the grass's made lighter and straw yellow unless set", () => {

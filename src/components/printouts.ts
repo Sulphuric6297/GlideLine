@@ -10,7 +10,7 @@ import { playedHoles } from "../lib/holeStats";
 import { requiredCredit, taglineFits } from "../lib/mapSvg";
 import { followName, keepsItsSize, keepsItsTurn, sizedPlace, type Extra, type Place } from "../lib/pieces";
 import { autoRules, hiddenAtFirst, isSheet, scorecardPlace, signOf, STAT_WORDS, type SignSize } from "../lib/teeSign";
-import { changeDoc, getDoc, useEditor } from "../state/course";
+import { changeDoc, getDoc, updateHole, useEditor } from "../state/course";
 import type { CourseDoc, PrintExtra, SignPart } from "../types";
 import { duplicateDesignSel, elementOf, elementLabel, isShown, moveDesignEl, patchImage, patchLabel, patchPage, patchText, removeDesignSel, setShown, sizeDesignEl } from "./PageEditor";
 
@@ -414,14 +414,18 @@ export const patchPicked = (t: TargetKey, id: string, p: Patch, history = true) 
   setPlace(t, id, { ...("font" in p ? { font: p.font } : {}), ...("color" in p ? { color: p.color } : {}), ...("fill" in p ? { fill: p.fill } : {}), ...("bold" in p ? { bold: p.bold } : {}), ...("italic" in p ? { italic: p.italic || undefined } : {}), ...("rot" in p ? { rot: p.rot || undefined } : {}), ...("opacity" in p ? { opacity: p.opacity } : {}) }, history);
 };
 
-/** A picked thing's own settings, in the toolbar's ⋯: the hole guide's columns (switches), or the
- * words of a heading its look prints (typed; cleared: no heading). */
+/** A picked thing's own settings, in the toolbar's ⋯: the hole guide's columns (switches), a
+ * hole's fairway (its number or distance picked on the course map), or the words of a heading its
+ * look prints (typed; cleared: no heading). */
 export type MoreItem =
   | { kind: "switch"; label: string; on: boolean; set: (v: boolean) => void }
   | { kind: "text"; label: string; value: string; placeholder: string; set: (v: string) => void };
 export const moreOf = (doc: CourseDoc, t: TargetKey, id: string): MoreItem[] => {
   if (t === "map") {
     if (id === "title") return [{ kind: "switch", label: "Par and length", on: doc.style.page?.title?.parLength !== false, set: (v: boolean) => patchPage("title", { parLength: v ? undefined : false }) }];
+    // (a hole's number or distance: its fairway, the same switch as the hole's panel in Design)
+    const hole = /^label:(num|dist):/.test(id) ? doc.holes.find(h => h.id === id.split(":")[2]) : undefined;
+    if (hole) return [{ kind: "switch", label: "Fairway", on: hole.fairway, set: (v: boolean) => updateHole(hole.id, { fairway: v }) }];
     if (id !== "holes") return [];
     const cols = doc.style.page?.holes?.columns ?? ["par", "lengths"];
     return ([["names", "Hole names"], ["par", "Par"], ["lengths", "Lengths"], ["elevation", "Elevation"]] as const).map(([c, label]) => ({
