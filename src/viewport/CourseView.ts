@@ -1938,7 +1938,7 @@ export class CourseView {
     // (the hole's On screen switches: flying, and from the tee)
     const hidden = this.povHole ? this.hideForFlight() : [];
     // (the ground's scans: not without a graphics card, where every pixel's work is the processor's)
-    this.ground.detailActive(!this.software && this.tier < 4);
+    this.ground.detailActive(!this.software);
     // (standing under a tree, the leaves right in front of the eye melt away, those overhead stay;
     // a flyover never fades anything: it's for seeing what's really there)
     treeNearFade.value = this.fly ? 0 : 8;
@@ -2369,7 +2369,8 @@ export class CourseView {
    * Quality that keeps the view smooth: frame times are watched while the view moves, and when
    * frames run slow (under 30 a second) the picture gets a step less sharp (pixel ratio), then
    * less grass, softer shadows and fewer trees in full detail; it steps back up when there is
-   * room again. Software rendering (no graphics card) keeps its own fixed, lower settings.
+   * room again. The lightest step still looks like the place: the ground keeps its textures, the
+   * grass its blades and the shadows their shape. Software rendering (no graphics card) keeps its own fixed, lower settings.
    */
   /** When the flight now under way began (its quality picked in its first seconds, then held). */
   private flyStarted = 0;
@@ -2394,7 +2395,9 @@ export class CourseView {
       this.fastWindows = 0;
       // (Very slow, under about 14 frames a second: two steps at once)
       this.setTier(Math.min(most, this.tier + (median > 70 ? 2 : 1)));
-    } else if (median < (street ? 25 : 17) && this.tier > 0) {
+    // (back up at 40 frames a second or better: a 60 a second screen's frames run 16.7 ms, so a
+    // bar of 17 was all but never cleared, and one slow moment left the view light for good)
+    } else if (median < 25 && this.tier > 0) {
       // (only after a few quick windows in a row: no flickering between two levels)
       if (++this.fastWindows >= 3) {
         this.fastWindows = 0;
@@ -2429,7 +2432,8 @@ export class CourseView {
     }
     // (a video records with its own: see setVideoDetail)
     if (this.videoDetail) return this.invalidate();
-    const shadow = this.streetDetail ? (this.tier >= 2 ? 1024 : 2048) : this.tier >= 3 ? 512 : this.mobile || this.tier >= 2 ? 1024 : 2048;
+    // (never under 1024: at 512 a road's and a tree's shadow show as squares)
+    const shadow = this.streetDetail ? (this.tier >= 2 ? 1024 : 2048) : this.mobile || this.tier >= 2 ? 1024 : 2048;
     // (soft shadow edges: a few looks a pixel while frames keep up, one when they don't: no shader
     // made again, three/softShadows reads the radius)
     this.sun.shadow.radius = this.tier >= 2 ? 1 : SHADOW_SOFT;
@@ -2568,7 +2572,7 @@ export class CourseView {
       this.lastLook.copy(this.camera.quaternion);
     }
     const tilted = this.controls.polarAngle > TILT_TOP;
-    this.ground.detailActive(dist < 250 && !this.software && this.tier < 4);
+    this.ground.detailActive(dist < 250 && !this.software);
     // Tilted, the course is a place: sky, haze, land to the horizon and grass up close
     this.lastSky = false;
     const restore = tilted ? this.atmosphere(this.camera, false) : null;
@@ -2912,7 +2916,8 @@ export class CourseView {
     // (standing: a computer's, on a phone too)
     if (this.streetDetail) return this.tier >= 2 ? 1 : 2;
     const base = this.software ? 0 : this.mobile ? 1 : 2;
-    return Math.max(0, base - (this.tier >= 4 ? 2 : this.tier >= 2 ? 1 : 0)) as GrassQuality;
+    // (thinner while frames run slow, never gone: bare ground reads as clay)
+    return Math.max(Math.min(base, 1), base - (this.tier >= 2 ? 1 : 0)) as GrassQuality;
   }
 
   /** Grass detail (0 off .. 3 high, or automatic) and whether it sways in the wind. */

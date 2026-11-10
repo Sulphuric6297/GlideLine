@@ -221,6 +221,8 @@ test("smooth on any device: slow frames make the 3D view lighter step by step, a
   const four = await q();
   expect(four.tier).toBe(4);
   expect(four.shadow).toBeLessThan(start.shadow);
+  // (the lightest step still looks like the place: shadows keep their shape, never squares)
+  expect(four.shadow).toBeGreaterThanOrEqual(1024);
   expect(four.nearFt).toBeLessThan(start.nearFt);
   // Smooth again: a step back only after a few quick windows in a row (no flicker)
   await frames(10, 24 * 2);
