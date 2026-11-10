@@ -33,7 +33,7 @@ import { autoFlight, flightClock, flyoverOf, insertKey, keyFlight, keyTimes, key
 import { VIDEO_HOLD, titleStrength } from "../lib/video";
 import { drawOverlay, holeTitle, overlayShow, type HoleTitle } from "./flyTitle";
 import { Forest, forestDetail, type TreeSpot, TREES_SEEN, TREES_SHADOW, woodsCrownWidth } from "../three/treeKit";
-import { treeLodZoom } from "../three/ezShapes";
+import { leafThin, treeLodZoom } from "../three/ezShapes";
 import { brushOnly } from "../lib/brushSpots";
 import { applyEdit, brushStroke, kindOf, levelOf, type BrushKind as PaintKind } from "../lib/areaBrush";
 import { foundAreas } from "../lib/undergrowth";
@@ -569,6 +569,7 @@ export class CourseView {
       this.software = !asIf && /swiftshader|llvmpipe|software|basic render/i.test(name);
       // Without a graphics card, or on a phone, fewer trees in full detail
       if (this.software) { forestDetail.nearFt = 70; forestDetail.melt = false; grassBlades.perSpot = 1; groundShader.card = false; }
+      if (this.software || this.mobile) { leafThin.mid = [6, 2.3]; leafThin.far = [26, 4.6]; }
       // (soft shadow edges: 32 looks a pixel, too many to do in software every frame)
       if (!this.software) softenShadows(this.mobile);
       else if (this.mobile) forestDetail.nearFt = 150;

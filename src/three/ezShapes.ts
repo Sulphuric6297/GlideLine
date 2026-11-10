@@ -398,6 +398,10 @@ export const LOD_BAND = 0.2;
  * far off, so the melting stays where it is too small to see, never a stipple across a bush
  * brought close by the zoom. */
 export const treeLodZoom = { value: 1 };
+/** How a tree's leaves thin for its middle and far versions: 1 kept in so many, each so many times
+ * larger. A computer's: fuller, so a tree far off looks like the tree it is up close. A phone's
+ * and a machine's without a graphics card: lighter (CourseView sets them before any tree grows). */
+export const leafThin: { mid: [number, number]; far: [number, number] } = { mid: [4, 1.9], far: [12, 3.2] };
 /** The fade on a tree material (with whatever else its shader has). */
 const withNearFade = (m: THREE.Material) => {
   const own = m.onBeforeCompile.bind(m);
@@ -684,8 +688,8 @@ export const ezTree = (shape: TreeShape, spec: TreeSpec, detail: Detail): TreePr
     const thin = CUSTOM[spec.preset]?.thin;
     const versions: [Detail, THREE.BufferGeometry, THREE.BufferGeometry][] = [
       ["near", bark0, leaves0],
-      ["mid", barkUpTo(bark0, levels, 1), thinLeaves(leaves0, ...(thin?.[0] ?? (bush ? [4, 1.9] : [4, 1.9])))],
-      ["far", barkUpTo(bark0, levels, pine ? 0 : 1), thinLeaves(leaves0, ...(thin?.[1] ?? (bush ? [12, 3.2] : [12, 3.2])))],
+      ["mid", barkUpTo(bark0, levels, 1), thinLeaves(leaves0, ...(thin?.[0] ?? (bush ? [4, 1.9] : leafThin.mid)))],
+      ["far", barkUpTo(bark0, levels, pine ? 0 : 1), thinLeaves(leaves0, ...(thin?.[1] ?? (bush ? [12, 3.2] : leafThin.far)))],
       // (underbrush past arm's reach: the main stems and a few big leaf clusters; our own thin
       // growths, their leaves alone)
       ["brush", barkUpTo(bark0, levels, bush && !thin ? 1 : 0), thinLeaves(leaves0, ...(thin?.[2] ?? (bush ? [30, 5] : [40, 5.6])))]
