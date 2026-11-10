@@ -43,6 +43,7 @@ export type GrassTerrain = { heights: Float32Array; cols: number; rows: number; 
 
 const VERT_HEAD = /* glsl */ `
 attribute vec2 aSpot;
+attribute float aK;
 uniform vec2 uOrigin;
 uniform sampler2D uField;
 uniform sampler2D uTint;
@@ -118,9 +119,14 @@ const VERT_BODY = /* glsl */ `
   float tuft = gNoise( wp * 0.45 + 11.0 );
   // (0: mown, 1: long grass)
   float wild = smoothstep( 0.3, 1.2, tall );
-  float bh = tall * ( 0.6 + 0.8 * r1 ) * mix( 1.0, 0.4 + 1.2 * tuft, wild * 0.85 ) * ( 0.85 + 0.3 * stretch ) * alive;
-  float bw = uWidth * ( 0.75 + 0.5 * r3 ) * ( 1.0 + d / uNear ) * min( 1.0, 0.45 + tall * 0.5 ) * mix( 1.0, 0.6, wild ) * alive;
-  float yaw = r3 * 6.2832;
+  // (a spot grows a few blades, as grass does: each its own way round, the outer ones shorter)
+  float rk = gHash( wp * 1.9 + aK * 3.7 );
+  float ka = aK * 2.4 + r1 * 6.2832;
+  vec2 off = vec2( cos( ka ), sin( ka ) ) * 0.17 * min( 1.0, aK ) * ( 0.5 + 0.9 * rk );
+  float bh = tall * ( 0.6 + 0.8 * r1 ) * mix( 1.0, 0.4 + 1.2 * tuft, wild * 0.85 ) * ( 0.85 + 0.3 * stretch ) * ( 1.0 - 0.16 * aK * ( 0.4 + rk ) ) * alive;
+  // (thin as a blade is; a little wider far off, where a true width would be less than a pixel and flicker)
+  float bw = uWidth * ( 0.75 + 0.5 * r3 ) * ( 1.0 + d / uNear ) * min( 1.0, 0.55 + tall * 0.45 ) * mix( 1.0, 0.8, wild ) * alive;
+  float yaw = r3 * 6.2832 + aK * 2.1 + rk * 1.5;
   vec2 dir = vec2( cos( yaw ), sin( yaw ) );
   // Long grass bends over more; the wind leans it all one way, in waves
   float lean = ( 0.12 + 0.35 * r1 ) * ( 0.5 + min( 1.0, tall / 1.5 ) );
@@ -129,10 +135,11 @@ const VERT_BODY = /* glsl */ `
   vec2 bend = ( dir * lean + gust ) * t * t;
   vec2 side = vec2( -dir.y, dir.x );
   float base = gHeight( wp );
-  vec3 grassPos = vec3( wp.x + side.x * position.x * bw + bend.x * bh, base + bh * t * ( 1.0 - 0.25 * dot( bend, bend ) ) + 0.04, wp.y + side.y * position.x * bw + bend.y * bh );
+  vec3 grassPos = vec3( wp.x + off.x + side.x * position.x * bw + bend.x * bh, base + bh * t * ( 1.0 - 0.25 * dot( bend, bend ) ) + 0.04, wp.y + off.y + side.y * position.x * bw + bend.y * bh );
   // Rounded across the blade (lit a little differently edge to edge), mostly facing up
   vec3 bladeN = normalize( vec3( dir.x + side.x * position.x * 1.2, 0.0, dir.y + side.y * position.x * 1.2 ) );
-  vec3 objectNormal = normalize( mix( bladeN, vec3( 0.0, 1.0, 0.0 ), 0.62 ) );
+  // (more up than out: a lawn is lit as one, not blade by blade light and dark)
+  vec3 objectNormal = normalize( mix( bladeN, vec3( 0.0, 1.0, 0.0 ), 0.8 ) );
   // Color: the ground's grass color (or the photo's), drier or lusher in stretches
   vec3 tint = texture2D( uTint, fuv ).rgb;
   vec2 puv = ( wp - uPhotoRect.xy ) / uPhotoRect.zw;
@@ -142,29 +149,38 @@ const VERT_BODY = /* glsl */ `
   }
   tint = mix( tint * vec3( 0.86, 1.0, 0.94 ), tint * vec3( 1.12, 1.06, 0.74 ), smoothstep( 0.25, 0.85, stretch ) );
   vec3 straw = vec3( 0.66, 0.6, 0.36 );
-  vGrass = tint * ( 0.9 + 0.2 * r4 );
+  vGrass = tint * ( 0.93 + 0.14 * r4 );
+  vGrass = max( vec3( 0.0 ), mix( vec3( dot( vGrass, vec3( 0.2126, 0.7152, 0.0722 ) ) ), vGrass, 1.25 ) ) * 0.94;
   // (long grass: some blades gone to straw)
   vGrass = mix( vGrass, straw * ( 0.75 + 0.25 * r1 ), wild * smoothstep( 0.55, 1.0, r3 ) * 0.55 );
   vTip = t;
 `;
 
-/** One blade: a tapered strip, base to tip (x across -0.5..0.5, y up 0..1). */
+/** How many blades grow from a spot. */
+const BLADES = 3;
+/** A spot's blades: each a tapered strip, base to tip (x across -0.5..0.5, y up 0..1), and which
+ * of the spot's blades each corner belongs to (`k`: the shader sets each its own way). */
 const bladeGeometry = () => {
-  const pos: number[] = [];
-  const seg = 4;
-  for (let i = 0; i < seg; i++) {
-    // (full width low down, narrowing faster toward a point)
-    const t = i / seg, w = 1 - Math.pow(t, 1.4) * 0.9;
-    pos.push(-0.5 * w, t, 0, 0.5 * w, t, 0);
-  }
-  pos.push(0, 1, 0);
+  const pos: number[] = [], k: number[] = [];
   const index: number[] = [];
-  for (let i = 0; i < seg - 1; i++) {
-    const a = i * 2;
-    index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  const seg = 3;
+  for (let b = 0; b < BLADES; b++) {
+    const at = pos.length / 3;
+    for (let i = 0; i < seg; i++) {
+      // (full width low down, narrowing faster toward a point)
+      const t = i / seg, w = 1 - Math.pow(t, 1.4) * 0.9;
+      pos.push(-0.5 * w, t, 0, 0.5 * w, t, 0);
+      k.push(b, b);
+    }
+    pos.push(0, 1, 0);
+    k.push(b);
+    for (let i = 0; i < seg - 1; i++) {
+      const a = at + i * 2;
+      index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    index.push(at + (seg - 1) * 2, at + (seg - 1) * 2 + 1, at + seg * 2);
   }
-  index.push((seg - 1) * 2, (seg - 1) * 2 + 1, seg * 2);
-  return { pos, index };
+  return { pos, k, index };
 };
 
 /** Blade spots for a square patch `half` ft each way: the same jittered pattern in every tile. */
@@ -193,6 +209,7 @@ const patchGeometry = (half: number, perSqFt: number): { geo: THREE.InstancedBuf
   const blade = bladeGeometry();
   const geo = new THREE.InstancedBufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(blade.pos, 3));
+  geo.setAttribute("aK", new THREE.Float32BufferAttribute(blade.k, 1));
   geo.setIndex(blade.index);
   geo.setAttribute("aSpot", new THREE.InstancedBufferAttribute(spots, 2));
   geo.instanceCount = tiles * tiles * n;
@@ -415,8 +432,8 @@ export class Grass implements GrassUniformSource {
       });
       this.patches.push({ blocks, mat, span, count, uniforms, far, hole });
     };
-    add(lv.innerR, lv.inner, 0.06, 30, lv.innerR, 0);
-    add(lv.outerR, lv.outer, 0.16, 18, lv.outerR, lv.innerR * 0.85);
+    add(lv.innerR, lv.inner, 0.034, 45, lv.innerR, 0);
+    add(lv.outerR, lv.outer, 0.05, 50, lv.outerR, lv.innerR * 0.85);
   }
 
   /**

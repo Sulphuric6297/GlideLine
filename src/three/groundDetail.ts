@@ -330,8 +330,10 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
         uniform sampler2D paintColorMap; uniform sampler2D paintCoverMap; uniform vec4 paintRect; uniform float paintOn;
         uniform sampler2D floorMap; uniform vec4 floorRect; uniform float floorOn;
         uniform sampler2D growMap; uniform sampler2D growTint; uniform vec4 growRect; uniform float growOn;
-        // (clumps of grass, a couple of feet across near the eye, wider farther off where those would shimmer)
-        float dgClump( vec2 p, float s ) { return 0.4 + 0.6 * ( dgNoise( p / s ) * 0.65 + dgNoise( p / ( s * 0.37 ) + 13.0 ) * 0.35 ); }`)
+        // (clumps of grass, fixed to the ground: a couple of feet across near the eye, and farther
+        // off, where those would shimmer, the next size up, twice as wide each time, one fading
+        // into the next (k: how far between two sizes), so nothing slides or swells as the eye moves)
+        float dgClump( vec2 p, float s, float k ) { return 0.4 + 0.6 * mix( dgNoise( p / s + s ), dgNoise( p / ( s * 2.0 ) + s * 2.0 ), k ); }`)
       .replace("#include <color_fragment>", `#include <color_fragment>
         {
           vec4 cover = vec4( 0.0 );
@@ -351,15 +353,18 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
               diffuseColor.rgb = mix( diffuseColor.rgb, texture2D( growTint, guv ).rgb * 0.5, dgGrown );
               // Tall grass stands up: its tops (clumps) catch the light, its edge and the gaps
               // between clumps fall away from it
-              // (clumps no finer than three pixels of ground, the long way of a pixel seen at a slant: no shimmer, no streaks)
+              // (clumps no finer than about two pixels of ground, the long way of a pixel seen at a slant: no shimmer, no streaks)
               vec2 fpx = max( abs( dFdx( f ) ), abs( dFdy( f ) ) );
-              float e = max( 1.4, dcam * 0.004 ), s = max( 2.4, 3.0 * max( fpx.x, fpx.y ) );
+              float lvl = log2( max( 1.0, 1.8 * max( fpx.x, fpx.y ) / 2.4 ) ), ck = fract( lvl ), s = 2.4 * exp2( floor( lvl ) );
+              float e = 0.6 * s * ( 1.0 + ck );
+              // (far off the clumps are too small to see one by one: their light and dark calm down)
+              float calm = 1.0 - 0.6 * smoothstep( 2.0, 5.0, lvl );
               vec2 du = vec2( e / groundFeet / growRect.z, 0.0 ), dv = vec2( 0.0, e / groundFeet / growRect.w );
-              float hx1 = texture2D( growMap, guv + du ).r * dgClump( fw + vec2( e, 0.0 ), s ), hx0 = texture2D( growMap, guv - du ).r * dgClump( fw - vec2( e, 0.0 ), s );
-              float hz1 = texture2D( growMap, guv + dv ).r * dgClump( fw + vec2( 0.0, e ), s ), hz0 = texture2D( growMap, guv - dv ).r * dgClump( fw - vec2( 0.0, e ), s );
+              float hx1 = texture2D( growMap, guv + du ).r * dgClump( fw + vec2( e, 0.0 ), s, ck ), hx0 = texture2D( growMap, guv - du ).r * dgClump( fw - vec2( e, 0.0 ), s, ck );
+              float hz1 = texture2D( growMap, guv + dv ).r * dgClump( fw + vec2( 0.0, e ), s, ck ), hz0 = texture2D( growMap, guv - dv ).r * dgClump( fw - vec2( 0.0, e ), s, ck );
               vec2 slope = vec2( hx1 - hx0, hz1 - hz0 ) * 4.0 / ( 2.0 * e );
-              dgRelief = slope * min( 1.0, 1.6 / max( length( slope ), 1e-4 ) ) * dgGrown * 1.8;
-              float clump = dgClump( fw, s ), deep = smoothstep( 0.5, 2.2, tall ) * dgGrown;
+              dgRelief = slope * min( 1.0, 1.6 / max( length( slope ), 1e-4 ) ) * dgGrown * 1.8 * calm;
+              float clump = mix( 0.62, dgClump( fw, s, ck ), calm ), deep = smoothstep( 0.5, 2.2, tall ) * dgGrown;
               dgDeep = deep; dgClumpK = clump;
               dgMown = dgGrown * ( 1.0 - smoothstep( 0.26, 0.36, tall ) ) * smoothstep( 0.8, 0.95, fld.g );
               dgMownK = dgMown * ( 1.0 - smoothstep( 700.0, 1500.0, dcam ) );
@@ -434,7 +439,9 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
           }
           // (how long it grows shows from any way off: a mown fairway brighter and even, tall grass
           // straw at its tips and dark down between its clumps)
-          diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 1.2, 1.24, 1.0 ), dgMown );
+          diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 1.12, 1.17, 0.9 ), dgMown );
+          // (rich, not pale: grass keeps its color under a bright sky)
+          { float dgL = dot( diffuseColor.rgb, vec3( 0.2126, 0.7152, 0.0722 ) ); diffuseColor.rgb = max( vec3( 0.0 ), mix( vec3( dgL ), diffuseColor.rgb, 1.0 + 0.3 * dgGrown ) ) * ( 1.0 - 0.08 * dgGrown ); }
           diffuseColor.rgb *= mix( vec3( 1.0 ), mix( vec3( 0.5, 0.52, 0.42 ), vec3( 1.5, 1.32, 0.78 ), smoothstep( 0.45, 0.8, dgClumpK ) ), dgDeep );
           // (mown: the mower's light and dark bands)
           if ( dgMownK > 0.0 ) diffuseColor.rgb *= 1.0 + 0.1 * dgMownK * smoothstep( -0.15, 0.15, sin( ( f.y + f.x * 0.2 ) / 4.5 ) ) - 0.05 * dgMownK;
