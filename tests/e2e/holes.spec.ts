@@ -293,7 +293,9 @@ test("bending a hole: Bend left and Bend right curve it, Straighten undoes it", 
 test("two holes to one basket: a basket click on a basket shares it; the Basket choice; deleting one hole leaves it to the other", async ({ page }) => {
   await blankCourse(page);
   const a = await addHole(page, { x: 300, y: 700 }, { x: 650, y: 700 });
-  // Hole 2 from another tee, its basket click on hole 1's basket
+  // Hole 2 from another tee (the Hole tool again: a hole made goes back to Select), its basket
+  // click on hole 1's basket
+  await page.keyboard.press("h");
   await clickPlan(page, 650, 350);
   const badge = page.getByTestId("basket-badge").first();
   const bb = (await badge.boundingBox())!;
@@ -550,7 +552,9 @@ test("a tee or basket picked opens its hole's panel, with it opened up under Tee
 test("a tip on the map waits for the pointer to rest on a point, and never shows while it's dragged", async ({ page }) => {
   await blankCourse(page);
   const hole = await addHole(page, { x: 400, y: 600 }, { x: 800, y: 600 });
-  await page.keyboard.press("Escape");
+  // (the pointer off the new basket it rested on, and long enough for any tip of it to be gone)
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(1000);
   await page.evaluate(id => (window as any).__dgActions.select(id), hole.id);
   const mid = page.getByTestId("handle-mid").first();
   await expect(mid).toBeVisible();
