@@ -178,6 +178,11 @@ export const groundDetailUniforms = (): GroundDetailUniforms => ({
   growOn: { value: 0 }
 });
 
+/** Whether there's a graphics card: without one, the ground's own real ground at every distance
+ * is left out of its shaders altogether (never used there, and slow to build). */
+export const groundShader = { card: true };
+const cardDefine = () => (groundShader.card ? "#define DG_CARD\n" : "");
+
 /** What the scans need in a shader: hex tiling and one layer's color and bumps. */
 const SCAN_GLSL = /* glsl */ `
   uniform highp sampler2DArray detailMap;
@@ -281,6 +286,7 @@ const SCAN_GLSL = /* glsl */ `
       if ( w2 > 0.004 ) dgScan( l2, f, c2, n2 );
       c1 = mix( vec3( 1.0 ), c1, near / all ); c2 = mix( vec3( 1.0 ), c2, near / all );
     }
+    #ifdef DG_CARD
     if ( plain > 0.002 ) {
       // (the same scan larger as the eye draws back, so there is grain to see at every distance)
       float mid = smoothstep( 40.0, 150.0, d ) * ( 1.0 - smoothstep( 320.0, 800.0, d ) );
@@ -293,6 +299,7 @@ const SCAN_GLSL = /* glsl */ `
       g = mix( vec3( 1.0 ), g, plain / all );
       c1 *= g; c2 *= g;
     }
+    #endif
     vec3 nrm = ( n1 * w1 + n2 * w2 ) / sum;
     vec3 real = ( dgReal( l1, base, keep ) * c1 * w1 + ( w2 > 0.004 ? dgReal( l2, base, keep ) * c2 * w2 : vec3( 0.0 ) ) ) / sum;
     float cov = clamp( sum, 0.0, 1.0 );
@@ -323,7 +330,7 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
   m.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, u);
     shader.vertexShader = worldVertex(shader.vertexShader);
-    shader.fragmentShader = shader.fragmentShader
+    shader.fragmentShader = cardDefine() + shader.fragmentShader
       .replace("#include <common>", `#include <common>
         ${SCAN_GLSL}
         uniform sampler2D coverMap; uniform vec4 coverRect; uniform float coverOn; uniform float coverFromColor;
@@ -339,6 +346,7 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
           vec4 cover = vec4( 0.0 );
           vec2 f = vGroundW.xz * groundFeet;
           float dgKeep = 0.25, dgMownK = 0.0, dgGrown = 0.0, dgDeep = 0.0, dgClumpK = 1.0, dgMown = 0.0;
+          #ifdef DG_CARD
           if ( growOn > 0.0 && groundPlain > 0.0 ) {
             float dcam = distance( cameraPosition, vGroundW ) * groundFeet;
             // (an edge wanders a few feet, and frays by the foot up close)
@@ -371,6 +379,7 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
               dgKeep = mix( dgKeep, 0.4, dgGrown );
             }
           }
+          #endif
           if ( dgGrown > 0.0 ) {
             // (it's grass, or a woods' floor under it: its color says how long, not what it is)
             cover = vec4( 1.0, 0.0, 0.0, 0.0 );
@@ -448,7 +457,7 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
         }`)
       .replace("#include <normal_fragment_maps>", BUMPS_GLSL);
   };
-  m.customProgramCacheKey = () => "dg-ground-scans";
+  m.customProgramCacheKey = () => `dg-ground-scans${groundShader.card ? "" : "-plain"}`;
 };
 
 /** One scan over the whole of a thing on the ground (a path's surface, a road, a fairway), its own
@@ -462,7 +471,7 @@ export const addSurfaceDetail = (m: THREE.Material, u: GroundDetailUniforms, lay
     shader.vertexShader = softly + worldVertex(shader.vertexShader)
       .replace("#include <common>", "#include <common>\n#ifdef DG_SOFT\nattribute float aEdge; varying float vEdge;\n#endif")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\n#ifdef DG_SOFT\nvEdge = aEdge;\n#endif");
-    shader.fragmentShader = softly + shader.fragmentShader
+    shader.fragmentShader = cardDefine() + softly + shader.fragmentShader
       .replace("#include <common>", `#include <common>\n${SCAN_GLSL}\nuniform float dgLayer; uniform float dgAmount; uniform float dgMown;\n#ifdef DG_SOFT\nvarying float vEdge;\n#endif`)
       .replace("#include <color_fragment>", `#include <color_fragment>
         diffuseColor.rgb = dgMacro( diffuseColor.rgb, vGroundW.xz * groundFeet, dgLayer == 0.0 ? 1.0 : 0.45 );
@@ -486,5 +495,5 @@ export const addSurfaceDetail = (m: THREE.Material, u: GroundDetailUniforms, lay
         }`)
       .replace("#include <normal_fragment_maps>", BUMPS_GLSL);
   };
-  m.customProgramCacheKey = () => `dg-surface-scan${soft > 0 ? `-soft${soft}` : ""}`;
+  m.customProgramCacheKey = () => `dg-surface-scan${soft > 0 ? `-soft${soft}` : ""}${groundShader.card ? "" : "-plain"}`;
 };
