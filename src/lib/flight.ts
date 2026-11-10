@@ -79,18 +79,15 @@ const limitsAt = (p: P, g: number, z: number, alt: number, obstacles: Obstacles,
   let lo = g + Math.min(4, alt), hi = Infinity, above = -Infinity;
   const c = obstacles(p, 4);
   if (under) {
-    // (`through`: leaves hanging lower than it can get under)
-    let through = false;
     if (c?.built !== undefined && z < c.built) lo = Math.max(lo, c.built);
     // (each crown, or where only how high they stand is known, all of them as one)
     const crowns = c ? c.crowns ?? (Number.isFinite(c.base) ? [{ x: p.x, y: p.y, r: 0, base: c.base, top: c.top }] : []) : [];
     for (const k of crowns) if (Math.hypot(p.x - k.x, p.y - k.y) < k.r + 4 && z + UNDER_LEAVES > k.base && z - UNDER_LEAVES < k.top) {
-      if (k.base - UNDER_LEAVES < g + LOWEST) through = true;
       hi = Math.min(hi, Math.max(g + LOWEST, k.base - UNDER_LEAVES));
     }
     // (what's built wins: over a roof, whatever leaves hang there)
     if (hi < lo) hi = lo;
-    return { lo, hi, above, through };
+    return { lo, hi, above };
   }
   if (c && z + LEAVES > c.base && z - LEAVES < c.top) {
     // (`above`: how high it must be to go over them instead)
@@ -98,7 +95,7 @@ const limitsAt = (p: P, g: number, z: number, alt: number, obstacles: Obstacles,
     if (c.base - LEAVES >= g + 6) hi = c.base - LEAVES;
     else lo = Math.max(lo, above);
   }
-  return { lo, hi, above, through: false };
+  return { lo, hi, above };
 };
 
 /** How steeply it climbs or comes down round what's in the way (ft up per ft along), and how
@@ -149,7 +146,7 @@ const holdHeights = (spots: P[], alt: number[], rate: number, ground: (x: number
   const lim = spots.map((p, i) => limitsAt(p, g[i], want[i], alt[i], obstacles, under));
   const w = Math.max(1, Math.round(EASE * rate)), least = 6 / rate;
   const over = (i: number, above = lim[i].above) => {
-    lim[i] = { lo: Math.max(lim[i].lo, above), hi: Infinity, above: Math.max(lim[i].above, above), through: false };
+    lim[i] = { lo: Math.max(lim[i].lo, above), hi: Infinity, above: Math.max(lim[i].above, above) };
   };
   let z = want;
   for (let round = 0; round < (under ? 1 : 12); round++) {
@@ -316,12 +313,12 @@ export const autoFlight = (line: P[], set: FlyoverSettings, ground: (x: number, 
     const g = ground(p.x, p.y);
     return { p, g, ...limitsAt(p, g, g + H, H, obstacles, true) };
   };
-  // From behind the tee, unless something built stands there or leaves hang too low to get
-  // under: then from just past them
+  // From behind the tee, unless something built stands there or leaves hang lower than its
+  // height (in the woods behind the tee, say): then from just past them
   let behind = Math.max(0, set.behind);
   for (let d = -behind; d < 0; d += 8) {
     const b = back(d);
-    if (b.lo > b.g + H + 1e-6 || b.through) behind = Math.max(0, -d - 8);
+    if (b.lo > b.g + H + 1e-6 || b.hi < b.g + H - 1e-6) behind = Math.max(0, -d - 8);
   }
   const dur = autoSeconds(len, set);
   const n = Math.max(60, Math.ceil(dur * RATE));

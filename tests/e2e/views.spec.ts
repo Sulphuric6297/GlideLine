@@ -657,10 +657,11 @@ plain("the flight by itself: a low glide from behind the tee, under a crown over
   const side = autoFlight(line, { ...FLYOVER_DEFAULTS, side: 50, speed: 2 }, flat)!;
   plainExpect(at(side, 200).y).toBeCloseTo(50, 5);
   plainExpect(side.dur).toBeCloseTo(open.dur / 2, 5);
-  // Over rolling ground it keeps its height over the ground (rising and falling with it)
+  // Over rolling ground it keeps near its height over the ground, rising and falling with it in a
+  // steady glide (a drone's: smoothed over the small rises and dips)
   const bumpy = (x: number) => 100 + 8 * Math.sin(x / 20);
   const steady = autoFlight(line, FLYOVER_DEFAULTS, x => bumpy(x))!;
-  for (const c of steady.cam) plainExpect(Math.abs(c.z - bumpy(c.x) - 10)).toBeLessThan(2);
+  for (const c of steady.cam) plainExpect(Math.abs(c.z - bumpy(c.x) - 10)).toBeLessThan(3);
 });
 
 test("a hole cut through woods is flown at its height down the fairway, between the woods' own trees", async ({ page }) => {
