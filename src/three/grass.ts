@@ -327,6 +327,12 @@ export class Grass implements GrassUniformSource {
     return this.quality;
   }
 
+  /** The maps as textures (what grows where, its color) and the plan rectangle they cover: the
+   * ground paints itself from the same ones (see groundDetail's growMap). */
+  get maps() {
+    return this.field && this.tint ? { field: this.field, tint: this.tint, rect: this.rect } : null;
+  }
+
   setMaps(maps: GrassMaps) {
     const make = (c: HTMLCanvasElement, srgb: boolean) => {
       const t = new THREE.CanvasTexture(c);

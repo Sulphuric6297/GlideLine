@@ -239,7 +239,13 @@ export class Ground {
     if (close && this.wantDetail) this.loadDetail();
     // (the painted map's colors say what each spot is; the photo's cover mask says it for the photo)
     this.detail.coverFromColor.value = this.painted || !this.detail.coverMap.value ? 1 : 0;
-    this.detail.groundDetail.value = close && this.wantDetail && this.detail.detailMap.value ? 1 : 0;
+    // (the ground's own, where no photo or painted map covers it: real ground at any distance,
+    // so its scans stay on however far the eye is)
+    const map = this.painted ?? this.photo;
+    const plain = this.painted ? 0 : map ? 1 - Math.min(1, Math.max(0, this.bgOpacity)) : 1;
+    this.detail.groundPlain.value = plain;
+    if (plain > 0 && this.wantDetail) this.loadDetail();
+    this.detail.groundDetail.value = (close || plain > 0) && this.wantDetail && this.detail.detailMap.value ? 1 : 0;
   }
 
   /** The scans, the first time the view comes close (a couple of megabytes, then kept). */

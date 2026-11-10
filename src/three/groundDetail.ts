@@ -141,6 +141,18 @@ export type GroundDetailUniforms = {
   floorMap: { value: THREE.Texture | null };
   floorRect: { value: THREE.Vector4 };
   floorOn: { value: number };
+  /** How much of the ground is its own (1: no photo or painted map over it; 0: all photo). Its own
+   * ground is real ground at any distance: the scans' colors, their grain laid larger and larger
+   * farther off, and patches of lusher and drier grass, never a flat coat of paint. */
+  groundPlain: { value: number };
+  /** What grows where (three/grass's maps: red the grass's height, green how thick; and its
+   * color), over growRect, on while growOn is 1: the ground's own paints its fairways, lawn, tall
+   * grass and woods' floor from it, their edges wandering as grass does, the tall grass standing
+   * up in the light. */
+  growMap: { value: THREE.Texture | null };
+  growTint: { value: THREE.Texture | null };
+  growRect: { value: THREE.Vector4 };
+  growOn: { value: number };
 };
 
 export const groundDetailUniforms = (): GroundDetailUniforms => ({
@@ -158,7 +170,12 @@ export const groundDetailUniforms = (): GroundDetailUniforms => ({
   paintOn: { value: 0 },
   floorMap: { value: null },
   floorRect: { value: new THREE.Vector4(0, 0, 1, 1) },
-  floorOn: { value: 0 }
+  floorOn: { value: 0 },
+  groundPlain: { value: 0 },
+  growMap: { value: null },
+  growTint: { value: null },
+  growRect: { value: new THREE.Vector4(0, 0, 1, 1) },
+  growOn: { value: 0 }
 });
 
 /** What the scans need in a shader: hex tiling and one layer's color and bumps. */
@@ -167,6 +184,7 @@ const SCAN_GLSL = /* glsl */ `
   uniform highp sampler2DArray detailNormal;
   uniform float groundDetail;
   uniform float groundFeet;
+  uniform float groundPlain;
   varying vec3 vGroundW;
   vec2 dgHash( vec2 p ) { return fract( sin( vec2( dot( p, vec2( 127.1, 311.7 ) ), dot( p, vec2( 269.5, 183.3 ) ) ) ) * 43758.5453 ); }
   // (a point's three nearest hexagons, each with its own shift and turn of the scan, and their weights)
@@ -211,6 +229,32 @@ const SCAN_GLSL = /* glsl */ `
   }
   vec3 dgNrm = vec3( 0.0, 0.0, 1.0 );
   float dgFade = 0.0;
+  // (how much of the scans' real color the ground has taken: near the eye, or all of its own ground)
+  float dgCol = 0.0;
+  // (the lie of tall grass, for the light: its slope east and south, and whether there is any)
+  vec2 dgRelief = vec2( 0.0 );
+  // A layer's grain alone, its scan laid scale times larger (seen from that much farther off)
+  vec3 dgGrain( float layer, vec2 f, float scale ) {
+    vec2 uv = f / ( DG_TILE[ int( layer ) ] * scale );
+    vec2 u1, u2, u3; vec3 w; dgHex( uv, u1, u2, u3, w );
+    vec2 dx = dFdx( uv ), dy = dFdy( uv );
+    vec3 col = ( textureGrad( detailMap, vec3( u1, layer ), dx, dy ).rgb * w.x + textureGrad( detailMap, vec3( u2, layer ), dx, dy ).rgb * w.y + textureGrad( detailMap, vec3( u3, layer ), dx, dy ).rgb * w.z ) * 2.0;
+    return max( vec3( 0.3 ), 1.0 + ( col - 1.0 ) * DG_GRAIN[ int( layer ) ] );
+  }
+  // The ground's own patches, at d feet from the eye: thicker and thinner (light and dark, in
+  // sweeps a hundred feet across down to a few feet), and grass drier here, lusher there
+  vec3 dgPatches( vec2 f, float layer, float d ) {
+    float n = dgNoise( f / 120.0 ) * 0.5 + dgNoise( f / 37.0 + 17.0 ) * 0.3 + dgNoise( f / 11.0 + 5.0 ) * 0.2;
+    float fine = dgNoise( f / 3.1 + 9.0 ) * 0.6 + dgNoise( f / 1.3 + 3.0 ) * 0.4;
+    vec3 m = vec3( 1.0 + ( n - 0.5 ) * 0.28 + ( fine - 0.5 ) * 0.2 * ( 1.0 - smoothstep( 120.0, 420.0, d ) ) );
+    if ( layer < 0.5 ) {
+      float dry = smoothstep( 0.42, 0.78, dgNoise( f / 190.0 + 41.0 ) * 0.7 + dgNoise( f / 23.0 + 7.0 ) * 0.3 );
+      float lush = smoothstep( 0.5, 0.85, dgNoise( f / 140.0 + 77.0 ) * 0.75 + dgNoise( f / 17.0 + 3.0 ) * 0.25 );
+      m *= mix( vec3( 1.0 ), vec3( 1.15, 1.04, 0.74 ), dry * 0.4 );
+      m *= mix( vec3( 1.0 ), vec3( 0.8, 0.96, 0.82 ), lush * 0.4 );
+    }
+    return m;
+  }
   // A layer's real color near the eye: its scan's own average, as bright as the ground there is
   // (about), a little of the ground's own hue kept so a fairway still reads as one
   vec3 dgReal( float layer, vec3 base, float keep ) {
@@ -225,23 +269,44 @@ const SCAN_GLSL = /* glsl */ `
   vec3 dgLay( vec3 base, float l1, float w1, float l2, float w2, float amount, float keep ) {
     vec2 f = vGroundW.xz * groundFeet;
     float d = distance( cameraPosition, vGroundW ) * groundFeet;
-    dgFade = groundDetail * ( 1.0 - smoothstep( 110.0, 260.0, d ) ) * amount;
-    if ( dgFade < 0.002 || w1 + w2 < 0.004 ) { dgFade = 0.0; return base; }
-    vec3 c1, n1, c2 = vec3( 1.0 ), n2 = vec3( 0.0, 0.0, 1.0 );
-    dgScan( l1, f, c1, n1 );
-    if ( w2 > 0.004 ) dgScan( l2, f, c2, n2 );
-    float sum = w1 + w2;
+    float near = groundDetail * ( 1.0 - smoothstep( 110.0, 260.0, d ) ) * amount;
+    // (its own ground: real at any distance)
+    float plain = groundDetail * groundPlain * amount;
+    float sum = w1 + w2, all = max( near, plain );
+    dgFade = 0.0; dgCol = 0.0;
+    if ( all < 0.002 || sum < 0.004 ) return base;
+    vec3 c1 = vec3( 1.0 ), n1 = vec3( 0.0, 0.0, 1.0 ), c2 = vec3( 1.0 ), n2 = vec3( 0.0, 0.0, 1.0 );
+    if ( near > 0.002 ) {
+      dgScan( l1, f, c1, n1 );
+      if ( w2 > 0.004 ) dgScan( l2, f, c2, n2 );
+      c1 = mix( vec3( 1.0 ), c1, near / all ); c2 = mix( vec3( 1.0 ), c2, near / all );
+    }
+    if ( plain > 0.002 ) {
+      // (the same scan larger as the eye draws back, so there is grain to see at every distance)
+      float mid = smoothstep( 40.0, 150.0, d ) * ( 1.0 - smoothstep( 320.0, 800.0, d ) );
+      float mid2 = smoothstep( 250.0, 600.0, d ) * ( 1.0 - smoothstep( 1500.0, 3000.0, d ) ), far = smoothstep( 1200.0, 2500.0, d );
+      vec3 g = vec3( 1.0 );
+      if ( mid > 0.01 ) g *= mix( vec3( 1.0 ), dgGrain( l1, f, 2.6 ), mid );
+      if ( mid2 > 0.01 ) g *= mix( vec3( 1.0 ), dgGrain( l1, f, 9.0 ), mid2 );
+      if ( far > 0.01 ) g *= mix( vec3( 1.0 ), dgGrain( l1, f, 37.0 ), far );
+      g *= dgPatches( f, l1, d );
+      g = mix( vec3( 1.0 ), g, plain / all );
+      c1 *= g; c2 *= g;
+    }
     vec3 nrm = ( n1 * w1 + n2 * w2 ) / sum;
     vec3 real = ( dgReal( l1, base, keep ) * c1 * w1 + ( w2 > 0.004 ? dgReal( l2, base, keep ) * c2 * w2 : vec3( 0.0 ) ) ) / sum;
-    dgFade *= clamp( sum, 0.0, 1.0 );
+    float cov = clamp( sum, 0.0, 1.0 );
+    dgFade = near * cov;
+    dgCol = all * cov;
     dgNrm = normalize( mix( vec3( 0.0, 0.0, 1.0 ), nrm, dgFade ) );
-    return mix( base, real, dgFade );
+    return mix( base, real, dgCol );
   }
 `;
 /** The scan's bumps turning the surface for the light (it lies about level: its own plan axes). */
 const BUMPS_GLSL = /* glsl */ `
   #include <normal_fragment_maps>
-  if ( dgFade > 0.0 ) {
+  if ( dgFade > 0.0 || dgRelief != vec2( 0.0 ) ) {
+    dgNrm = normalize( dgNrm + vec3( -dgRelief.x, dgRelief.y, 0.0 ) );
     vec3 dgT = normalize( ( viewMatrix * vec4( 1.0, 0.0, 0.0, 0.0 ) ).xyz ), dgB = normalize( ( viewMatrix * vec4( 0.0, 0.0, -1.0, 0.0 ) ).xyz );
     normal = normalize( normal + ( dgT * dgNrm.x + dgB * dgNrm.y ) * 1.1 );
   }
@@ -263,12 +328,48 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
         ${SCAN_GLSL}
         uniform sampler2D coverMap; uniform vec4 coverRect; uniform float coverOn; uniform float coverFromColor;
         uniform sampler2D paintColorMap; uniform sampler2D paintCoverMap; uniform vec4 paintRect; uniform float paintOn;
-        uniform sampler2D floorMap; uniform vec4 floorRect; uniform float floorOn;`)
+        uniform sampler2D floorMap; uniform vec4 floorRect; uniform float floorOn;
+        uniform sampler2D growMap; uniform sampler2D growTint; uniform vec4 growRect; uniform float growOn;
+        // (clumps of grass, a couple of feet across near the eye, wider farther off where those would shimmer)
+        float dgClump( vec2 p, float s ) { return 0.4 + 0.6 * ( dgNoise( p / s ) * 0.65 + dgNoise( p / ( s * 0.37 ) + 13.0 ) * 0.35 ); }`)
       .replace("#include <color_fragment>", `#include <color_fragment>
         {
           vec4 cover = vec4( 0.0 );
           vec2 f = vGroundW.xz * groundFeet;
-          if ( groundDetail > 0.0 && coverFromColor > 0.0 ) {
+          float dgKeep = 0.25, dgMownK = 0.0, dgGrown = 0.0, dgDeep = 0.0, dgClumpK = 1.0, dgMown = 0.0;
+          if ( growOn > 0.0 && groundPlain > 0.0 ) {
+            float dcam = distance( cameraPosition, vGroundW ) * groundFeet;
+            // (an edge wanders a few feet, and frays by the foot up close)
+            vec2 wob = ( vec2( dgNoise( f / 7.0 + 3.0 ), dgNoise( f / 7.0 + 19.0 ) ) - 0.5 ) * 6.0
+              + ( vec2( dgNoise( f / 1.9 + 11.0 ), dgNoise( f / 1.9 + 31.0 ) ) - 0.5 ) * 2.2 * ( 1.0 - smoothstep( 200.0, 600.0, dcam ) );
+            vec2 fw = f + wob;
+            vec2 guv = ( fw / groundFeet - growRect.xy ) / growRect.zw;
+            if ( guv.x >= 0.0 && guv.x <= 1.0 && guv.y >= 0.0 && guv.y <= 1.0 ) {
+              vec4 fld = texture2D( growMap, guv );
+              float tall = fld.r * 4.0;
+              dgGrown = smoothstep( 0.02, 0.15, fld.g ) * groundPlain;
+              diffuseColor.rgb = mix( diffuseColor.rgb, texture2D( growTint, guv ).rgb * 0.5, dgGrown );
+              // Tall grass stands up: its tops (clumps) catch the light, its edge and the gaps
+              // between clumps fall away from it
+              // (clumps no finer than three pixels of ground, the long way of a pixel seen at a slant: no shimmer, no streaks)
+              vec2 fpx = max( abs( dFdx( f ) ), abs( dFdy( f ) ) );
+              float e = max( 1.4, dcam * 0.004 ), s = max( 2.4, 3.0 * max( fpx.x, fpx.y ) );
+              vec2 du = vec2( e / groundFeet / growRect.z, 0.0 ), dv = vec2( 0.0, e / groundFeet / growRect.w );
+              float hx1 = texture2D( growMap, guv + du ).r * dgClump( fw + vec2( e, 0.0 ), s ), hx0 = texture2D( growMap, guv - du ).r * dgClump( fw - vec2( e, 0.0 ), s );
+              float hz1 = texture2D( growMap, guv + dv ).r * dgClump( fw + vec2( 0.0, e ), s ), hz0 = texture2D( growMap, guv - dv ).r * dgClump( fw - vec2( 0.0, e ), s );
+              vec2 slope = vec2( hx1 - hx0, hz1 - hz0 ) * 4.0 / ( 2.0 * e );
+              dgRelief = slope * min( 1.0, 1.6 / max( length( slope ), 1e-4 ) ) * dgGrown * 1.8;
+              float clump = dgClump( fw, s ), deep = smoothstep( 0.5, 2.2, tall ) * dgGrown;
+              dgDeep = deep; dgClumpK = clump;
+              dgMown = dgGrown * ( 1.0 - smoothstep( 0.26, 0.36, tall ) ) * smoothstep( 0.8, 0.95, fld.g );
+              dgMownK = dgMown * ( 1.0 - smoothstep( 700.0, 1500.0, dcam ) );
+              dgKeep = mix( dgKeep, 0.4, dgGrown );
+            }
+          }
+          if ( dgGrown > 0.0 ) {
+            // (it's grass, or a woods' floor under it: its color says how long, not what it is)
+            cover = vec4( 1.0, 0.0, 0.0, 0.0 );
+          } else if ( groundDetail > 0.0 && coverFromColor > 0.0 ) {
             // (by its color: only a true grey, no hue in it, is paving (light concrete, dark asphalt);
             // tan and brown, red over green over blue, are dirt; the rest is grass, a pale or yellow
             // green fairway too)
@@ -329,8 +430,14 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
             int a1 = 0, a2 = -1;
             for ( int i = 1; i < 6; i++ ) if ( w[ i ] > w[ a1 ] ) a1 = i;
             for ( int i = 0; i < 6; i++ ) if ( i != a1 && ( a2 < 0 || w[ i ] > w[ a2 ] ) ) a2 = i;
-            diffuseColor.rgb = dgLay( diffuseColor.rgb, L[ a1 ], w[ a1 ], L[ a2 ], w[ a2 ], 1.0, 0.25 );
+            diffuseColor.rgb = dgLay( diffuseColor.rgb, L[ a1 ], w[ a1 ], L[ a2 ], w[ a2 ], 1.0, dgKeep );
           }
+          // (how long it grows shows from any way off: a mown fairway brighter and even, tall grass
+          // straw at its tips and dark down between its clumps)
+          diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 1.2, 1.24, 1.0 ), dgMown );
+          diffuseColor.rgb *= mix( vec3( 1.0 ), mix( vec3( 0.5, 0.52, 0.42 ), vec3( 1.5, 1.32, 0.78 ), smoothstep( 0.45, 0.8, dgClumpK ) ), dgDeep );
+          // (mown: the mower's light and dark bands)
+          if ( dgMownK > 0.0 ) diffuseColor.rgb *= 1.0 + 0.1 * dgMownK * smoothstep( -0.15, 0.15, sin( ( f.y + f.x * 0.2 ) / 4.5 ) ) - 0.05 * dgMownK;
         }`)
       .replace("#include <normal_fragment_maps>", BUMPS_GLSL);
   };
@@ -363,7 +470,12 @@ export const addSurfaceDetail = (m: THREE.Material, u: GroundDetailUniforms, lay
           // (a mown fairway keeps more of its own green, so it reads apart from the rough)
           diffuseColor.rgb = dgLay( diffuseColor.rgb, dgLayer, 1.0, 0.0, 0.0, dgAmount, dgMown > 0.0 ? 0.45 : 0.25 );
           // (mown: light and dark bands as a mower leaves them, softened over a few inches)
-          if ( dgMown > 0.0 ) { vec2 f = vGroundW.xz * groundFeet; diffuseColor.rgb *= 1.0 + 0.07 * dgFade * smoothstep( -0.15, 0.15, sin( ( f.y + f.x * 0.2 ) / 4.5 ) ) - 0.035 * dgFade; }
+          // (seen as far as the fairway's own grass is: across the course where there's no photo)
+          if ( dgMown > 0.0 ) {
+            vec2 f = vGroundW.xz * groundFeet;
+            float k = dgCol * ( 1.0 - smoothstep( 700.0, 1500.0, distance( cameraPosition, vGroundW ) * groundFeet ) );
+            diffuseColor.rgb *= 1.0 + 0.1 * k * smoothstep( -0.15, 0.15, sin( ( f.y + f.x * 0.2 ) / 4.5 ) ) - 0.05 * k;
+          }
         }`)
       .replace("#include <normal_fragment_maps>", BUMPS_GLSL);
   };

@@ -202,6 +202,10 @@ const curveBetween = (pts: THREE.Vector3[], i: number, u: number, out: THREE.Vec
 
 /** The painted map for the ground (a picture's URL) and where it shows woods. */
 export type PaintedLook = { url: string; wooded: WoodedGrid | null };
+/** A shape that's there to be picked and draws nothing (the ground paints what it is). */
+const UNDRAWN = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+UNDRAWN.userData.shared = true;
+
 /** A sharper painting of part of the site (see state/paintedGround: paintedDetail). */
 export type PaintedDetailLook = { canvas: HTMLCanvasElement; rect: { x: number; y: number; width: number; height: number } };
 
@@ -2677,7 +2681,11 @@ export class CourseView {
     const q = this.grassQuality();
     this.grass.setQuality(on && doc ? q : 0);
     this.tufts.setQuality(on && doc ? q : 0);
-    if (!doc || !on || !q) {
+    // (the ground's own, no photo or painted map over it, paints itself from the same maps: from
+    // straight above too)
+    const grown = !!doc && !this.software && this.ground.detail.groundPlain.value > 0;
+    if (!doc || ((!on || !q) && !grown)) {
+      this.ground.detail.growOn.value = 0;
       this.grass.group.visible = false;
       this.tufts.group.visible = false;
       return;
@@ -2685,17 +2693,29 @@ export class CourseView {
     // What grows where: painted again when the course changed (at most a few times a second
     // while something is dragged)
     const key = [doc.course.items, doc.stats, doc.groundPaint, doc.course.style, doc.groundColor, doc.canvas, doc.course.holes];
+    const gm = this.grass.maps, gd = this.ground.detail;
+    if (gm && gd.growMap.value !== gm.field) {
+      gd.growMap.value = gm.field;
+      gd.growTint.value = gm.tint;
+      gd.growRect.value.copy(gm.rect);
+    }
+    gd.growOn.value = grown && gm ? 1 : 0;
     if (key.some((k, i) => (this.grassInputs[i] ?? null) !== k)) {
       const now = performance.now();
       if (now - this.grassBuilt > 300 || !this.grassInputs.length) {
         this.grassInputs = key;
         this.grassBuilt = now;
         const maps = grassMaps(doc);
-        if (maps) this.grass.setMaps(maps);
+        if (maps) { this.grass.setMaps(maps); this.invalidate(); }
       } else {
         clearTimeout(this.grassTimer);
         this.grassTimer = window.setTimeout(() => this.invalidate(), 320);
       }
+    }
+    if (!on || !q) {
+      this.grass.group.visible = false;
+      this.tufts.group.visible = false;
+      return;
     }
     if (this.grassTerrainRef !== doc.heights) {
       this.grassTerrainRef = doc.heights;
@@ -3438,9 +3458,12 @@ export class CourseView {
             else run.push(p);
           }
           flush();
-          const mesh = new THREE.Mesh(drapedPolygon(poly, (x, y) => this.h(x, y), doc.gridSize, 0.12, runs, 8), k ? mown(mat.clone()) : mat);
+          const mesh: THREE.Mesh = new THREE.Mesh(drapedPolygon(poly, (x, y) => this.h(x, y), doc.gridSize, 0.12, runs, 8), k ? mown(mat.clone()) : mat);
           mesh.renderOrder = 1;
           mesh.receiveShadow = true;
+          // (on the ground's own, the ground paints the fairway itself, from what grows where: its
+          // shape stays for picking, drawing nothing)
+          if (!photo && !this.software) mesh.material = UNDRAWN;
           g.add(mesh);
           // (a line along it over the photo only, where the fill is faint: on the ground's own
           // colors the soft edge shows it)
@@ -3763,16 +3786,19 @@ export class CourseView {
         const floor = a.kind === "woods";
         if (!bare) {
           // (grass, sand and dirt fade into the ground around them; paving keeps a crisp edge)
-          const soft = photo ? 0 : a.kind === "fairway" ? 8 : a.kind === "rough" ? 10 : a.kind === "green" ? 4 : a.kind === "sand" ? 3 : 0;
+          const soft = photo ? 0 : a.kind === "fairway" ? 4 : a.kind === "rough" ? 6 : a.kind === "green" ? 3 : a.kind === "sand" ? 3 : 0;
           const geo = drapedPolygon(a.points, (x, y) => this.h(x, y), doc.gridSize, floor ? 0.08 : 0.15 + order * 0.01, soft ? [[...a.points, a.points[0]]] : undefined, soft);
           const mat = new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: floor ? Math.min(fill, 0.45) : fill, depthWrite: false, polygonOffset: true, polygonOffsetFactor: floor ? -1 : -4, polygonOffsetUnits: floor ? -2 : -8 });
           // (up close, what it's made of: a fairway's mown grass, a parking lot's asphalt, a woods' floor)
           const scan: [SurfaceLayer, number] | null = a.kind === "fairway" || a.kind === "green" ? ["grass", 0.9] : a.kind === "rough" ? ["grass", 1] : a.kind === "sand" ? ["sand", 1]
-            : a.kind === "parking" ? ["asphalt", 1] : null;
+            // (a woods' floor on the ground's own: leaf litter, not a coat of paint)
+            : a.kind === "parking" ? ["asphalt", 1] : floor && !photo ? ["leaves", 1] : null;
           if (scan) addSurfaceDetail(mat, this.ground.detail, layerOf(scan[0]), scan[1], a.kind === "fairway" || a.kind === "green", soft);
-          const mesh = new THREE.Mesh(geo, mat);
+          const mesh: THREE.Mesh = new THREE.Mesh(geo, mat);
           mesh.renderOrder = floor ? 0.5 : a.kind === "parking" ? tierOrder("road") : 2 + order * 0.001;
           mesh.receiveShadow = true;
+          // (grass and a woods' floor on the ground's own: the ground paints them itself)
+          if (!photo && !this.software && (floor || a.kind === "fairway" || a.kind === "rough" || a.kind === "green")) { mat.dispose(); mesh.material = UNDRAWN; }
           g.add(mesh);
         }
         const w = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo" ? 3 : 1.5;
