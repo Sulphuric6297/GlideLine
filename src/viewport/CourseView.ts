@@ -33,6 +33,7 @@ import { autoFlight, flightClock, flyoverOf, insertKey, keyFlight, keyTimes, key
 import { VIDEO_HOLD, titleStrength } from "../lib/video";
 import { drawOverlay, holeTitle, overlayShow, type HoleTitle } from "./flyTitle";
 import { Forest, forestDetail, type TreeSpot, TREES_SEEN, TREES_SHADOW, woodsCrownWidth } from "../three/treeKit";
+import { treeLodZoom } from "../three/ezShapes";
 import { brushOnly } from "../lib/brushSpots";
 import { applyEdit, brushStroke, kindOf, levelOf, type BrushKind as PaintKind } from "../lib/areaBrush";
 import { foundAreas } from "../lib/undergrowth";
@@ -708,7 +709,7 @@ export class CourseView {
     const hide = this.treesHidden;
     for (const [key, entry] of this.shapes) {
       const under = /:under(:|$)/.test(key);
-      if (under || key.startsWith("woods:") || key === "painted-woods") entry.obj.visible = !hide && !(under && this.dragging);
+      if (under || key.startsWith("woods:") || key === "painted-woods") entry.obj.visible = !hide && !(under && this.dragging && this.brushRests());
     }
     const doc = this.doc;
     if (doc) for (const item of doc.course.items) if (item.type === "tree") { const e = this.objects.get(item.id); if (e) e.obj.visible = !hide; }
@@ -1288,7 +1289,8 @@ export class CourseView {
     if (holeId === this.povHole && nextTee === this.povTee && same(this.povStand, stand)) return;
     if (holeId === this.povHole && nextTee === this.povTee && stand && !this.walk) {
       this.povStand = { x: stand.x, y: stand.y, face: stand.face ?? this.faceDownHole(holeId!, stand) };
-      this.povLook = { yaw: 0, pitch: 0 };
+      // (told which way to face, at the end of a walk: still looking as you were, up or down too)
+      if (stand.face === undefined) this.povLook = { yaw: 0, pitch: 0 };
       this.invalidate();
       return;
     }
@@ -1298,9 +1300,12 @@ export class CourseView {
     this.povStand = holeId && stand ? { x: stand.x, y: stand.y, face: stand.face ?? this.faceDownHole(holeId, stand) } : null;
     if (holeId === this.povHole && nextTee === this.povTee) return;
     this.povTee = nextTee;
-    if (holeId === this.povHole) { this.povLook = { yaw: 0, pitch: 0 }; this.invalidate(); return; }
+    // (a walk that ended by another hole or tee says which way you face: the look stays as it is,
+    // never swung back to straight ahead)
+    const keepLook = !!holeId && !!this.povHole && stand?.face !== undefined;
+    if (holeId === this.povHole) { if (!keepLook) this.povLook = { yaw: 0, pitch: 0 }; this.invalidate(); return; }
     this.povHole = holeId;
-    this.povLook = { yaw: 0, pitch: 0 };
+    if (!keepLook) this.povLook = { yaw: 0, pitch: 0 };
     if (!holeId) this.freeCam(false);
     this.detailReady = this.updateDetail().catch(() => {});
     this.controls.enabled = !holeId;
@@ -2731,6 +2736,7 @@ export class CourseView {
     const t = this.clock.elapsedTime;
     const wind = this.wind && this.povHole ? 0.14 : 0.05;
     const ground = (x: number, z: number) => this.h(clamp(x, 0, doc.canvas.width), clamp(z, 0, doc.canvas.height));
+    this.grass.zoom = this.povHole ? Math.tan((31 * Math.PI) / 180) / Math.tan((cam.fov * Math.PI) / 360) : 1;
     this.grass.update(p, ground(p.x, p.z), t, wind, ground);
     this.tufts.update(p, t, wind, this.grass.group.visible, ground);
   }
@@ -2912,6 +2918,9 @@ export class CourseView {
 
   /** Woods: the trees near the camera in full detail. */
   private updateForests(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera, sun?: THREE.OrthographicCamera) {
+    // (standing or flying, zoomed in: trees change and end that much farther off; see treeLodZoom)
+    const zoom = cam && this.povHole ? Math.max(1, Math.tan((31 * Math.PI) / 180) / Math.tan((cam.fov * Math.PI) / 360)) : 1;
+    if (Math.abs(zoom - treeLodZoom.value) > 0.02 * treeLodZoom.value) { treeLodZoom.value = zoom; forestDetail.version++; }
     // (which they are: found again only when the things drawn changed, not every frame)
     const kids = this.itemsGroup.children;
     if (this.forestsOf.children !== kids.length || this.forestsOf.first !== kids[0] || this.forestsOf.last !== kids[kids.length - 1]) {
@@ -6089,12 +6098,19 @@ export class CourseView {
     };
   }
 
+  /** Whether underbrush is left out while something is dragged: on a phone, without a graphics
+   * card, or once frames have run slow enough for the view to step down twice. */
+  private brushRests() {
+    return this.software || this.mobile || this.tier >= 2;
+  }
+
   private setDragging(on: boolean) {
     if (this.dragging === on) return;
     this.dragging = on;
-    // (underbrush out of sight while dragging: a big wood's thousands of bushes drawn at every step
-    // make the drag crawl, and they're mostly under the crowns anyway)
-    for (const [key, entry] of this.shapes) if (/:under(:|$)/.test(key)) entry.obj.visible = !on;
+    // (underbrush out of sight while dragging, where the device needs it: a big wood's thousands
+    // of bushes drawn at every step make the drag crawl there; a computer keeping up shows them)
+    const rest = on && this.brushRests();
+    for (const [key, entry] of this.shapes) if (/:under(:|$)/.test(key)) entry.obj.visible = !rest && !this.treesHidden;
     if (!on) {
       this.handleKey = "";
       this.syncHandles();

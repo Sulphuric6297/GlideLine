@@ -60,6 +60,7 @@ uniform float uFar;
 uniform float uHole;
 uniform float uWidth;
 uniform float uDensity;
+uniform float uZoom;
 uniform float uTime;
 uniform float uWind;
 varying vec3 vGrass;
@@ -127,7 +128,7 @@ const VERT_BODY = /* glsl */ `
   vec2 off = vec2( cos( ka ), sin( ka ) ) * 0.17 * min( 1.0, aK ) * ( 0.5 + 0.9 * rk );
   float bh = tall * ( 0.6 + 0.8 * r1 ) * mix( 1.0, 0.4 + 1.2 * tuft, wild * 0.85 ) * ( 0.85 + 0.3 * stretch ) * ( 1.0 - 0.16 * aK * ( 0.4 + rk ) ) * sink * alive;
   // (thin as a blade is; a little wider far off, where a true width would be less than a pixel and flicker)
-  float bw = uWidth * ( 0.75 + 0.5 * r3 ) * ( 1.0 + d / uNear ) * min( 1.0, 0.55 + tall * 0.45 ) * mix( 1.0, 0.8, wild ) * alive;
+  float bw = uWidth * ( 0.75 + 0.5 * r3 ) * ( 1.0 + d / ( uNear * uZoom ) ) * min( 1.0, 0.55 + tall * 0.45 ) * mix( 1.0, 0.8, wild ) * alive;
   float yaw = r3 * 6.2832 + aK * 2.1 + rk * 1.5;
   vec2 dir = vec2( cos( yaw ), sin( yaw ) );
   // Long grass bends over more; the wind leans it all one way, in waves
@@ -327,6 +328,7 @@ export class Grass implements GrassUniformSource {
       uHole: { value: hole },
       uWidth: { value: width },
       uDensity: { value: 1 },
+      uZoom: this.zoomU,
       uTime: { value: 0 },
       uWind: { value: 0.12 }
     };
@@ -345,6 +347,11 @@ export class Grass implements GrassUniformSource {
   getQuality() {
     return this.quality;
   }
+
+  /** How much the eye is zoomed in (1: not): blades far off, brought close by the zoom, keep a
+   * blade's width in the picture (they are drawn wider with distance only so as not to flicker). */
+  private zoomU = { value: 1 };
+  set zoom(z: number) { this.zoomU.value = Math.max(1, z); }
 
   /** The maps as textures (what grows where, its color) and the plan rectangle they cover: the
    * ground paints itself from the same ones (see groundDetail's growMap). */

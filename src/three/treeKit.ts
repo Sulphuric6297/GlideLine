@@ -5,7 +5,7 @@
 // underneath). A few shapes of each kind are made once, at unit height, and shared by every tree:
 // woods draw them instanced, a close version near the camera and a lighter one farther away.
 import * as THREE from "three";
-import { EZ_VARIANTS, LOD_BAND, ezLoaded, ezProto, ezTint, ezTree, type TreeSpec } from "./ezShapes";
+import { EZ_VARIANTS, LOD_BAND, ezLoaded, ezProto, ezTint, ezTree, treeLodZoom, type TreeSpec } from "./ezShapes";
 
 export type TreeShape = "broadleaf" | "conifer" | "bush";
 export type Detail = "near" | "mid" | "far" | "brush";
@@ -710,6 +710,7 @@ export class Forest {
     }
     const nearFt = this.ladder.nearFt ?? forestDetail.nearFt, midFt = this.ladder.midFt ?? midOf(forestDetail.nearFt);
     const r2 = nearFt * nearFt, m2 = midFt * midFt, all = forestDetail.all;
+    const zoom2 = treeLodZoom.value * treeLodZoom.value;
     // (one version melts into the next over a band past where it changes; a tree in a band is in
     // both, and a little more each side, for the way the eye goes before the trees are sorted again)
     const reach = Number.isFinite(this.maxFt) ? this.maxFt / (1 + LOD_BAND) : 0;
@@ -731,7 +732,8 @@ export class Forest {
       const drawn = (this.drawnNow[si] = new Uint8Array(set.spots.length));
       set.spots.forEach((s, i) => {
         const dx = s.x - eye.x, dz = s.y - eye.z, dy = s.ground + s.height * 0.5 - eye.y;
-        const d2 = dx * dx + dz * dz + dy * dy;
+        // (as far as it looks: zoomed in, a tree changes and ends that much farther off)
+        const d2 = (dx * dx + dz * dz + dy * dy) / zoom2;
         if (!all && d2 > this.maxFt * this.maxFt) return;
         const l = all || d2 < r2 ? 0 : d2 < m2 ? 1 : 2;
         const mat = this.matrices[si][i];
@@ -746,10 +748,11 @@ export class Forest {
         }
         if (see) {
           seeBall.center.set(s.x, s.ground + s.height * 0.5, s.y);
-          seeBall.radius = s.height + 30 + Math.sqrt(d2) * 0.12;
+          const far = Math.sqrt(d2 * zoom2);
+          seeBall.radius = s.height + 30 + far * 0.12;
           if (!see.intersectsSphere(seeBall)) return;
           // (far off, behind a rise: the ground stands between the eye and the tree's top)
-          if (ground && d2 > HILL_FT * HILL_FT && behindHill(eye, s, Math.sqrt(d2), ground)) return;
+          if (ground && far > HILL_FT && behindHill(eye, s, far, ground)) return;
         }
         drawn[i] = 1;
         for (let k = 0; k < 3; k++) {

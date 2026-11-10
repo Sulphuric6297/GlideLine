@@ -134,7 +134,9 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   const viewOnly = useCourse(s => s.readOnly);
   const pv = doc.style.publicView ?? {};
   const show = viewOnly
-    ? { photo: pv.ground === "photo", contours: !!pv.contours, shading: pv.shading ?? true, painted: pv.ground !== "photo" }
+    // (a viewer's map and 3D are the editor's own: the course's ground, or the photo; the painted
+    // map only from a tee and in flyovers, as the editor has it)
+    ? { photo: pv.ground === "photo", contours: !!pv.contours, shading: pv.shading ?? true, painted: !!ed.teeView && pv.ground !== "photo" }
     : { photo: ed.photo, contours: ed.contours, shading: ed.shading, painted: false };
   const terrain = useMemo(() => terrainStats(doc.terrainHeights), [doc.terrainHeights]);
   const contours = useMemo(() => (show.contours ? contoursOf(doc.terrainHeights, doc.gridSize, doc.canvas.width, doc.canvas.height) : { segments: [], interval: 1 }), [show.contours, doc.terrainHeights, doc.gridSize, doc.canvas]);

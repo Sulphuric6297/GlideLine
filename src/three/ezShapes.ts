@@ -394,14 +394,19 @@ export const treeNearFade = { value: 0 };
  * next. A forest's meshes say where theirs come in and go out (`aLod`: feet; 0: no fade).
  */
 export const LOD_BAND = 0.2;
+/** How much the eye is zoomed in (1: not): a tree twice as large in the picture changes twice as
+ * far off, so the melting stays where it is too small to see, never a stipple across a bush
+ * brought close by the zoom. */
+export const treeLodZoom = { value: 1 };
 /** The fade on a tree material (with whatever else its shader has). */
 const withNearFade = (m: THREE.Material) => {
   const own = m.onBeforeCompile.bind(m);
   m.onBeforeCompile = (shader, r) => {
     own(shader, r);
     shader.uniforms.uNearFade = treeNearFade;
+    shader.uniforms.uLodZoom = treeLodZoom;
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;\nattribute vec2 aLod;\nvarying vec2 vLod;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;\nattribute vec2 aLod;\nvarying vec2 vLod;\nuniform float uLodZoom;")
       .replace("#include <project_vertex>", `#include <project_vertex>
         {
           vec4 tw = vec4( transformed, 1.0 );
@@ -409,7 +414,7 @@ const withNearFade = (m: THREE.Material) => {
           #ifdef USE_INSTANCING
             tw = instanceMatrix * tw;
             // (the whole tree as one: how far its middle is)
-            float ld = distance( ( modelMatrix * instanceMatrix * vec4( 0.0, 0.5, 0.0, 1.0 ) ).xyz, cameraPosition );
+            float ld = distance( ( modelMatrix * instanceMatrix * vec4( 0.0, 0.5, 0.0, 1.0 ) ).xyz, cameraPosition ) / uLodZoom;
             if ( aLod.x > 0.0 ) vLod.x = smoothstep( aLod.x, aLod.x * ${(1 + LOD_BAND).toFixed(2)}, ld );
             if ( aLod.y > 0.0 ) vLod.y = smoothstep( aLod.y, aLod.y * ${(1 + LOD_BAND).toFixed(2)}, ld );
           #endif

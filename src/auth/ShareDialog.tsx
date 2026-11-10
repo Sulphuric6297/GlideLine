@@ -119,17 +119,17 @@ function Ticks({ parts, value, onChange }: { parts: readonly Part[]; value: Perm
 }
 
 /** How the map and 3D look to those who only look (a link's visitors, people who can view): the
- * course's own, the same for every link. The painted map unless set otherwise. */
+ * course's own, the same for every link. The course's ground as Design shows it, unless set otherwise. */
 function ViewerLook() {
   const pv = useCourse(s => s.doc.style.publicView) ?? {};
   const set = (p: Partial<typeof pv>) => changeDoc(d => ({ style: { ...d.style, publicView: { ...d.style.publicView, ...p } } }));
   return (
     <div className="rounded-lg bg-white/[0.05] p-2.5 space-y-2" data-testid="public-view">
       <div className="text-xs text-zinc-400">What viewers see</div>
-      <Segmented label="Viewers' ground" value={pv.ground ?? "painted"} onChange={v => set({ ground: v as "painted" | "photo" })} options={[{ value: "painted", label: "Painted" }, { value: "photo", label: "Satellite photo" }]} />
+      <Segmented label="Viewers' ground" value={pv.ground ?? "painted"} onChange={v => set({ ground: v as "painted" | "photo" })} options={[{ value: "painted", label: "Course ground" }, { value: "photo", label: "Satellite photo" }]} />
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         <label className="flex items-center gap-2 text-sm text-zinc-200"><input type="checkbox" checked={!!pv.contours} onChange={e => set({ contours: e.target.checked })} /> Contour lines</label>
-        {pv.ground === "photo" && <label className="flex items-center gap-2 text-sm text-zinc-200"><input type="checkbox" checked={pv.shading ?? true} onChange={e => set({ shading: e.target.checked })} /> Hill shading</label>}
+        {<label className="flex items-center gap-2 text-sm text-zinc-200"><input type="checkbox" checked={pv.shading ?? true} onChange={e => set({ shading: e.target.checked })} /> Hill shading</label>}
       </div>
     </div>
   );
