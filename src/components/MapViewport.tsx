@@ -66,7 +66,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
       onBoxSelect: (ids, add, trees) => boxSelect(ids, add, trees),
       onMoveGroup: (base, ids, dx, dy) => moveGroup(base, ids, dx, dy, false),
       onPlace: (mode, p) => placeAt(mode, p),
-      onHole: (tee, basket) => addHole(tee, basket),
+      // (a hole made: back to Select, the new hole picked)
+      onHole: (tee, basket) => { addHole(tee, basket); useEditor.getState().set({ tool: "select" }); },
       onDrawn: (kind, pts, opts) => {
         // (drawn as a patch of a wood: no area of its own)
         const { patchFor, patchBrush, drawShape } = useEditor.getState();

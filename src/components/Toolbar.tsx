@@ -143,7 +143,7 @@ export const teeLevelFor = (doc: Pick<CourseDoc, "items">, holeId: string | null
 /** What to do first with each tool, with "Click" or "Tap" in front (the drawing bar has Undo,
  * Cancel and Done). */
 const HINTS: Partial<Record<ToolMode, string>> = {
-  "add-hole": "where the tee goes, then where the basket goes. Keep going for the next hole",
+  "add-hole": "where the tee goes, then where the basket goes",
   "add-tee": "to add another tee to the selected hole",
   "add-basket": "to add another pin position (B, C…) to the selected hole",
   "add-mando": "beside the hole's line where the post or tree is",

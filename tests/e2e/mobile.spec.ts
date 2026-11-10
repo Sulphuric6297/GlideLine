@@ -408,9 +408,7 @@ test.describe("phone", () => {
     expect(Math.abs(basket.x - tee.x - 350)).toBeLessThan(6);
     expect(Math.abs(basket.y - tee.y)).toBeLessThan(6);
     await expect(page.getByTestId("draw-bar")).toHaveCount(0);
-    // The tool stays on for the next hole; X goes back to Select
-    expect((await editorState(page)).tool).toBe("add-hole");
-    await page.getByTestId("bar-done").tap();
+    // Back to Select once the hole is made
     expect((await editorState(page)).tool).toBe("select");
   });
 

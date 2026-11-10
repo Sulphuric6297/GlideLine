@@ -1610,7 +1610,7 @@ export class CourseView {
   }
 
   /** The flight over a hole: camera and look-at points (by itself from behind the tee to the
-   * basket, over the trees; or through the hole's keyframes), fields of view, and how long it
+   * basket, under the trees; or through the hole's keyframes), fields of view, and how long it
    * takes (s). */
   private flightPath(holeId: string): { pts: THREE.Vector3[]; look: THREE.Vector3[]; fov: number[]; dur: number; play: number; at: (t: number) => number } | null {
     const doc = this.doc;
@@ -1701,7 +1701,7 @@ export class CourseView {
   private canopyAt(p: P, reach: number): Canopy | null {
     const doc = this.doc;
     if (!doc) return null;
-    let base = Infinity, top = -Infinity;
+    let base = Infinity, top = -Infinity, built = -Infinity;
     const trunks: P[] = [], crowns: Crown[] = [];
     const { cells, widest } = this.crownsFiled();
     const R = reach + Math.max(widest, TRUNK_ROOM);
@@ -1725,9 +1725,10 @@ export class CourseView {
       if (pointInPolygon(p, i.points) || distanceToPath(p, [...i.points, i.points[0]]) < reach) {
         base = Math.min(base, this.h(p.x, p.y));
         top = Math.max(top, this.h(p.x, p.y) + structureHeight(i) + 10);
+        built = Math.max(built, this.h(p.x, p.y) + structureHeight(i) + 10);
       }
     }
-    return Number.isFinite(top) || trunks.length ? { base, top, trunks, crowns } : null;
+    return Number.isFinite(top) || trunks.length ? { base, top, trunks, crowns, ...(Number.isFinite(built) ? { built } : {}) } : null;
   }
 
   stopFlyover() {
