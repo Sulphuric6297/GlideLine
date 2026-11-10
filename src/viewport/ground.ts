@@ -41,7 +41,9 @@ export class Ground {
   private photoFt = 0;
   private wantDetail = true;
   private close = true;
-  private card = true;
+  // (not until the view says so: the scans are a few megabytes to load and unpack, seconds of a
+  // processor's time where there is no graphics card to use them)
+  private card = false;
   /** Painted ground as drawn so far, and the textures it is drawn into (one texel per painted square). */
   private paint: Record<string, number> = {};
   private paintGrid: { cols: number; rows: number; per: number; cell: number; color: Uint8Array; cover: Uint8Array } | null = null;
