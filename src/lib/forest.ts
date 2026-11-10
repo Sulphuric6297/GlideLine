@@ -494,13 +494,15 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     const wAt = fairwayWidthAt(hole);
     const width = (t: number) => Math.max(18, wAt(t) * (hole.fairway ? 1 : 0.6));
     const shift = hole.fairway && hole.fairwayShift ? fairwayShiftAt(hole) : undefined;
-    // (a fairway from each of the hole's tees: painted over each other, they make one)
+    // (a fairway from each of the hole's tees: painted over each other, they make one; with the
+    // hole's fairway off, only the narrower lane cleared through the trees, in the rough's grass,
+    // as in 3D)
     for (const line of teeLines(doc, hole, st.line, st.teeId)) {
       const path = smoothPath(line, 10);
-      poly(FAIR, corridor(path, width, 12, shift));
+      if (hole.fairway) poly(FAIR, corridor(path, width, 12, shift));
       // Treetops lean in over the edges: keep their middles back so the fairway keeps its width
       poly(CLEAR, corridor(path, t => width(t) + (crownR * 1.2) / k, 12, shift));
-      poly(MIDDLE, corridor(path, t => width(t) * 0.4, 12, shift));
+      if (hole.fairway) poly(MIDDLE, corridor(path, t => width(t) * 0.4, 12, shift));
     }
   }
   for (const i of drawnAreas(doc.items)) {

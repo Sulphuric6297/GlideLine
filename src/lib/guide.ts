@@ -248,7 +248,7 @@ export const TOPICS: Topic[] = [
   },
   {
     id: "fairway", section: "design", title: "Fairway",
-    body: "Draw the fairway paints the mown strip from tee to basket, on the map and in 3D. Fairway width sets how wide it is. A new fairway is the same width all along.\n\nTo shape it, pick the hole and drag the squares along the fairway's edges. Each one makes that side wider or narrower there, and holding Shift moves both sides. Double-click a square to get rid of it. Once it's shaped, the panel shows how narrow and how wide it gets (say, 30 to 70 ft), with Even width next to it to put it back to one width all along. If you've only moved it off the line, it says Moved off the line.",
+    body: "Draw the fairway paints the mown strip from tee to basket, on the map and in 3D. Turned off, the hole plays through grass, with a narrower lane kept clear of trees. Fairway width sets how wide it is. A new fairway is the same width all along.\n\nTo shape it, pick the hole and drag the squares along the fairway's edges. Each one makes that side wider or narrower there, and holding Shift moves both sides. Double-click a square to get rid of it. Once it's shaped, the panel shows how narrow and how wide it gets (say, 30 to 70 ft), with Even width next to it to put it back to one width all along. If you've only moved it off the line, it says Moved off the line.",
     words: "fairway width even width shape mown moved off the line",
     path: "Design › a hole › Fairway and line of play",
     where: { step: "design", pick: "hole", find: "inspector", text: "Draw the fairway" }

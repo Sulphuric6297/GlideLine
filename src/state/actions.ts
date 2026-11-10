@@ -12,7 +12,7 @@ import { courseStats, holeStats } from "../lib/holeStats";
 import type { AreaItem, BasketItem, CourseDoc, CourseItem, FieldKind, FieldLeague, FieldPart, FieldPartSet, Hole, LineItem, LineKind, P, PinPosition, TeeLevel, ToolMode, TreeItem, TreeKind } from "../types";
 import { LEAGUES, fieldPlan } from "../lib/fieldPlan";
 import { orientedBox } from "../lib/structures";
-import { changeDoc, editor, getDoc, removeHole, removeItems, updateItem, useEditor, useCourse } from "./course";
+import { changeDoc, editor, getDoc, removeHole, removeItems, updateHole, updateItem, useEditor, useCourse } from "./course";
 import { toast } from "./toast";
 import { keepsTreesOut, treeFree } from "../lib/treeFree";
 
@@ -695,7 +695,7 @@ export const layoutTee = (holeId: string) => {
 export const withCentroid = <T extends { points: P[] }>(item: T): T & P => ({ ...item, ...centroid(item.points) });
 
 // For the automated tests and screenshots: build a course quickly without clicking every spot.
-if (typeof window !== "undefined") (window as any).__dgActions = { addHole, addDrawn, placeAt, select, pickGroup, updateItem, style: (patch: Partial<CourseDoc["style"]>) => changeDoc(d => ({ style: { ...d.style, ...patch } })), site: (patch: Partial<CourseDoc["site"]>) => changeDoc(d => ({ site: { ...d.site, ...patch } })), lidar: (patch: Partial<NonNullable<CourseDoc["lidar"]>>) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {})), flyover: (patch: Partial<NonNullable<CourseDoc["flyover"]>>) => changeDoc(d => ({ flyover: { ...d.flyover, ...patch } as CourseDoc["flyover"] })) };
+if (typeof window !== "undefined") (window as any).__dgActions = { addHole, addDrawn, placeAt, select, pickGroup, updateItem, hole: updateHole, style: (patch: Partial<CourseDoc["style"]>) => changeDoc(d => ({ style: { ...d.style, ...patch } })), site: (patch: Partial<CourseDoc["site"]>) => changeDoc(d => ({ site: { ...d.site, ...patch } })), lidar: (patch: Partial<NonNullable<CourseDoc["lidar"]>>) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {})), flyover: (patch: Partial<NonNullable<CourseDoc["flyover"]>>) => changeDoc(d => ({ flyover: { ...d.flyover, ...patch } as CourseDoc["flyover"] })) };
 
 /**
  * An OB line for a hole, ready to fine-tune with its handles: along the left or right of the
