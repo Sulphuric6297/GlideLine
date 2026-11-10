@@ -764,6 +764,59 @@ test("tall grass is painted its own way: lighter, straw-colored tufts, not the g
   await expect(page.getByLabel("Tall grass")).toBeVisible();
 });
 
+test("a hole's fairway turned off leaves the painted map: no fairway painted along its line, only the grass", async ({ page }) => {
+  test.setTimeout(240_000);
+  await blankCourse(page);
+  await addHole(page, { x: 150, y: 950 }, { x: 450, y: 950 });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "3 Map" }).click();
+  await woodsAt(page, "Drawn only");
+  const painting = page.getByTestId("design-page").locator("image").first();
+  // (the fairway's light, mown green: much brighter than the grass round it)
+  const fair = async () => {
+    await expect(painting).toHaveAttribute("href", /^(data:image\/jpeg|blob:)/);
+    await painted(page);
+    await page.waitForTimeout(1500);
+    return page.evaluate(async (u: string) => {
+      const img = new Image();
+      img.src = u;
+      await img.decode();
+      const c = document.createElement("canvas");
+      c.width = img.width;
+      c.height = img.height;
+      const g = c.getContext("2d")!;
+      g.drawImage(img, 0, 0);
+      const d = g.getImageData(0, 0, img.width, img.height).data;
+      const lum = (i: number) => 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2];
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) sum += lum(i);
+      const mean = sum / (d.length / 4);
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 1] > d[i] && d[i + 1] > d[i + 2] && lum(i) > mean + 25) n++;
+      return n / (d.length / 4);
+    }, (await painting.getAttribute("href"))!);
+  };
+  const on = await fair();
+  expect(on).toBeGreaterThan(0.005);
+  const before = await painting.getAttribute("href");
+  await page.evaluate(() => { const d = (window as any).__dgCourse(); (window as any).__dgActions.hole(d.holes[0].id, { fairway: false }); });
+  await expect(painting).not.toHaveAttribute("href", before!);
+  const off = await fair();
+  expect(off).toBeLessThan(on * 0.35);
+  // The same switch in the Map step: Fairways in the map style lists the holes with one
+  await page.getByTestId("part-fairway").click();
+  const chip = page.getByTestId("fairway-holes").getByRole("button", { name: "Hole 1" });
+  await expect(chip).toHaveAttribute("aria-pressed", "false");
+  await chip.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+  expect((await course(page)).holes[0].fairway).toBe(true);
+  // And under the ⋯ of the hole's number picked on the map
+  await page.evaluate(() => { const d = (window as any).__dgCourse(); (window as any).__dgEditor().set({ designSel: `label:num:${d.holes[0].id}` }); });
+  await page.getByTestId("piece-more").click();
+  await page.getByTestId("piece-more-menu").getByLabel("Fairway").uncheck();
+  expect((await course(page)).holes[0].fairway).toBe(false);
+});
+
 plain("tall grass: in the legend, its color the grass's made lighter and straw yellow unless set", () => {
   const doc = createEmptyCourse();
   doc.style.legend = true;
