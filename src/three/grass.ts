@@ -158,15 +158,15 @@ const VERT_BODY = /* glsl */ `
   vTip = t;
 `;
 
-/** How many blades grow from a spot. */
-const BLADES = 3;
+/** How many blades grow from a spot (one without a graphics card, where each is the processor's work). */
+export const grassBlades = { perSpot: 3 };
 /** A spot's blades: each a tapered strip, base to tip (x across -0.5..0.5, y up 0..1), and which
  * of the spot's blades each corner belongs to (`k`: the shader sets each its own way). */
 const bladeGeometry = () => {
   const pos: number[] = [], k: number[] = [];
   const index: number[] = [];
   const seg = 3;
-  for (let b = 0; b < BLADES; b++) {
+  for (let b = 0; b < grassBlades.perSpot; b++) {
     const at = pos.length / 3;
     for (let i = 0; i < seg; i++) {
       // (full width low down, narrowing faster toward a point)

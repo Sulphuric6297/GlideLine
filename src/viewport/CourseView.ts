@@ -36,7 +36,7 @@ import { Forest, forestDetail, type TreeSpot, TREES_SEEN, TREES_SHADOW, woodsCro
 import { brushOnly } from "../lib/brushSpots";
 import { applyEdit, brushStroke, kindOf, levelOf, type BrushKind as PaintKind } from "../lib/areaBrush";
 import { foundAreas } from "../lib/undergrowth";
-import { GRASS, Grass, type GrassQuality } from "../three/grass";
+import { GRASS, Grass, grassBlades, type GrassQuality } from "../three/grass";
 import { Tufts } from "../three/tufts";
 import { setWaterSky, waterMaterial, waterUniforms } from "../three/water";
 import { addSurfaceDetail, layerOf, type SurfaceLayer } from "../three/groundDetail";
@@ -567,7 +567,7 @@ export class CourseView {
       try { asIf = localStorage.getItem("hyzerlab-gpu") === "1"; } catch { /* no storage */ }
       this.software = !asIf && /swiftshader|llvmpipe|software|basic render/i.test(name);
       // Without a graphics card, or on a phone, fewer trees in full detail
-      if (this.software) forestDetail.nearFt = 70;
+      if (this.software) { forestDetail.nearFt = 70; forestDetail.melt = false; grassBlades.perSpot = 1; }
       // (soft shadow edges: 32 looks a pixel, too many to do in software every frame)
       if (!this.software) softenShadows(this.mobile);
       else if (this.mobile) forestDetail.nearFt = 150;

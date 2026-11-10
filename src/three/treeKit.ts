@@ -530,7 +530,9 @@ export type TreeSpot = { x: number; y: number; ground: number; height: number; w
  * the middle ones out to `midOf(nearFt)`, the rest the far ones. `all`: every tree, bush and bit
  * of underbrush in its closest version however far off (a video recording: nothing changes as
  * the camera comes up to it). */
-export const forestDetail = { nearFt: 260, version: 0, all: false };
+export const forestDetail = { nearFt: 260, version: 0, all: false,
+  /** One version melting into the next (off without a graphics card: a tree in two versions at once is twice the work). */
+  melt: true };
 // (what a forest's camera sees, and the sun's shadow picture: worked out in these, kept to save
 // making them every time)
 const seeDir = new THREE.Vector3(), seeMatrix = new THREE.Matrix4(), seeFrustum = new THREE.Frustum(), seeBall = new THREE.Sphere();
@@ -711,7 +713,8 @@ export class Forest {
     // (one version melts into the next over a band past where it changes; a tree in a band is in
     // both, and a little more each side, for the way the eye goes before the trees are sorted again)
     const reach = Number.isFinite(this.maxFt) ? this.maxFt / (1 + LOD_BAND) : 0;
-    const bands = all ? [[0, 0], [0, 0], [0, 0]] : [[0, nearFt], [nearFt, midFt], [midFt, reach]];
+    const melt = forestDetail.melt && !all;
+    const bands = !melt ? [[0, 0], [0, 0], [0, 0]] : [[0, nearFt], [nearFt, midFt], [midFt, reach]];
     if (bands.some(([a, b], l) => this.lodNow[l][0] !== a || this.lodNow[l][1] !== b)) {
       this.lodNow = bands;
       for (const { at, level } of this.lod) {
@@ -751,7 +754,7 @@ export class Forest {
         drawn[i] = 1;
         for (let k = 0; k < 3; k++) {
           // (its own version, and the one it is melting into or out of)
-          if (k !== l && (all || !(k === 0 ? d2 < out1 : k === 1 ? d2 > in1 && d2 < out2 : d2 > in2))) continue;
+          if (k !== l && (!melt || !(k === 0 ? d2 < out1 : k === 1 ? d2 > in1 && d2 < out2 : d2 > in2))) continue;
           levels[k][0].setMatrixAt(n[k], mat);
           levels[k][1].setMatrixAt(n[k], mat);
           levels[k][1].setColorAt(n[k], set.tints[i]);
