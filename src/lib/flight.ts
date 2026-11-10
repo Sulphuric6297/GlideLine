@@ -1,5 +1,5 @@
 // Flyovers: the camera's path over a hole, flown by itself (from behind the tee, along the line of
-// play, up over the trees and down toward the basket) or through keyframes made by hand. Pure: the
+// play, under the trees like a drone, toward the basket) or through keyframes made by hand. Pure: the
 // map view draws the pictures, the Export step works out a video's length.
 import type { CourseDoc, FlyKey, FlyoverSettings, P } from "../types";
 import { pathLength, pointAlong } from "./geom";
@@ -52,8 +52,9 @@ export type Flight = { cam: Air[]; look: Air[]; fov: number[]; dur: number };
  * hang (from `base` to `top`, ft on the terrain's datum). */
 export type Crown = { x: number; y: number; r: number; base: number; top: number };
 /** What stands over a spot: the lowest foliage (ft, the terrain's datum: a building starts at the
- * ground), the highest top, the trunks close by, and (when known) each tree's crown. */
-export type Canopy = { base: number; top: number; trunks: P[]; crowns?: Crown[] };
+ * ground), the highest top, the trunks close by, (when known) each tree's crown, and how high
+ * anything built there stands (its roof, with room over it). */
+export type Canopy = { base: number; top: number; trunks: P[]; crowns?: Crown[]; built?: number };
 /** What stands over a point, within `reach` ft of it (null: open sky). */
 export type Obstacles = (p: P, reach: number) => Canopy | null;
 
@@ -66,19 +67,38 @@ const RATE = 30;
 /** How far it keeps from leaves (ft) and from trunks; how far it slips sideways round a crown it
  * can't pass under (more than that: over it). */
 const LEAVES = 5, TRUNKS = 7, AROUND = 15;
+/** Flying under the trees, as a drone does (the flights made by themselves): how far it keeps under
+ * the leaves, and how near the ground it goes to get under the lowest. */
+const UNDER_LEAVES = 3, LOWEST = 4;
 
 /** Where the camera must be in the air at a spot: no lower than `lo` (over a crown it can't pass
- * under, off the ground) and no higher than `hi` (under one it passes beneath), ft. */
-const limitsAt = (p: P, g: number, z: number, alt: number, obstacles: Obstacles) => {
+ * under, off the ground) and no higher than `hi` (under one it passes beneath), ft. `under`: never
+ * over a tree, only over what's built; under the leaves, down to 4 ft off the ground when they
+ * hang low (through the lowest of them, slipped round first where it can be). */
+const limitsAt = (p: P, g: number, z: number, alt: number, obstacles: Obstacles, under = false) => {
   let lo = g + Math.min(4, alt), hi = Infinity, above = -Infinity;
   const c = obstacles(p, 4);
+  if (under) {
+    // (`through`: leaves hanging lower than it can get under)
+    let through = false;
+    if (c?.built !== undefined && z < c.built) lo = Math.max(lo, c.built);
+    // (each crown, or where only how high they stand is known, all of them as one)
+    const crowns = c ? c.crowns ?? (Number.isFinite(c.base) ? [{ x: p.x, y: p.y, r: 0, base: c.base, top: c.top }] : []) : [];
+    for (const k of crowns) if (Math.hypot(p.x - k.x, p.y - k.y) < k.r + 4 && z + UNDER_LEAVES > k.base && z - UNDER_LEAVES < k.top) {
+      if (k.base - UNDER_LEAVES < g + LOWEST) through = true;
+      hi = Math.min(hi, Math.max(g + LOWEST, k.base - UNDER_LEAVES));
+    }
+    // (what's built wins: over a roof, whatever leaves hang there)
+    if (hi < lo) hi = lo;
+    return { lo, hi, above, through };
+  }
   if (c && z + LEAVES > c.base && z - LEAVES < c.top) {
     // (`above`: how high it must be to go over them instead)
     above = c.top + LEAVES + 3;
     if (c.base - LEAVES >= g + 6) hi = c.base - LEAVES;
     else lo = Math.max(lo, above);
   }
-  return { lo, hi, above };
+  return { lo, hi, above, through: false };
 };
 
 /** How steeply it climbs or comes down round what's in the way (ft up per ft along), and how
@@ -119,21 +139,24 @@ const swerve = (need: number[], ds: number[], slope: number, least: number, w: n
  * as deep as needed), over the ones it can't and never nearer the ground than 4 ft: climbing and
  * coming down in good time round each in smooth curves, then back to its height.
  */
-const holdHeights = (spots: P[], alt: number[], rate: number, ground: (x: number, y: number) => number, obstacles: Obstacles) => {
+const holdHeights = (spots: P[], alt: number[], rate: number, ground: (x: number, y: number) => number, obstacles: Obstacles, under = false) => {
   const g = spots.map(p => ground(p.x, p.y));
   const ds = steps(spots);
   const step = Math.max(0.5, ds.reduce((a, b) => a + b, 0) / Math.max(1, spots.length - 1));
-  const want = smoothEnds(g, Math.max(1, Math.round(8 / step)), 3).map((v, i) => v + alt[i]);
-  const lim = spots.map((p, i) => limitsAt(p, g[i], want[i], alt[i], obstacles));
+  // (under the trees: the ground smoothed over longer, a drone's steady glide over its rises and
+  // dips, never nearer it than 4 ft)
+  const want = smoothEnds(g, Math.max(1, Math.round((under ? 30 : 8) / step)), 3).map((v, i) => v + alt[i]);
+  const lim = spots.map((p, i) => limitsAt(p, g[i], want[i], alt[i], obstacles, under));
   const w = Math.max(1, Math.round(EASE * rate)), least = 6 / rate;
   const over = (i: number, above = lim[i].above) => {
     lim[i] = { lo: Math.max(lim[i].lo, above), hi: Infinity, above: Math.max(lim[i].above, above) };
   };
   let z = want;
-  for (let round = 0; round < 12; round++) {
+  for (let round = 0; round < (under ? 1 : 12); round++) {
     const up = swerve(lim.map((l, i) => l.lo - want[i]), ds, CLIMB, least, w);
     const down = swerve(lim.map((l, i) => want[i] - l.hi), ds, CLIMB, least, w);
     z = want.map((v, i) => v + up[i] - down[i]);
+    if (under) break;
     let changed = false;
     lim.forEach((l, i) => {
       // Where it climbs anyway it goes over the crowns there too, rather than dropping under them
@@ -167,12 +190,12 @@ const holdHeights = (spots: P[], alt: number[], rate: number, ground: (x: number
 /** The camera's way and heights: straight on, or slipped aside round what's in the way, whichever
  * keeps nearer its height over the ground all along (ducking under a crown, say, rather than
  * slipping aside into others it would have to climb over). */
-const flyAlong = (spots: P[], alt: number[], rate: number, ground: (x: number, y: number) => number, obstacles: Obstacles) => {
+const flyAlong = (spots: P[], alt: number[], rate: number, ground: (x: number, y: number) => number, obstacles: Obstacles, under = false) => {
   const off = (way: P[], z: number[]) => way.reduce((t, p, i) => t + Math.abs(z[i] - ground(p.x, p.y) - alt[i]), 0);
-  const straight = { way: spots, z: holdHeights(spots, alt, rate, ground, obstacles) };
-  const moved = slipAside(spots, alt, rate, ground, obstacles);
+  const straight = { way: spots, z: holdHeights(spots, alt, rate, ground, obstacles, under) };
+  const moved = slipAside(spots, alt, rate, ground, obstacles, under);
   if (moved === spots) return straight;
-  const aside = { way: moved, z: holdHeights(moved, alt, rate, ground, obstacles) };
+  const aside = { way: moved, z: holdHeights(moved, alt, rate, ground, obstacles, under) };
   return off(aside.way, aside.z) <= off(straight.way, straight.z) ? aside : straight;
 };
 
@@ -182,7 +205,7 @@ const flyAlong = (spots: P[], alt: number[], rate: number, ground: (x: number, y
  * and trunks of the trees it passes beneath. Aside in good time, as far as each needs, easing back
  * after, in smooth curves. Where there's no way round it stays put (to go under or over).
  */
-const slipAside = (spots: P[], alt: number[], rate: number, ground: (x: number, y: number) => number, obstacles: Obstacles): P[] => {
+const slipAside = (spots: P[], alt: number[], rate: number, ground: (x: number, y: number) => number, obstacles: Obstacles, under = false): P[] => {
   const w = Math.max(1, Math.round(EASE * rate)), least = 3 / rate;
   // (right of the way it flies, turning smoothly with it)
   const nrm = spots.map((_, i) => {
@@ -224,7 +247,7 @@ const slipAside = (spots: P[], alt: number[], rate: number, ground: (x: number, 
   // keeps its way there, to duck under what it slipped round)
   const over = (p: P, i: number) => {
     const g = ground(p.x, p.y);
-    return limitsAt(p, g, g + alt[i], alt[i], obstacles).lo > g + alt[i] + 1e-6;
+    return limitsAt(p, g, g + alt[i], alt[i], obstacles, under).lo > g + alt[i] + 1e-6;
   };
   const was = spots.map(over);
   for (let round = 0; round < 12; round++) {
@@ -277,8 +300,9 @@ const finish = (cam: Air[], look: Air[], fov: number[], dur: number, rate: numbe
  * The flight over a hole by itself, a low cinematic glide along its (smoothed) line of play, down
  * the fairway between the trees: from `behind` ft behind the tee, `side` ft off the line, `height`
  * ft over the ground the whole way, looking `lookAhead` ft down the hole, then (turning gently) at
- * the basket. A crown in its way it slips round (15 ft aside at most), else ducks under when there
- * is room, else rises over; it eases round trunks; all in smooth curves, back to its height after.
+ * the basket, like a drone: never over the trees, only over what's built. A crown in its way it
+ * slips round (15 ft aside at most), else ducks under it (down to 4 ft off the ground); it eases
+ * round trunks; all in smooth curves, back to its height after.
  */
 export const autoFlight = (line: P[], set: FlyoverSettings, ground: (x: number, y: number) => number, obstacles: Obstacles = () => null): Flight | null => {
   if (line.length < 2) return null;
@@ -290,13 +314,14 @@ export const autoFlight = (line: P[], set: FlyoverSettings, ground: (x: number, 
   const back = (d: number) => {
     const p = { x: start.x + Math.cos(a0) * d - Math.sin(a0) * set.side, y: start.y + Math.sin(a0) * d + Math.cos(a0) * set.side };
     const g = ground(p.x, p.y);
-    return { p, g, ...limitsAt(p, g, g + H, H, obstacles) };
+    return { p, g, ...limitsAt(p, g, g + H, H, obstacles, true) };
   };
-  // From behind the tee, unless trees stand there it can't pass under: then from just past them
+  // From behind the tee, unless something built stands there or leaves hang too low to get
+  // under: then from just past them
   let behind = Math.max(0, set.behind);
   for (let d = -behind; d < 0; d += 8) {
     const b = back(d);
-    if (b.lo > b.g + H + 1e-6) behind = Math.max(0, -d - 8);
+    if (b.lo > b.g + H + 1e-6 || b.through) behind = Math.max(0, -d - 8);
   }
   const dur = autoSeconds(len, set);
   const n = Math.max(60, Math.ceil(dur * RATE));
@@ -323,7 +348,7 @@ export const autoFlight = (line: P[], set: FlyoverSettings, ground: (x: number, 
   // (the line's corners rounded off)
   const sw = Math.max(1, Math.round(0.1 * RATE)), sx = smoothEnds(spots.map(p => p.x), sw, 3), sy = smoothEnds(spots.map(p => p.y), sw, 3);
   // Round what's in the way, then the height over the ground there
-  const { way, z } = flyAlong(spots.map((_, i) => ({ x: sx[i], y: sy[i] })), spots.map(() => H), n / dur, ground, obstacles);
+  const { way, z } = flyAlong(spots.map((_, i) => ({ x: sx[i], y: sy[i] })), spots.map(() => H), n / dur, ground, obstacles, true);
   const cam: Air[] = way.map((p, i) => ({ ...p, z: z[i] }));
   // (and what it looks at rises and falls gently with the ground)
   const lz = smoothEnds(look.map(l => l.z), Math.max(2, Math.round(Math.max(40, len * 0.1) / Math.max(1, step))), 3);

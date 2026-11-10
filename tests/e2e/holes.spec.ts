@@ -23,8 +23,9 @@ test("a new hole: click the tee, then the basket; length and par show live", asy
   await expect(page.getByTestId("hole-row")).toHaveCount(1);
   await expect(page.getByTestId("hole-row")).toContainText("300 ft");
   await expect(page.getByTestId("hole-row")).toContainText("Par 3");
-  // The tool stays on for the next hole
-  expect((await editorState(page)).tool).toBe("add-hole");
+  // Back to Select, the new hole picked
+  expect((await editorState(page)).tool).toBe("select");
+  expect((await editorState(page)).selectedId).toBe(doc.holes[0].id);
 });
 
 test("long holes get par 4 and 5 by the PDGA's effective length", async ({ page }) => {

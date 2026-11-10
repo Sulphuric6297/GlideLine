@@ -627,7 +627,7 @@ test("the camera moved by hand in the Flyover editor: the keys move it, a drag t
   expect((await editorState(page)).selectedId).toBe(hole.id);
 });
 
-plain("the flight by itself: a low glide from behind the tee, under a crown over the line, round its trunk, over a bush, never bobbing (pure logic)", () => {
+plain("the flight by itself: a low glide from behind the tee, under a crown over the line, round its trunk, low through a bush and never over it, never bobbing (pure logic)", () => {
   const line = [{ x: 0, y: 0 }, { x: 400, y: 0 }];
   const flat = () => 100;
   const open = autoFlight(line, FLYOVER_DEFAULTS, flat)!;
@@ -646,10 +646,11 @@ plain("the flight by itself: a low glide from behind the tee, under a crown over
   };
   const glide = autoFlight(line, FLYOVER_DEFAULTS, flat, trees)!;
   // Under the big tree's leaves, and off to the side of its trunk
-  for (const c of glide.cam) if (Math.hypot(c.x - 200, c.y) < 26) plainExpect(c.z).toBeLessThanOrEqual(130 - 5 + 1e-6);
+  for (const c of glide.cam) if (Math.hypot(c.x - 200, c.y) < 26) plainExpect(c.z).toBeLessThanOrEqual(130 - 3 + 1e-6);
   plainExpect(Math.min(...glide.cam.map(c => Math.hypot(c.x - 200, c.y)))).toBeGreaterThan(4);
-  // Over the bush (too low to pass under)
-  plainExpect(at(glide, 340).z).toBeGreaterThan(125);
+  // Never over a tree: low through the bush (too low to pass under), 4 ft off the ground
+  plainExpect(at(glide, 340).z).toBeLessThanOrEqual(104 + 1e-6);
+  for (const c of glide.cam) plainExpect(c.z).toBeLessThanOrEqual(110 + 1e-6);
   // Never a sudden hop: at most half a foot up or down per foot along
   for (let i = 1; i < glide.cam.length; i++) plainExpect(Math.abs(glide.cam[i].z - glide.cam[i - 1].z)).toBeLessThanOrEqual(Math.hypot(glide.cam[i].x - glide.cam[i - 1].x, glide.cam[i].y - glide.cam[i - 1].y) * 0.5 + 1e-6);
   // To the right of the line (south, flying east), and twice as fast
@@ -695,7 +696,7 @@ test("woods with few corners stand where their curve bulges past the corners (fl
   expect(await top(200)).toBeNull();
 });
 
-plain("the flight round the trees standing there: at its height through woods, aside round a pine on the line, a little under a low crown, over a wall it can't get round, from past trees behind the tee (pure logic)", () => {
+plain("the flight round the trees standing there: at its height through woods, aside round a pine on the line, a little under a low crown, low under a wall of trees it can't get round (never over one), over a building, from past trees behind the tee (pure logic)", () => {
   const line = [{ x: 0, y: 0 }, { x: 600, y: 0 }];
   const flat = () => 0;
   type C = { x: number; y: number; r: number; base: number; top: number };
@@ -724,15 +725,22 @@ plain("the flight round the trees standing there: at its height through woods, a
   // A broad crown hanging low over the line: just under its leaves, then back to its height
   const low = autoFlight(line, FLYOVER_DEFAULTS, flat, standing([{ x: 200, y: 0, r: 20, base: 13, top: 60 }]))!;
   const by = (f: typeof low, x: number) => f.cam.reduce((a, c) => (Math.abs(c.x - x) < Math.abs(a.x - x) ? c : a));
-  plainExpect(by(low, 200).z).toBeLessThanOrEqual(8 + 1e-6);
+  plainExpect(by(low, 200).z).toBeLessThanOrEqual(10 + 1e-6);
   plainExpect(Math.abs(by(low, 300).z - 10)).toBeLessThan(0.3);
-  // A wall of pines across the line, wider than it can go round: over it, and down again after
+  // A wall of pines across the line, wider than it can go round: never over it, low through it
+  // (4 ft off the ground), and back to its height after
   const wall: C[] = [];
   for (let y = -80; y <= 80; y += 12) wall.push({ x: 320, y, r: 8, base: 3, top: 40 });
-  const over = autoFlight(line, FLYOVER_DEFAULTS, flat, standing(wall))!;
-  plainExpect(by(over, 320).z).toBeGreaterThanOrEqual(48 - 1e-6);
-  plainExpect(Math.abs(over.cam[0].z - 10)).toBeLessThan(0.3);
-  plainExpect(Math.abs(over.cam[over.cam.length - 1].z - 10)).toBeLessThan(0.3);
+  const under = autoFlight(line, FLYOVER_DEFAULTS, flat, standing(wall))!;
+  for (const c of under.cam) plainExpect(c.z).toBeLessThanOrEqual(10 + 1e-6);
+  plainExpect(by(under, 320).z).toBeLessThanOrEqual(4 + 1e-6);
+  plainExpect(Math.abs(under.cam[0].z - 10)).toBeLessThan(0.3);
+  plainExpect(Math.abs(under.cam[under.cam.length - 1].z - 10)).toBeLessThan(0.3);
+  // A building on the line: over its roof (the one thing it climbs over), down again after
+  const shed = (p: { x: number; y: number }) => (Math.abs(p.x - 300) < 20 && Math.abs(p.y) < 30 ? { base: 0, top: 22, trunks: [], crowns: [], built: 22 } : null);
+  const roof = autoFlight(line, FLYOVER_DEFAULTS, flat, shed)!;
+  plainExpect(by(roof, 300).z).toBeGreaterThanOrEqual(22 - 1e-6);
+  plainExpect(Math.abs(roof.cam[roof.cam.length - 1].z - 10)).toBeLessThan(0.3);
   // Pines just behind the tee: it starts past them, at its height
   const behind = autoFlight(line, FLYOVER_DEFAULTS, flat, standing([{ x: -40, y: 0, r: 8, base: 3, top: 40 }, { x: -40, y: 14, r: 8, base: 3, top: 40 }, { x: -40, y: -14, r: 8, base: 3, top: 40 }]))!;
   plainExpect(behind.cam[0].x).toBeGreaterThan(-40 + 8);
