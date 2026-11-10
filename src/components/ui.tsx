@@ -124,7 +124,14 @@ export function HelpLink({ topic, label }: { topic: string; label: string }) {
     if (at) return setAt(null);
     const r = btn.current!.getBoundingClientRect();
     // (under the ?, or over it where there's no room under it: down by a phone's tool bar, say)
-    const x = Math.max(8, Math.min(r.left - 12, window.innerWidth - 300));
+    // (kept whole inside whatever would cut it off: a panel's edge, a rounded box in it)
+    let lo = 8, hi = window.innerWidth - 12;
+    for (let e = btn.current!.parentElement; e; e = e.parentElement) {
+      if (getComputedStyle(e).overflowX === "visible") continue;
+      const b = e.getBoundingClientRect();
+      lo = Math.max(lo, b.left + 4); hi = Math.min(hi, b.right - 4);
+    }
+    const x = Math.max(lo, Math.min(r.left - 12, hi - 288));
     setAt(r.bottom + 240 > window.innerHeight && r.top > 240 ? { x, above: window.innerHeight - r.top + 6 } : { x, y: Math.min(r.bottom + 6, window.innerHeight - 220) });
   };
   // (its first paragraph: the tip; the rest is in the guide)
