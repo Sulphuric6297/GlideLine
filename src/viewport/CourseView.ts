@@ -2693,6 +2693,19 @@ export class CourseView {
     // What grows where: painted again when the course changed (at most a few times a second
     // while something is dragged)
     const key = [doc.course.items, doc.stats, doc.groundPaint, doc.course.style, doc.groundColor, doc.canvas, doc.course.holes];
+    if (key.some((k, i) => (this.grassInputs[i] ?? null) !== k)) {
+      const now = performance.now();
+      if (now - this.grassBuilt > 300 || !this.grassInputs.length) {
+        this.grassInputs = key;
+        this.grassBuilt = now;
+        const maps = grassMaps(doc);
+        if (maps) this.grass.setMaps(maps);
+      } else {
+        clearTimeout(this.grassTimer);
+        this.grassTimer = window.setTimeout(() => this.invalidate(), 320);
+      }
+    }
+    // (the ground paints itself from the maps as they are now, in this same picture)
     const gm = this.grass.maps, gd = this.ground.detail;
     if (gm && gd.growMap.value !== gm.field) {
       gd.growMap.value = gm.field;
@@ -2700,18 +2713,6 @@ export class CourseView {
       gd.growRect.value.copy(gm.rect);
     }
     gd.growOn.value = grown && gm ? 1 : 0;
-    if (key.some((k, i) => (this.grassInputs[i] ?? null) !== k)) {
-      const now = performance.now();
-      if (now - this.grassBuilt > 300 || !this.grassInputs.length) {
-        this.grassInputs = key;
-        this.grassBuilt = now;
-        const maps = grassMaps(doc);
-        if (maps) { this.grass.setMaps(maps); this.invalidate(); }
-      } else {
-        clearTimeout(this.grassTimer);
-        this.grassTimer = window.setTimeout(() => this.invalidate(), 320);
-      }
-    }
     if (!on || !q) {
       this.grass.group.visible = false;
       this.tufts.group.visible = false;
