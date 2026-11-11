@@ -191,3 +191,37 @@ export const drapedRibbon = (pts: P[], width: number | ((t: number) => number), 
   }
   return geo;
 };
+
+/**
+ * Draped polygons kept, by what shapes them (outline, the ground's heights, lift, soft edge): a
+ * thing made again because only its look changed (the photo off, standing on the course) takes
+ * the geometry it had, not a new one cut along the ground from scratch. The geometries are shared
+ * (never freed with a mesh): `sweep` frees those no mesh uses any more.
+ */
+export class DrapeCache {
+  private kept = new Map<string, THREE.BufferGeometry>();
+  private static key(pts: P[]) {
+    let k = "";
+    for (const p of pts) k += `${Math.round(p.x * 50)},${Math.round(p.y * 50)} `;
+    return k;
+  }
+  /** `ground`: what stands for the ground's heights now (a number that changes when they do). */
+  get(outline: P[], groundAt: (x: number, y: number) => number, ground: number, grid: number, lift: number, edges?: P[][], feather = 8) {
+    const key = `${ground}|${grid}|${lift}|${edges ? feather : 0}|${DrapeCache.key(outline)}|${edges ? edges.map(DrapeCache.key).join(";") : ""}`;
+    let geo = this.kept.get(key);
+    if (!geo) {
+      geo = drapedPolygon(outline, groundAt, grid, lift, edges, feather);
+      geo.userData.shared = true;
+      this.kept.set(key, geo);
+    }
+    return geo;
+  }
+  /** Frees every kept geometry `used` doesn't hold. */
+  sweep(used: Set<THREE.BufferGeometry>) {
+    for (const [key, geo] of this.kept) if (!used.has(geo)) { geo.dispose(); this.kept.delete(key); }
+  }
+  clear() {
+    for (const geo of this.kept.values()) geo.dispose();
+    this.kept.clear();
+  }
+}
