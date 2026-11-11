@@ -470,9 +470,22 @@ const materialFor = (kind: "bark" | "leaves", fromOf: () => THREE.MeshPhongMater
         float greenish = ltD / max( ltMax, 1e-4 ) < 0.03 ? 1.0 : smoothstep( 0.19, 0.28, ltHue ) * ( 1.0 - smoothstep( 0.6, 0.7, ltHue ) );
         vec3 leafPhoto = diffuseColor.rgb / max( diffuse, vec3( 1e-3 ) );
         float leafLum = dot( leafPhoto, vec3( 0.299, 0.587, 0.114 ) );
-        diffuseColor.rgb = mix( leafLum * 3.0 * leafTint, leafPhoto * leafTint, greenish );`);
+        diffuseColor.rgb = mix( leafLum * 3.0 * leafTint, leafPhoto * leafTint, greenish );`)
+        // A leaf's cut-out keeps its cover far off: the smaller copies of the picture the card
+        // reads there average each leaf's edge away, till most of it falls under the cut and the
+        // crown goes bare. Its cover is raised by how small a copy is being read.
+        .replace("#include <alphatest_fragment>", /* glsl */ `
+        #ifdef USE_MAP
+        {
+          vec2 lts = vec2( textureSize( map, 0 ) );
+          vec2 ldx = dFdx( vMapUv * lts ), ldy = dFdy( vMapUv * lts );
+          float llod = max( 0.0, 0.5 * log2( max( dot( ldx, ldx ), dot( ldy, ldy ) ) ) );
+          diffuseColor.a = min( 1.0, diffuseColor.a * ( 1.0 + max( 0.0, llod - 1.0 ) * 0.3 ) );
+        }
+        #endif
+        #include <alphatest_fragment>`);
     };
-    m.customProgramCacheKey = () => "ez-leaves";
+    m.customProgramCacheKey = () => "ez-leaves-cover";
   }
   withNearFade(m);
   m.userData.shared = true;
