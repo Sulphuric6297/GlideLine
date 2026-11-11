@@ -688,18 +688,6 @@ test("every source at once, each saying how it went; Stop lets go of all of it a
   plainExpect(s.photoTrees.state).toBe("done");
   plainExpect(s.photoTrees.count).toBeGreaterThan(0);
   await expect(page.getByTestId("import-status")).toContainText("OpenStreetMap");
-  // The survey over the map: the frame set, a sweep for each source in a color of its own, those in landed
-  await expect(page.getByTestId("import-survey")).toBeVisible();
-  const survey = await page.evaluate(() => (window as any).__dgSurvey);
-  plainExpect(survey.on).toBe(true);
-  plainExpect(survey.framed).toBe(true);
-  plainExpect([survey.sources.photo.landed, survey.sources.elevation.landed, survey.sources.osm.landed]).toEqual([true, true, false]);
-  const colors = Object.values(survey.sources).map((v: any) => v.color);
-  plainExpect(new Set(colors).size).toBe(colors.length);
-  // (the frame's own handles and size step aside for it; each row says how its source is going)
-  await expect(page.locator(".site-handle").first()).toBeHidden();
-  await expect(page.getByTestId("import-row-osm")).toHaveAttribute("data-state", "coming");
-  await expect(page.getByTestId("import-row-photo")).toHaveAttribute("data-state", "done");
   // Stop (asked first): the dialog goes, nothing is kept
   await page.keyboard.press("Escape");
   await page.getByTestId("import-stop-yes").click();

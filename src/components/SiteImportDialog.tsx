@@ -2,9 +2,8 @@
 // the park framed by its own outline, what this spot will bring (each a switch, with where it
 // comes from), then the map filling in as each part lands, with a checklist of how each went.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Droplets, Flag, Home, Image as ImageIcon, Loader2, MapPin, Mountain, Pencil, Route, Search, Sun, Target, TreeDeciduous, Trees, X, type LucideIcon } from "lucide-react";
+import { Check, Droplets, Flag, Image as ImageIcon, Loader2, MapPin, Mountain, Pencil, Route, Search, Target, TreeDeciduous, Trees, X } from "lucide-react";
 import { SitePickerMap, type Arrived } from "./SitePickerMap";
-import { SURVEY_COLORS, type ImportSurvey, type SurveyShape } from "./ImportSurvey";
 import { fetchPlaceSuggestions, resolveSiteLocation, type PlaceSuggestion } from "../lib/geo/geocode";
 import { SITE_MAX_WIDTH_FT, SITE_MIN_WIDTH_FT, getGeoBounds, selectionFromBounds, type GeoBounds } from "../lib/geo/core";
 import type { MapImagerySource } from "../lib/geo/imagery";
@@ -67,7 +66,6 @@ const frameAround = (b: GeoBounds): GeoBounds => {
 
 const ROW_NAMES: Record<SourceId, string> = { photo: "Photo", elevation: "Ground", lidar: "Measured trees", osm: "Paths, roads and more", buildings: "Buildings from the air", photoTrees: "Trees from the photo", gov: "Creeks, wetlands and buildings", seasons: "Seasons from space" };
 const ORDER: SourceId[] = ["photo", "elevation", "lidar", "osm", "buildings", "photoTrees", "seasons"];
-const ROW_ICONS: Record<SourceId, LucideIcon> = { photo: ImageIcon, elevation: Mountain, lidar: Trees, osm: Route, buildings: Home, photoTrees: TreeDeciduous, gov: Droplets, seasons: Sun };
 
 /** The brush's levels on the map: light, medium, heavy. */
 const BRUSH_COLOR = ["", "#fde68a", "#f59e0b", "#b45309"];
@@ -292,25 +290,20 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
 
   // What has come in, put on the map as it lands
   const landed = useRef<Arrived | null>(null);
-  /** The survey over the map while it comes in: each source's sweep draws what it found. */
-  const sweeps = useRef<ImportSurvey | null>(null);
   const onLayer = (l: ImportLayer) => {
-    if (l.source === "frame") { landed.current = { bounds: l.bounds, width: l.canvas.width, height: l.canvas.height, areas: [], lines: [], trees: [] }; sweeps.current?.setFrame(l.bounds, l.canvas.width, l.canvas.height, l.gridSize); }
+    if (l.source === "frame") { landed.current = { bounds: l.bounds, width: l.canvas.width, height: l.canvas.height, areas: [], lines: [], trees: [] }; }
     const a = landed.current;
     if (!a) return;
     if (l.source === "photo") a.photo = l.background;
     const items = l.source === "osm" || l.source === "buildings" ? l.items : l.source === "photoTrees" ? [...l.areas, ...l.trees] : [];
-    const shapes: SurveyShape[] = [], dots: [number, number, number][] = [];
     for (const i of items) {
       const how = drawnAs(i);
-      if (how.area && "points" in i) { a.areas.push({ points: i.points, color: how.area, opacity: how.area === "#2f5d34" ? 0.45 : 0.6 }); shapes.push({ points: i.points, color: how.area, fill: how.area === "#2f5d34" ? 0.35 : 0.5 }); }
-      else if (how.line && "points" in i) { a.lines.push({ points: i.points, color: how.line, weight: how.weight }); shapes.push({ points: i.points, color: how.line, weight: how.weight }); }
-      else if (i.type === "tree") { a.trees.push({ x: i.x, y: i.y, r: (i.width ?? 20) / 2 }); dots.push([i.x, i.y, (i.width ?? 20) / 2]); }
+      if (how.area && "points" in i) a.areas.push({ points: i.points, color: how.area, opacity: how.area === "#2f5d34" ? 0.45 : 0.6 });
+      else if (how.line && "points" in i) a.lines.push({ points: i.points, color: how.line, weight: how.weight });
+      else if (i.type === "tree") a.trees.push({ x: i.x, y: i.y, r: (i.width ?? 20) / 2 });
     }
     // (measured trees: a few thousand at most, so the map stays quick)
-    if (l.source === "lidar") { const step = Math.max(1, Math.ceil(l.trees.length / 4000)); for (let k = 0; k < l.trees.length; k += step) { a.trees.push({ x: l.trees[k][0], y: l.trees[k][1], r: l.trees[k][3] }); dots.push([l.trees[k][0], l.trees[k][1], l.trees[k][3]]); } }
-    if (l.source === "elevation") sweeps.current?.land("elevation", { heights: l.terrainHeights });
-    else if (l.source !== "frame" && l.source !== "photo") sweeps.current?.land(l.source, { shapes, trees: dots.length ? dots : undefined });
+    if (l.source === "lidar") { const step = Math.max(1, Math.ceil(l.trees.length / 4000)); for (let k = 0; k < l.trees.length; k += step) a.trees.push({ x: l.trees[k][0], y: l.trees[k][1], r: l.trees[k][3] }); }
     setArrived({ ...a });
   };
 
@@ -358,14 +351,11 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
     landed.current = null;
     setArrived(null);
     setStatus({ state: "loading", text: "Starting…" });
-    sweeps.current?.start();
     try {
       const site = await importSite(selectionFromBounds(turnedBox(selection, angle), label), { imagery, trees, surveyed: !!survey, osm, lidar, summerFill: fill, gov, photo: photoId, signal: stop.signal, onLayer, onProgress: p => {
         (window as { __dgImportProgress?: unknown }).__dgImportProgress = p;
-        if (!stop.signal.aborted) { setStatus({ state: "loading", text: p.text, progress: { fraction: p.fraction } }); setSources({ ...p.sources }); sweeps.current?.status(p.sources, p.fraction); }
+        if (!stop.signal.aborted) { setStatus({ state: "loading", text: p.text, progress: { fraction: p.fraction } }); setSources({ ...p.sources }); }
       } });
-      // (the passes still crossing finish drawing what they found: a moment at most)
-      if (open.current && !stop.signal.aborted) await sweeps.current?.settled();
       // (all in: looked at first, each source on or off, before any of it comes into the course)
       if (open.current && !stop.signal.aborted) {
         const counts = sourceCounts(site);
@@ -381,7 +371,6 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
     } finally {
       importing = false;
       running.current = false;
-      sweeps.current?.stop();
       if (stopper.current === stop) stopper.current = null;
     }
   };
@@ -462,12 +451,12 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   // The checklist while it comes in
   const secs = loading && started ? Math.floor((Date.now() - started) / 1000) : 0;
   const fraction = status.progress?.fraction ?? 0;
-  const ring = (size: number, said = true) => {
-    const r = size / 2 - 4, c = 2 * Math.PI * r, sw = size > 40 ? 4.5 : 3.5;
+  const ring = (size: number) => {
+    const r = size / 2 - 4, c = 2 * Math.PI * r;
     return (
       <div className="relative shrink-0" style={{ width: size, height: size }} role="progressbar" aria-label="Import progress" aria-valuenow={Math.round(fraction * 100)}>
-        <svg width={size} height={size} className="-rotate-90"><circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,.12)" strokeWidth={sw} /><circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#a2cf6a" strokeWidth={sw} strokeLinecap="round" strokeDasharray={`${c * fraction} ${c}`} className="transition-[stroke-dasharray] duration-500" /></svg>
-        {said && <span className="absolute inset-0 grid place-items-center text-[12px] font-bold">{Math.round(fraction * 100)}%</span>}
+        <svg width={size} height={size} className="-rotate-90"><circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,.12)" strokeWidth={4.5} /><circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#a2cf6a" strokeWidth={4.5} strokeLinecap="round" strokeDasharray={`${c * fraction} ${c}`} className="transition-[stroke-dasharray] duration-500" /></svg>
+        <span className="absolute inset-0 grid place-items-center text-[12px] font-bold">{Math.round(fraction * 100)}%</span>
       </div>
     );
   };
@@ -478,60 +467,32 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
     if (s.state === "coming" && s.count) return s.count.toLocaleString();
     return "";
   };
-  const elapsed = <span className="tabular-nums" data-testid="import-elapsed">· {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, "0")}</span>;
-  const rows = ORDER.filter(id => sources[id]).map(id => ({ id, s: sources[id]!, c: SURVEY_COLORS[id], Icon: ROW_ICONS[id] }));
-  // Each source a row in its sweep's color: lit while it comes, its count as it's known
   const checklist = (
     <div data-testid="import-status">
-      <div className="flex items-center gap-3 mb-1.5">
-        {ring(50)}
+      <div className="flex items-center gap-3 mb-1">
+        {ring(phone ? 42 : 50)}
         <div className="min-w-0">
           <div className="font-semibold text-[15px] text-zinc-50 truncate">{placeName ? `Bringing in ${placeName}` : "Bringing in the site"}</div>
-          <div className="text-[12.5px] text-zinc-400 truncate">{status.text} {elapsed}</div>
+          <div className="text-[12.5px] text-zinc-400 truncate">{status.text} <span className="tabular-nums" data-testid="import-elapsed">· {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, "0")}</span></div>
         </div>
       </div>
-      {rows.map(({ id, s, c, Icon }) => {
-        const done = s.state === "done", on = s.state === "coming", miss = s.state === "not-here" || s.state === "failed";
+      {ORDER.filter(id => sources[id]).map(id => {
+        const s = sources[id]!;
+        const done = s.state === "done", miss = s.state === "not-here" || s.state === "failed";
         return (
-          <div key={id} className={`relative flex items-center gap-3 py-[7px] px-2 -mx-2 rounded-[12px] text-[13.5px] ${on ? "bg-white/[0.07]" : ""}`} data-testid={`import-row-${id}`} data-state={s.state}>
-            <span className="w-[26px] h-[26px] rounded-[9px] grid place-items-center shrink-0" style={done || on ? { background: `${c}38`, color: c, boxShadow: on ? `0 0 0 1.5px ${c}8c, 0 0 14px ${c}73` : undefined } : { background: "rgba(255,255,255,.06)", color: "#71717a" }}>
-              {done ? <Check size={14} strokeWidth={3} /> : <Icon size={15} />}
+          <div key={id} className="flex items-center gap-3 py-[7px] text-[13.5px]" data-testid={`import-row-${id}`}>
+            <span className={`w-[22px] h-[22px] rounded-full grid place-items-center shrink-0 ${done ? "bg-[#a2cf6a] text-zinc-950" : miss ? "ring-[1.5px] ring-zinc-600" : "ring-2 ring-[#a2cf6a]/25"}`}>
+              {done ? <Check size={13} strokeWidth={3} /> : s.state === "coming" ? <Loader2 size={14} className="animate-spin text-[#a2cf6a]" /> : null}
             </span>
             <span className="min-w-0 flex-1">
-              <span className={miss || s.state === "waiting" ? "text-zinc-400" : "text-zinc-50"}>{ROW_NAMES[id]}</span>
+              <span className={miss ? "text-zinc-400" : "text-zinc-50"}>{ROW_NAMES[id]}</span>
               {(s.source || s.detail) && <span className="block text-[11.5px] text-zinc-500 truncate">{[s.source, s.detail].filter(Boolean).join(" · ")}</span>}
             </span>
-            <span className={`text-[13px] tabular-nums ${on ? "font-semibold" : "text-zinc-400"}`} style={on ? { color: c } : undefined}>{rowValue(s)}</span>
-            {on && <span className="absolute left-[46px] right-2 bottom-[2px] h-[2px] rounded-full bg-white/10 overflow-hidden"><span className={`block h-full rounded-full ${s.fraction === undefined ? "dg-survey-busy" : "transition-[width] duration-300"}`} style={{ width: s.fraction === undefined ? "38%" : `${Math.round(s.fraction * 100)}%`, background: c }} /></span>}
+            <span className={`text-[13px] tabular-nums ${s.state === "coming" ? "text-[#a2cf6a] font-semibold" : "text-zinc-400"}`}>{rowValue(s)}</span>
           </div>
         );
       })}
       <div className="flex justify-end mt-1.5"><button className="h-9 touch:h-11 px-4 rounded-full bg-white/[0.08] hover:bg-white/[0.12] text-[13px] font-semibold text-zinc-200" onClick={() => setStopping(true)} data-testid="import-stop-ask">Stop</button></div>
-    </div>
-  );
-  // A phone: the map keeps the screen; a glass bar says what's coming, each source a lit disc
-  const nowRow = [...rows].reverse().find(r => r.s.state === "coming");
-  const phoneBar = (
-    <div className="absolute left-2.5 right-2.5 bottom-[max(14px,env(safe-area-inset-bottom))] z-[1100] flex flex-col items-center gap-2" data-testid="import-status">
-      <div className="glass rounded-full pl-1.5 pr-3.5 py-1.5 flex items-center gap-2 text-[13.5px] font-semibold text-zinc-50 max-w-full">
-        {ring(30, false)}
-        <span className="truncate">{nowRow ? ROW_NAMES[nowRow.id] : status.text}</span>
-        {nowRow && rowValue(nowRow.s) && <span className="tabular-nums" style={{ color: nowRow.c }}>{rowValue(nowRow.s)}</span>}
-        <span className="text-zinc-400 font-normal shrink-0">{Math.round(fraction * 100)}% {elapsed}</span>
-      </div>
-      <div className="glass rounded-[26px] w-full px-2.5 py-2 flex items-center justify-between gap-1">
-        {rows.map(({ id, s, c, Icon }) => {
-          const done = s.state === "done", on = s.state === "coming", f = done ? 1 : on ? (s.fraction ?? 0) : 0;
-          return (
-            <span key={id} role="img" aria-label={`${ROW_NAMES[id]}: ${done ? rowValue(s) : on ? "coming" : rowValue(s) || "waiting"}`} className={`relative w-[38px] h-[38px] rounded-full grid place-items-center shrink-0 ${on && s.fraction === undefined ? "dg-survey-pulse" : ""}`} data-testid={`import-row-${id}`} data-state={s.state}
-              style={done || on ? { background: `${c}33`, color: c, boxShadow: on ? `0 0 16px ${c}80` : undefined } : { background: "rgba(255,255,255,.06)", color: "#71717a" }}>
-              <Icon size={17} />
-              <svg className="absolute inset-0 -rotate-90" viewBox="0 0 38 38"><circle cx="19" cy="19" r="17.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" pathLength={1} strokeDasharray={`${f} 1`} /></svg>
-            </span>
-          );
-        })}
-        <button className="w-11 h-11 rounded-full grid place-items-center bg-white/[0.08] text-zinc-200 shrink-0" onClick={() => setStopping(true)} aria-label="Stop" data-testid="import-stop-ask"><X size={19} /></button>
-      </div>
     </div>
   );
   const stopEl = stopping && (
@@ -584,11 +545,9 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
     </div>
   );
 
-  // (while it comes in, the survey draws what's found: the map itself only takes the photo)
-  const shownArrived = useMemo(() => (status.state === "loading" && arrived ? { ...arrived, areas: [], lines: [], trees: [] } : arrived), [arrived, status.state]);
   const mapEl = (
     <SitePickerMap imagery={imagery} photoIds={here?.photoIds} view={view} selection={selection} drawing={drawing} onDrawingChange={setDrawing} onSelect={onSelect} onTooSmall={tooSmall} onLocate={locate}
-      selectViewSignal={0} units={units} outline={outline?.outline ?? null} fit={fit} arrived={shownArrived} angle={angle} onAngle={setAngle} survey={sweeps}
+      selectViewSignal={0} units={units} outline={outline?.outline ?? null} fit={fit} arrived={arrived} angle={angle} onAngle={setAngle}
       brush={review ? brushShapes : null} onTap={review && brushOn ? tapBrush : undefined} />
   );
   const framing = !!selection && !loading;
@@ -687,8 +646,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
           <div className="flex-1 min-w-0">{placeChip}</div>
           {closeBtn}
         </div>
-        {loading && <>{stopEl && <div className="absolute left-3 right-3 bottom-[150px] z-[1101]">{stopEl}</div>}{phoneBar}</>}
-        {!loading && <BottomSheet detent={sheetAt} onDetent={setSheetAt} label="Import" topGap={64} className="z-[1100]" testid="import-sheet" contentKey={stage}
+        <BottomSheet detent={sheetAt} onDetent={setSheetAt} label="Import" topGap={64} className="z-[1100]" testid="import-sheet" contentKey={stage}
           header={
             <div className="px-4 pb-3 flex flex-col gap-2">
               <div className="font-bold text-zinc-50 text-[17px]">{loading ? "Bringing it in" : review ? "What comes in" : framing ? "The site" : title}</div>
@@ -706,7 +664,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
               </>
             )}
           </div>
-        </BottomSheet>}
+        </BottomSheet>
       </div>
     );
   }

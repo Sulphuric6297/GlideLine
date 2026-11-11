@@ -213,15 +213,6 @@ select option:disabled {
 }
 
 /* Site picker: selected area size label, in the frame's fern green */
-/* A source coming in with no measure of how far: its bar slides, its disc breathes */
-@keyframes dg-survey-busy { from { transform: translateX(-110%); } to { transform: translateX(280%); } }
-.dg-survey-busy { animation: dg-survey-busy 1.3s ease-in-out infinite; }
-@keyframes dg-survey-pulse { 50% { opacity: 0.55; } }
-.dg-survey-pulse { animation: dg-survey-pulse 1.2s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .dg-survey-busy, .dg-survey-pulse { animation: none; } }
-/* A site coming in: the survey over the map, the frame's own line, handles and size out of its way */
-.site-survey { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 650; pointer-events: none; }
-.site-surveying .site-handle, .site-surveying .leaflet-tooltip.site-picker-tooltip, .site-surveying path.site-frame { display: none !important; }
 .leaflet-tooltip.site-picker-tooltip {
   background: rgba(162, 207, 106, 0.95);
   border: none;
