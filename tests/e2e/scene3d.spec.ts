@@ -41,7 +41,7 @@ test("a site just brought in is built in front of you: the show plays its steps 
   // Asked for all the same, many times as fast: it plays its steps and puts everything back
   await page.evaluate(() => { (window as any).__dgShowSpeed = 12; void (window as any).__dgImportShow.play(true); });
   await expect.poll(async () => (await state()).show, { timeout: 90_000 }).toBe("playing");
-  expect((await state()).steps).toEqual(expect.arrayContaining(["ground", "trees"]));
+  expect((await state()).steps).toEqual(expect.arrayContaining(["ground", "water"]));
   await expect(page.getByTestId("import-show-card")).toBeVisible();
   await expect.poll(async () => (await state()).show, { timeout: 120_000 }).toBe("done");
   await page.waitForTimeout(700);
