@@ -63,7 +63,15 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        # (the runner's package mirror sometimes can't be reached for a few minutes: tried again, then
+        # the browser alone, with the libraries the runner already has)
+        run: |
+          for i in 1 2 3 4; do
+            npx playwright install --with-deps chromium && exit 0
+            echo "Install failed (try $i); waiting to try again"
+            sleep 45
+          done
+          npx playwright install chromium
 
       - name: Build
         run: npm run build
