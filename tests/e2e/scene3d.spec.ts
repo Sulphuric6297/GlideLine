@@ -42,7 +42,6 @@ test("a site just brought in is built in front of you: the show plays its steps 
   await page.evaluate(() => { (window as any).__dgShowSpeed = 12; void (window as any).__dgImportShow.play(true); });
   await expect.poll(async () => (await state()).show, { timeout: 90_000 }).toBe("playing");
   expect((await state()).steps).toEqual(expect.arrayContaining(["ground", "water"]));
-  await expect(page.getByTestId("import-show-card")).toBeVisible();
   await expect.poll(async () => (await state()).show, { timeout: 120_000 }).toBe("done");
   await page.waitForTimeout(700);
   const after = await state();
@@ -52,6 +51,7 @@ test("a site just brought in is built in front of you: the show plays its steps 
   await page.evaluate(() => { (window as any).__dgShowSpeed = 1; void (window as any).__dgImportShow.play(true); });
   await expect.poll(async () => (await state()).show, { timeout: 90_000 }).toBe("playing");
   await page.waitForTimeout(2500);
+  await expect(page.getByTestId("import-show-card")).toBeVisible();
   await page.getByTestId("import-show-skip").click();
   await expect.poll(async () => (await state()).show, { timeout: 30_000 }).toBe("done");
   await page.waitForTimeout(700);
