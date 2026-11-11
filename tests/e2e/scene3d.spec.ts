@@ -15,6 +15,49 @@ type SceneInfo = {
 };
 const scene = (page: import("@playwright/test").Page) => page.evaluate(() => (window as any).__dgView.sceneInfo() as SceneInfo);
 
+test("a site just brought in is built in front of you: the show plays its steps and leaves the course, the view and the tools exactly as they were; Skip ends it at once", async ({ page }) => {
+  test.setTimeout(240_000);
+  await blankCourse(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__dgEditor().set({ areaKind: "water" });
+    w.__dgActions.addDrawn("area", [{ x: 200, y: 600 }, { x: 420, y: 560 }, { x: 640, y: 620 }, { x: 860, y: 580 }, { x: 860, y: 640 }, { x: 640, y: 680 }, { x: 420, y: 620 }, { x: 200, y: 660 }]);
+    w.__dgEditor().set({ tool: "add-tree" });
+    for (let i = 0; i < 14; i++) w.__dgActions.placeAt({ x: 250 + i * 40, y: 300 + (i % 3) * 50 });
+    w.__dgEditor().set({ tool: "select", selectedId: null });
+  });
+  const state = () => page.evaluate(() => {
+    const w = window as any, v = w.__dgView;
+    let off = 0;
+    for (const [, e] of v.objects) if (Math.abs(e.obj.scale.y - 1) > 1e-6 || !e.obj.visible) off++;
+    return { show: w.__dgImportShow.state, steps: w.__dgImportShow.steps, off, groundY: v.ground.group.scale.y, haze: v.haze.density, sun: [v.doc.sun?.azimuth, v.doc.sun?.altitude], tool: w.__dgEditor().tool, left: document.querySelectorAll('[data-testid^="import-show"]').length, panel: !!document.querySelector('[data-testid="view-light"]'), wrapped: Object.prototype.hasOwnProperty.call(v, "setDoc"), doc: JSON.stringify(w.__dgCourse().style) };
+  });
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", view: "3d" }));
+  await expect.poll(async () => (await state()).off, { timeout: 60_000 }).toBe(0);
+  const before = await state();
+  // (not played by itself here: a machine drawing without a graphics card skips it)
+  await page.evaluate(() => (window as any).__dgImportShow.play(false));
+  expect((await state()).show).toBe("skipped");
+  // Asked for all the same, many times as fast: it plays its steps and puts everything back
+  await page.evaluate(() => { (window as any).__dgShowSpeed = 12; void (window as any).__dgImportShow.play(true); });
+  await expect.poll(async () => (await state()).show, { timeout: 90_000 }).toBe("playing");
+  expect((await state()).steps).toEqual(["ground", "trees", "water"]);
+  await expect(page.getByTestId("import-show-card")).toBeVisible();
+  await expect.poll(async () => (await state()).show, { timeout: 120_000 }).toBe("done");
+  await page.waitForTimeout(700);
+  const after = await state();
+  expect({ ...after, show: 0, steps: 0 }).toEqual({ ...before, show: 0, steps: 0 });
+  expect(after.left).toBe(0);
+  // Skip, part-way: over at once, all of it back just the same
+  await page.evaluate(() => { (window as any).__dgShowSpeed = 1; void (window as any).__dgImportShow.play(true); });
+  await expect.poll(async () => (await state()).show, { timeout: 90_000 }).toBe("playing");
+  await page.waitForTimeout(2500);
+  await page.getByTestId("import-show-skip").click();
+  await expect.poll(async () => (await state()).show, { timeout: 30_000 }).toBe("done");
+  await page.waitForTimeout(700);
+  expect({ ...(await state()), show: 0, steps: 0 }).toEqual({ ...before, show: 0, steps: 0 });
+});
+
 test("3D: a sky when tilted (none looking straight down), lit by the course's sun", async ({ page }) => {
   await blankCourse(page);
   await addHole(page, { x: 400, y: 700 }, { x: 750, y: 700 });

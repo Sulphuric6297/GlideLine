@@ -20,6 +20,7 @@ import { startTour } from "./components/Tour";
 import { Inspector } from "./components/Inspector";
 import { stepHole } from "./components/HoleSteps";
 import { GoTo } from "./components/GoTo";
+import { playImportShow } from "./viewport/importShow";
 import { SiteImportDialog } from "./components/SiteImportDialog";
 import { PerfPanel } from "./components/PerfPanel";
 import { CourseFileDialog, FIND_PARK_EVENT, useCourseFile, type FindParkNear } from "./components/CourseFileDialog";
@@ -328,6 +329,8 @@ export default function App() {
     setFindNear(undefined);
     useEditor.getState().set({ step: "design", tool: "select" });
     setTimeout(() => getView()?.fitSite(), 50);
+    // (a first site, on a computer: built in front of you in 3D; see viewport/importShow)
+    void playImportShow();
     const outside = carried.outside ? ` ${carried.outside} ${carried.outside === 1 ? "thing you drew is" : "things you drew are"} now past the site's edges.` : "";
     const name = getDoc().name.replace(/ Disc Golf Course$/, "");
     setSiteReady({ name, facts: readyFacts(site, getDoc().units, mappedCourse?.holes.length ?? 0), said: `Site brought in${cameIn(site)}.${outside}` });
