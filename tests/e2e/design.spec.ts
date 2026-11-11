@@ -807,6 +807,10 @@ test("a hole's fairway turned off leaves the painted map: no fairway painted alo
   await page.getByTestId("part-fairway").click();
   const chip = page.getByTestId("fairway-holes").getByRole("button", { name: "Hole 1" });
   await expect(chip).toHaveAttribute("aria-pressed", "false");
+  // (its ? says what the numbers do)
+  await page.getByTestId("help-show-hide-fairway").click();
+  await expect(page.getByTestId("help-tip")).toContainText("hide its fairway");
+  await page.keyboard.press("Escape");
   await chip.click();
   await expect(chip).toHaveAttribute("aria-pressed", "true");
   expect((await course(page)).holes[0].fairway).toBe(true);

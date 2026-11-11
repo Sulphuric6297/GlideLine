@@ -43,6 +43,7 @@ export type GrassTerrain = { heights: Float32Array; cols: number; rows: number; 
 
 const VERT_HEAD = /* glsl */ `
 attribute vec2 aSpot;
+attribute float aK;
 uniform vec2 uOrigin;
 uniform sampler2D uField;
 uniform sampler2D uTint;
@@ -59,6 +60,8 @@ uniform float uFar;
 uniform float uHole;
 uniform float uWidth;
 uniform float uDensity;
+uniform float uZoom;
+uniform float uRise;
 uniform float uTime;
 uniform float uWind;
 varying vec3 vGrass;
@@ -108,7 +111,10 @@ const VERT_BODY = /* glsl */ `
   vec4 fld = texture2D( uField, fuv );
   float d = distance( wp, uEye.xz );
   // Fewer blades farther away (and none inside the inner patch, for the outer one)
-  float keep = fld.g * uDensity * ( 1.0 - smoothstep( uFar * 0.72, uFar, d ) ) * step( uHole, d + r4 * 6.0 );
+  float keep = fld.g * uDensity * ( 1.0 - smoothstep( uFar * 0.8, uFar, d ) ) * step( uHole, d + r4 * 6.0 );
+  // (toward the patch's edge the blades sink into the ground, none there one frame and gone the next)
+  // (only over its last stretch: sinking sooner left the ground bare well inside the patch)
+  float sink = ( 1.0 - smoothstep( uFar * 0.8, uFar * 0.98, d ) ) * uRise;
   float alive = inside * step( r2, keep );
   // How tall it grows here, read a little off to one side so long grass meets short grass along a
   // ragged edge, not a ruled line (where blades grow at all stays exact: none on pads or paths)
@@ -118,9 +124,14 @@ const VERT_BODY = /* glsl */ `
   float tuft = gNoise( wp * 0.45 + 11.0 );
   // (0: mown, 1: long grass)
   float wild = smoothstep( 0.3, 1.2, tall );
-  float bh = tall * ( 0.6 + 0.8 * r1 ) * mix( 1.0, 0.4 + 1.2 * tuft, wild * 0.85 ) * ( 0.85 + 0.3 * stretch ) * alive;
-  float bw = uWidth * ( 0.75 + 0.5 * r3 ) * ( 1.0 + d / uNear ) * min( 1.0, 0.45 + tall * 0.5 ) * mix( 1.0, 0.6, wild ) * alive;
-  float yaw = r3 * 6.2832;
+  // (a spot grows a few blades, as grass does: each its own way round, the outer ones shorter)
+  float rk = gHash( wp * 1.9 + aK * 3.7 );
+  float ka = aK * 2.4 + r1 * 6.2832;
+  vec2 off = vec2( cos( ka ), sin( ka ) ) * 0.17 * min( 1.0, aK ) * ( 0.5 + 0.9 * rk );
+  float bh = tall * ( 0.6 + 0.8 * r1 ) * mix( 1.0, 0.4 + 1.2 * tuft, wild * 0.85 ) * ( 0.85 + 0.3 * stretch ) * ( 1.0 - 0.16 * aK * ( 0.4 + rk ) ) * sink * alive;
+  // (thin as a blade is; a little wider far off, where a true width would be less than a pixel and flicker)
+  float bw = uWidth * ( 0.75 + 0.5 * r3 ) * ( 1.0 + d / ( uNear * uZoom ) ) * min( 1.0, 0.55 + tall * 0.45 ) * mix( 1.0, 0.8, wild ) * alive;
+  float yaw = r3 * 6.2832 + aK * 2.1 + rk * 1.5;
   vec2 dir = vec2( cos( yaw ), sin( yaw ) );
   // Long grass bends over more; the wind leans it all one way, in waves
   float lean = ( 0.12 + 0.35 * r1 ) * ( 0.5 + min( 1.0, tall / 1.5 ) );
@@ -129,10 +140,11 @@ const VERT_BODY = /* glsl */ `
   vec2 bend = ( dir * lean + gust ) * t * t;
   vec2 side = vec2( -dir.y, dir.x );
   float base = gHeight( wp );
-  vec3 grassPos = vec3( wp.x + side.x * position.x * bw + bend.x * bh, base + bh * t * ( 1.0 - 0.25 * dot( bend, bend ) ) + 0.04, wp.y + side.y * position.x * bw + bend.y * bh );
+  vec3 grassPos = vec3( wp.x + off.x + side.x * position.x * bw + bend.x * bh, base + bh * t * ( 1.0 - 0.25 * dot( bend, bend ) ) + 0.04, wp.y + off.y + side.y * position.x * bw + bend.y * bh );
   // Rounded across the blade (lit a little differently edge to edge), mostly facing up
   vec3 bladeN = normalize( vec3( dir.x + side.x * position.x * 1.2, 0.0, dir.y + side.y * position.x * 1.2 ) );
-  vec3 objectNormal = normalize( mix( bladeN, vec3( 0.0, 1.0, 0.0 ), 0.62 ) );
+  // (more up than out: a lawn is lit as one, not blade by blade light and dark)
+  vec3 objectNormal = normalize( mix( bladeN, vec3( 0.0, 1.0, 0.0 ), 0.8 ) );
   // Color: the ground's grass color (or the photo's), drier or lusher in stretches
   vec3 tint = texture2D( uTint, fuv ).rgb;
   vec2 puv = ( wp - uPhotoRect.xy ) / uPhotoRect.zw;
@@ -142,29 +154,43 @@ const VERT_BODY = /* glsl */ `
   }
   tint = mix( tint * vec3( 0.86, 1.0, 0.94 ), tint * vec3( 1.12, 1.06, 0.74 ), smoothstep( 0.25, 0.85, stretch ) );
   vec3 straw = vec3( 0.66, 0.6, 0.36 );
-  vGrass = tint * ( 0.9 + 0.2 * r4 );
+  vGrass = tint * ( 0.93 + 0.14 * r4 );
+  // (as deep as the ground they stand on: brighter, a lawn seen along its length went pale)
+  vGrass = max( vec3( 0.0 ), mix( vec3( dot( vGrass, vec3( 0.2126, 0.7152, 0.0722 ) ) ), vGrass, 1.3 ) ) * mix( 0.6, 0.94, uPhotoMix );
   // (long grass: some blades gone to straw)
   vGrass = mix( vGrass, straw * ( 0.75 + 0.25 * r1 ), wild * smoothstep( 0.55, 1.0, r3 ) * 0.55 );
   vTip = t;
 `;
 
-/** One blade: a tapered strip, base to tip (x across -0.5..0.5, y up 0..1). */
+/** How many blades grow from a spot (one without a graphics card, where each is the processor's work). */
+export const grassBlades = { perSpot: 3 };
+/** How much farther than the usual the blades and the tufts are drawn (a computer with a graphics
+ * card: farther, so the course never looks bare as the eye draws back) and how high above the
+ * ground the eye can be before they're gone. CourseView sets it before any are made. */
+export const grassReach = { blades: 1, tufts: 1, height: 320 };
+/** A spot's blades: each a tapered strip, base to tip (x across -0.5..0.5, y up 0..1), and which
+ * of the spot's blades each corner belongs to (`k`: the shader sets each its own way). */
 const bladeGeometry = () => {
-  const pos: number[] = [];
-  const seg = 4;
-  for (let i = 0; i < seg; i++) {
-    // (full width low down, narrowing faster toward a point)
-    const t = i / seg, w = 1 - Math.pow(t, 1.4) * 0.9;
-    pos.push(-0.5 * w, t, 0, 0.5 * w, t, 0);
-  }
-  pos.push(0, 1, 0);
+  const pos: number[] = [], k: number[] = [];
   const index: number[] = [];
-  for (let i = 0; i < seg - 1; i++) {
-    const a = i * 2;
-    index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  const seg = 3;
+  for (let b = 0; b < grassBlades.perSpot; b++) {
+    const at = pos.length / 3;
+    for (let i = 0; i < seg; i++) {
+      // (full width low down, narrowing faster toward a point)
+      const t = i / seg, w = 1 - Math.pow(t, 1.4) * 0.9;
+      pos.push(-0.5 * w, t, 0, 0.5 * w, t, 0);
+      k.push(b, b);
+    }
+    pos.push(0, 1, 0);
+    k.push(b);
+    for (let i = 0; i < seg - 1; i++) {
+      const a = at + i * 2;
+      index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    index.push(at + (seg - 1) * 2, at + (seg - 1) * 2 + 1, at + seg * 2);
   }
-  index.push((seg - 1) * 2, (seg - 1) * 2 + 1, seg * 2);
-  return { pos, index };
+  return { pos, k, index };
 };
 
 /** Blade spots for a square patch `half` ft each way: the same jittered pattern in every tile. */
@@ -193,6 +219,7 @@ const patchGeometry = (half: number, perSqFt: number): { geo: THREE.InstancedBuf
   const blade = bladeGeometry();
   const geo = new THREE.InstancedBufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(blade.pos, 3));
+  geo.setAttribute("aK", new THREE.Float32BufferAttribute(blade.k, 1));
   geo.setIndex(blade.index);
   geo.setAttribute("aSpot", new THREE.InstancedBufferAttribute(spots, 2));
   geo.instanceCount = tiles * tiles * n;
@@ -308,6 +335,8 @@ export class Grass implements GrassUniformSource {
       uHole: { value: hole },
       uWidth: { value: width },
       uDensity: { value: 1 },
+      uZoom: this.zoomU,
+      uRise: this.riseU,
       uTime: { value: 0 },
       uWind: { value: 0.12 }
     };
@@ -325,6 +354,20 @@ export class Grass implements GrassUniformSource {
 
   getQuality() {
     return this.quality;
+  }
+
+  /** How much the eye is zoomed in (1: not): blades far off, brought close by the zoom, keep a
+   * blade's width in the picture (they are drawn wider with distance only so as not to flicker). */
+  private zoomU = { value: 1 };
+  /** 1 near the ground, 0 from as high as the grass is drawn at all: it sinks away as the eye
+   * rises, never there one moment and gone the next. */
+  private riseU = { value: 1 };
+  set zoom(z: number) { this.zoomU.value = Math.max(1, z); }
+
+  /** The maps as textures (what grows where, its color) and the plan rectangle they cover: the
+   * ground paints itself from the same ones (see groundDetail's growMap). */
+  get maps() {
+    return this.field && this.tint ? { field: this.field, tint: this.tint, rect: this.rect } : null;
   }
 
   setMaps(maps: GrassMaps) {
@@ -409,8 +452,9 @@ export class Grass implements GrassUniformSource {
       });
       this.patches.push({ blocks, mat, span, count, uniforms, far, hole });
     };
-    add(lv.innerR, lv.inner, 0.06, 30, lv.innerR, 0);
-    add(lv.outerR, lv.outer, 0.16, 18, lv.outerR, lv.innerR * 0.85);
+    add(lv.innerR, lv.inner, 0.034, 45, lv.innerR, 0);
+    const outerR = Math.round(lv.outerR * grassReach.blades);
+    add(outerR, lv.outer, 0.05, 50, outerR, lv.innerR * 0.85);
   }
 
   /**
@@ -419,7 +463,9 @@ export class Grass implements GrassUniformSource {
    */
   update(eye: THREE.Vector3, groundY: number, time: number, wind: number, height: (x: number, z: number) => number = () => groundY) {
     const above = eye.y - groundY;
-    const show = this.quality > 0 && !!this.field && !!this.heights && above < 320;
+    const top = grassReach.height;
+    const show = this.quality > 0 && !!this.field && !!this.heights && above < top;
+    this.riseU.value = 1 - Math.min(1, Math.max(0, (above - top * 0.6) / (top * 0.4))) ** 2;
     this.group.visible = show;
     this.blades = 0;
     if (!show) return;
@@ -432,7 +478,8 @@ export class Grass implements GrassUniformSource {
       p.uniforms.uTime.value = time;
       p.uniforms.uWind.value = wind;
       // Seen from higher up, fewer blades are needed
-      p.uniforms.uDensity.value = above > 120 ? 0.5 : 1;
+      // (thinning as it rises, not halved at a step)
+      p.uniforms.uDensity.value = 1 - 0.5 * Math.min(1, Math.max(0, (above - 90) / 130));
       p.blocks.update(ox, oz, eye, p.far, p.hole, height, GRASS.max);
       this.blades += p.blocks.count;
     }

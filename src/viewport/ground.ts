@@ -41,6 +41,9 @@ export class Ground {
   private photoFt = 0;
   private wantDetail = true;
   private close = true;
+  // (not until the view says so: the scans are a few megabytes to load and unpack, seconds of a
+  // processor's time where there is no graphics card to use them)
+  private card = false;
   /** Painted ground as drawn so far, and the textures it is drawn into (one texel per painted square). */
   private paint: Record<string, number> = {};
   private paintGrid: { cols: number; rows: number; per: number; cell: number; color: Uint8Array; cover: Uint8Array } | null = null;
@@ -233,13 +236,21 @@ export class Ground {
    * Whether the view is close enough for the ground texture to show (far away it averages out to
    * nothing, so it is skipped: less work for each frame, which matters on a slow device).
    */
-  detailActive(close: boolean) {
+  detailActive(close: boolean, card = this.card) {
     this.close = close;
+    // (without a graphics card the ground stays plain at every distance: each pixel's work is the processor's)
+    this.card = card;
     // (on the photo and on the painted map alike: each takes the scans of what it shows)
     if (close && this.wantDetail) this.loadDetail();
     // (the painted map's colors say what each spot is; the photo's cover mask says it for the photo)
     this.detail.coverFromColor.value = this.painted || !this.detail.coverMap.value ? 1 : 0;
-    this.detail.groundDetail.value = close && this.wantDetail && this.detail.detailMap.value ? 1 : 0;
+    // (the ground's own, where no photo or painted map covers it: real ground at any distance,
+    // so its scans stay on however far the eye is)
+    const map = this.painted ?? this.photo;
+    const plain = !card || this.painted ? 0 : map ? 1 - Math.min(1, Math.max(0, this.bgOpacity)) : 1;
+    this.detail.groundPlain.value = plain;
+    if (plain > 0 && this.wantDetail) this.loadDetail();
+    this.detail.groundDetail.value = (close || plain > 0) && this.wantDetail && this.detail.detailMap.value ? 1 : 0;
   }
 
   /** The scans, the first time the view comes close (a couple of megabytes, then kept). */
@@ -441,7 +452,9 @@ export class Ground {
     const { width, height } = doc.canvas;
     const terrain = new THREE.Mesh(
       this.draped(doc, 0, 0, width, height, 0),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.97, metalness: 0 })
+      // (lit by the sun and the sky's light as the map over it is, never mirroring the sky: at a low
+      // angle a bright sky washed the grass out to white)
+      new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 1, metalness: 0, envMapIntensity: 0 })
     );
     addGroundDetail(terrain.material as THREE.Material, this.detail);
     terrain.name = "terrain-mesh";

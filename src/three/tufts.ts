@@ -5,7 +5,7 @@
 // as the blades: the ground's height, how long the grass grows there, its color.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { GRASS_VERT_HEAD, GRASS, SpotBlocks, type GrassUniformSource } from "./grass";
+import { GRASS_VERT_HEAD, GRASS, SpotBlocks, grassReach, type GrassUniformSource } from "./grass";
 
 /** Size of the repeating pattern of tuft spots, ft. */
 const TILE = 12;
@@ -25,9 +25,10 @@ const VERT_BODY = /* glsl */ `
   float wild = smoothstep( uMinTall, uMinTall + 0.6, tall );
   float lawn = step( uMinTall, tall );
   float drift = gNoise( wp * 0.035 + 3.0 );
-  float keep = fld.g * ( 0.3 * lawn + 0.7 * wild ) * uDensity * smoothstep( 0.25, 0.75, drift + 0.25 * wild ) * ( 1.0 - smoothstep( uFar * 0.7, uFar, d ) );
+  float keep = fld.g * ( 0.3 * lawn + 0.7 * wild ) * uDensity * smoothstep( 0.25, 0.75, drift + 0.25 * wild ) * ( 1.0 - smoothstep( uFar * 0.85, uFar, d ) );
   float alive = inside * step( r2, keep );
-  float s = uSize * ( 0.65 + 0.7 * r1 ) * mix( 0.8, 1.6, smoothstep( 0.6, 2.5, tall ) ) * alive;
+  // (toward their reach they sink into the ground, never there one frame and gone the next)
+  float s = uSize * ( 0.65 + 0.7 * r1 ) * mix( 0.8, 1.6, smoothstep( 0.6, 2.5, tall ) ) * ( 1.0 - smoothstep( uFar * 0.78, uFar * 0.97, d ) ) * uRise * alive;
   float yaw = r3 * 6.2832;
   float c = cos( yaw ), sn = sin( yaw );
   vec3 p = position * s;
@@ -113,7 +114,7 @@ export class Tufts {
     this.layers = [];
     this.src.releaseUniforms(this);
     if (!q) return;
-    const reach = q >= 3 ? 130 : q === 2 ? 100 : 70;
+    const reach = Math.round((q >= 3 ? 130 : q === 2 ? 100 : 70) * grassReach.tufts);
     const add = (part: Part, half: number, perTile: number, seed: number, opts: { size: number; minTall: number; density: number; tintMix: number; far: number }) => {
       const { out, span } = spots(half, perTile, seed);
       const geo = new THREE.BufferGeometry();

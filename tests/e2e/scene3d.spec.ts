@@ -70,7 +70,8 @@ test("3D grass: blades near the ground when tilted, none from straight above; th
   await page.getByTestId("scene-panel").getByRole("radio", { name: "Medium" }).click();
   await expect.poll(() => grassSetting(page)).toBe(2);
   await page.reload();
-  await expect.poll(() => grassSetting(page)).toBe(2);
+  // (the course opens again first: about 4.5 s on the test machine by itself, more beside other tests)
+  await expect.poll(() => grassSetting(page), { timeout: 30_000 }).toBe(2);
   await page.keyboard.press("3");
   await page.getByTestId("scene-button").click();
   await page.getByTestId("scene-panel").getByRole("radio", { name: "Low", exact: true }).click();
@@ -221,6 +222,8 @@ test("smooth on any device: slow frames make the 3D view lighter step by step, a
   const four = await q();
   expect(four.tier).toBe(4);
   expect(four.shadow).toBeLessThan(start.shadow);
+  // (the lightest step still looks like the place: shadows keep their shape, never squares)
+  expect(four.shadow).toBeGreaterThanOrEqual(1024);
   expect(four.nearFt).toBeLessThan(start.nearFt);
   // Smooth again: a step back only after a few quick windows in a row (no flicker)
   await frames(10, 24 * 2);

@@ -157,7 +157,7 @@ function ScenePanel({ onClose, big, place, sheet }: { onClose: () => void; big?:
           {fromTee ? (
             <div className="mb-2" data-testid="view-ground">
               <div className="text-xs text-zinc-400 mb-1">Ground</div>
-              <Segmented label="Ground" value={ed.flyLook} onChange={v => set({ flyLook: v })} options={[{ value: "painted", label: "Painted map" }, { value: "photo", label: "Photo" }]} />
+              <Segmented label="Ground" value={ed.flyGround} onChange={v => set({ flyGround: v })} options={[{ value: "ground", label: "Course ground" }, { value: "painted", label: "Painted map" }, { value: "photo", label: "Photo" }]} />
             </div>
           ) : <Toggle label="Satellite photo" checked={ed.photo} onChange={v => set({ photo: v })} />}
           <Toggle label="Trees" checked={!ed.hideTrees} onChange={v => set({ hideTrees: !v })} />

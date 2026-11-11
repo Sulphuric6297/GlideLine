@@ -11,7 +11,7 @@ import { changeDoc, useCourse } from "../state/course";
 import { brushOnly } from "../lib/brushSpots";
 import type { MapStyle, PathTier } from "../types";
 import { ELEVATION_LOOKS, FineTuning, setStyle } from "./DesignPanel";
-import { ColorInput, Slider, Toggle, useKeepInPlace } from "./ui";
+import { ColorInput, HelpLink, Slider, Toggle, useKeepInPlace } from "./ui";
 import { HoleChips } from "./ApplyToHoles";
 import { SHOW_EVENT } from "./showSetting";
 import { InToolSheet } from "./pageToolState";
@@ -138,9 +138,9 @@ function FairwayHoles() {
   if (!holes.length) return null;
   return (
     <div className="mt-2.5" data-testid="fairway-holes">
-      <div className="text-xs text-zinc-400 mb-1.5">Holes with a fairway</div>
+      <div className="flex items-center gap-1.5 text-xs touch:text-[13px] text-zinc-400 mb-1.5">Show/hide fairway<HelpLink topic="show-hide-fairway" label="Show/hide fairway" /></div>
       <div className={row ? "overflow-x-auto dg-noscrollbar touch-pan-x touch-pan-y -mx-3 px-3 [&>div]:flex-nowrap [&>div>button]:shrink-0" : ""}>
-      <HoleChips label="Holes with a fairway" all={null} picked={holes.filter(h => h.fairway).map(h => h.id)}
+      <HoleChips label="Show/hide fairway" all={null} picked={holes.filter(h => h.fairway).map(h => h.id)}
         onChange={v => changeDoc(d => ({ holes: d.holes.map(h => (h.fairway === v.includes(h.id) ? h : { ...h, fairway: v.includes(h.id) })) }))} />
       </div>
     </div>

@@ -5,7 +5,7 @@
 // underneath). A few shapes of each kind are made once, at unit height, and shared by every tree:
 // woods draw them instanced, a close version near the camera and a lighter one farther away.
 import * as THREE from "three";
-import { EZ_VARIANTS, ezLoaded, ezProto, ezTint, ezTree, type TreeSpec } from "./ezShapes";
+import { EZ_VARIANTS, LOD_BAND, ezLoaded, ezProto, ezTint, ezTree, treeLodZoom, type TreeSpec } from "./ezShapes";
 
 export type TreeShape = "broadleaf" | "conifer" | "bush";
 export type Detail = "near" | "mid" | "far" | "brush";
@@ -530,7 +530,9 @@ export type TreeSpot = { x: number; y: number; ground: number; height: number; w
  * the middle ones out to `midOf(nearFt)`, the rest the far ones. `all`: every tree, bush and bit
  * of underbrush in its closest version however far off (a video recording: nothing changes as
  * the camera comes up to it). */
-export const forestDetail = { nearFt: 260, version: 0, all: false };
+export const forestDetail = { nearFt: 260, version: 0, all: false,
+  /** One version melting into the next (off without a graphics card: a tree in two versions at once is twice the work). */
+  melt: true };
 // (what a forest's camera sees, and the sun's shadow picture: worked out in these, kept to save
 // making them every time)
 const seeDir = new THREE.Vector3(), seeMatrix = new THREE.Matrix4(), seeFrustum = new THREE.Frustum(), seeBall = new THREE.Sphere();
@@ -579,10 +581,18 @@ export class Forest {
   private matrices: THREE.Matrix4[][] = [];
   /** Which of each set's trees are drawn just now (in reach and in sight), for picking. */
   private drawnNow: Uint8Array[] = [];
+  /** Where each level's meshes melt in and out (see ezShapes' LOD_BAND): each mesh's own, a pair
+   * for every tree it can hold (one pair for them all would need a divisor graphics cards step
+   * through on the processor), and the pair they hold now. */
+  private lod: { at: THREE.InstancedBufferAttribute; level: number }[] = [];
+  private lodNow = [[-1, -1], [-1, -1], [-1, -1]];
+  private own: THREE.BufferGeometry[] = [];
 
   /** `maxFt`: not drawn past this far from the eye; `ladder`: its versions close, middle and far
    * off, and where the first gives way (underbrush: lighter ones, the middle only close by). */
-  constructor(spots: TreeSpot[], private maxFt = Infinity, private ladder: { levels: [Detail, Detail, Detail]; nearFt?: number; midFt?: number } = { levels: ["near", "mid", "far"] }) {
+  /** `ladder.minFt`: only from this far off (the far underbrush of every wood, drawn as one: each
+   * wood's own draws its bushes up to there). */
+  constructor(spots: TreeSpot[], private maxFt = Infinity, private ladder: { levels: [Detail, Detail, Detail]; nearFt?: number; midFt?: number; minFt?: number } = { levels: ["near", "mid", "far"] }) {
     this.group.name = "forest";
     const byShape = new Map<string, TreeSpot[]>();
     for (const s of spots) {
@@ -595,11 +605,24 @@ export class Forest {
       const [shape, variant] = key.split("|");
       const [l0, l1, l2] = this.ladder.levels;
       const near = treeProto(shape as TreeShape, +variant, l0), mid = treeProto(shape as TreeShape, +variant, l1), far = treeProto(shape as TreeShape, +variant, l2);
-      const make = (proto: TreeProto) => {
-        const leafMat = proto.leafMat ?? leafMaterial(proto.needles);
-        return [new THREE.InstancedMesh(proto.bark, proto.barkMat ?? barkMaterial(), list.length), new THREE.InstancedMesh(proto.leaves, leafMat, list.length)];
+      // (the shape shared, with this level's own word on where it melts in and out)
+      const withLod = (g: THREE.BufferGeometry, l: number) => {
+        const geo = new THREE.BufferGeometry();
+        geo.index = g.index;
+        for (const [name, a] of Object.entries(g.attributes)) geo.setAttribute(name, a);
+        const at = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 2), 2);
+        this.lod.push({ at, level: l });
+        geo.setAttribute("aLod", at);
+        geo.boundingSphere = g.boundingSphere;
+        geo.boundingBox = g.boundingBox;
+        this.own.push(geo);
+        return geo;
       };
-      const nearMeshes = make(near), midMeshes = make(mid), farMeshes = make(far);
+      const make = (proto: TreeProto, l: number) => {
+        const leafMat = proto.leafMat ?? leafMaterial(proto.needles);
+        return [new THREE.InstancedMesh(withLod(proto.bark, l), proto.barkMat ?? barkMaterial(), list.length), new THREE.InstancedMesh(withLod(proto.leaves, l), leafMat, list.length)];
+      };
+      const nearMeshes = make(near, 0), midMeshes = make(mid, 1), farMeshes = make(far, 2);
       const mats: THREE.Matrix4[] = [];
       // (photographed leaves take each tree's tint gently)
       const tintOf = (s: TreeSpot) => s.leaf ?? leafTint(near, s.tint);
@@ -689,14 +712,34 @@ export class Forest {
     }
     const nearFt = this.ladder.nearFt ?? forestDetail.nearFt, midFt = this.ladder.midFt ?? midOf(forestDetail.nearFt);
     const r2 = nearFt * nearFt, m2 = midFt * midFt, all = forestDetail.all;
+    const zoom2 = treeLodZoom.value * treeLodZoom.value;
+    // (one version melts into the next over a band past where it changes; a tree in a band is in
+    // both, and a little more each side, for the way the eye goes before the trees are sorted again)
+    const reach = Number.isFinite(this.maxFt) ? this.maxFt / (1 + LOD_BAND) : 0;
+    const melt = forestDetail.melt && !all;
+    const minFt = this.ladder.minFt ?? 0;
+    const bands = !melt ? [[0, 0], [0, 0], [0, 0]] : [[minFt, nearFt], [nearFt, midFt], [midFt, reach]];
+    // (from minFt on: a little sooner where it melts in, for the way the eye goes before the next sort)
+    const min2 = Math.max(0, minFt - (melt ? 40 : 0)) ** 2;
+    if (bands.some(([a, b], l) => this.lodNow[l][0] !== a || this.lodNow[l][1] !== b)) {
+      this.lodNow = bands;
+      for (const { at, level } of this.lod) {
+        const [a, b] = bands[level], arr = at.array as Float32Array;
+        for (let i = 0; i < arr.length; i += 2) { arr[i] = a; arr[i + 1] = b; }
+        at.needsUpdate = true;
+      }
+    }
+    const SLACK = 40;
+    const out1 = (nearFt * (1 + LOD_BAND) + SLACK) ** 2, in1 = Math.max(0, nearFt - SLACK) ** 2, out2 = (midFt * (1 + LOD_BAND) + SLACK) ** 2, in2 = Math.max(0, midFt - SLACK) ** 2;
     this.sets.forEach((set, si) => {
       const n = [0, 0, 0], ns = [0, 0, 0];
       const levels = [set.near, set.mid, set.far];
       const drawn = (this.drawnNow[si] = new Uint8Array(set.spots.length));
       set.spots.forEach((s, i) => {
         const dx = s.x - eye.x, dz = s.y - eye.z, dy = s.ground + s.height * 0.5 - eye.y;
-        const d2 = dx * dx + dz * dz + dy * dy;
-        if (!all && d2 > this.maxFt * this.maxFt) return;
+        // (as far as it looks: zoomed in, a tree changes and ends that much farther off)
+        const d2 = (dx * dx + dz * dz + dy * dy) / zoom2;
+        if (!all && (d2 > this.maxFt * this.maxFt || d2 < min2)) return;
         const l = all || d2 < r2 ? 0 : d2 < m2 ? 1 : 2;
         const mat = this.matrices[si][i];
         if (shade) {
@@ -710,16 +753,21 @@ export class Forest {
         }
         if (see) {
           seeBall.center.set(s.x, s.ground + s.height * 0.5, s.y);
-          seeBall.radius = s.height + 30 + Math.sqrt(d2) * 0.12;
+          const far = Math.sqrt(d2 * zoom2);
+          seeBall.radius = s.height + 30 + far * 0.12;
           if (!see.intersectsSphere(seeBall)) return;
           // (far off, behind a rise: the ground stands between the eye and the tree's top)
-          if (ground && d2 > HILL_FT * HILL_FT && behindHill(eye, s, Math.sqrt(d2), ground)) return;
+          if (ground && far > HILL_FT && behindHill(eye, s, far, ground)) return;
         }
         drawn[i] = 1;
-        levels[l][0].setMatrixAt(n[l], mat);
-        levels[l][1].setMatrixAt(n[l], mat);
-        levels[l][1].setColorAt(n[l], set.tints[i]);
-        n[l]++;
+        for (let k = 0; k < 3; k++) {
+          // (its own version, and the one it is melting into or out of)
+          if (k !== l && (!melt || !(k === 0 ? d2 < out1 : k === 1 ? d2 > in1 && d2 < out2 : d2 > in2))) continue;
+          levels[k][0].setMatrixAt(n[k], mat);
+          levels[k][1].setMatrixAt(n[k], mat);
+          levels[k][1].setColorAt(n[k], set.tints[i]);
+          n[k]++;
+        }
       });
       // (only the part in use sent to the graphics card: the bark's colors never change)
       const send = (mesh: THREE.InstancedMesh, count: number, colors: boolean) => {
@@ -757,6 +805,9 @@ export class Forest {
   /** Its own buffers let go (the shapes and materials are shared, kept). */
   dispose() {
     this.group.traverse(o => (o as THREE.InstancedMesh).isInstancedMesh && (o as THREE.InstancedMesh).dispose());
+    // (its own word on the shared shapes: only that let go, the shapes are kept)
+    for (const g of this.own) { for (const name of Object.keys(g.attributes)) if (name !== "aLod") g.deleteAttribute(name); g.index = null; g.dispose(); }
+    this.own = [];
   }
 
   /** Trees standing within `r` of a plan point (for tests). */

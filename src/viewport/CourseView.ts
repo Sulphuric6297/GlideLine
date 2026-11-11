@@ -33,13 +33,15 @@ import { autoFlight, flightClock, flyoverOf, insertKey, keyFlight, keyTimes, key
 import { VIDEO_HOLD, titleStrength } from "../lib/video";
 import { drawOverlay, holeTitle, overlayShow, type HoleTitle } from "./flyTitle";
 import { Forest, forestDetail, type TreeSpot, TREES_SEEN, TREES_SHADOW, woodsCrownWidth } from "../three/treeKit";
+import { leafThin, treeLodZoom } from "../three/ezShapes";
+import { BRUSH } from "../lib/brushSpots";
 import { brushOnly } from "../lib/brushSpots";
 import { applyEdit, brushStroke, kindOf, levelOf, type BrushKind as PaintKind } from "../lib/areaBrush";
 import { foundAreas } from "../lib/undergrowth";
-import { GRASS, Grass, type GrassQuality } from "../three/grass";
+import { GRASS, Grass, grassBlades, grassReach, type GrassQuality } from "../three/grass";
 import { Tufts } from "../three/tufts";
 import { setWaterSky, waterMaterial, waterUniforms } from "../three/water";
-import { addSurfaceDetail, layerOf, type SurfaceLayer } from "../three/groundDetail";
+import { addSurfaceDetail, groundShader, layerOf, type SurfaceLayer } from "../three/groundDetail";
 import { softenShadows } from "../three/softShadows";
 import { treeNearFade } from "../three/ezShapes";
 import { createFence, createStructure, onPartLoaded } from "../three/structures";
@@ -202,6 +204,10 @@ const curveBetween = (pts: THREE.Vector3[], i: number, u: number, out: THREE.Vec
 
 /** The painted map for the ground (a picture's URL) and where it shows woods. */
 export type PaintedLook = { url: string; wooded: WoodedGrid | null };
+/** A shape that's there to be picked and draws nothing (the ground paints what it is). */
+const UNDRAWN = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+UNDRAWN.userData.shared = true;
+
 /** A sharper painting of part of the site (see state/paintedGround: paintedDetail). */
 export type PaintedDetailLook = { canvas: HTMLCanvasElement; rect: { x: number; y: number; width: number; height: number } };
 
@@ -563,7 +569,10 @@ export class CourseView {
       try { asIf = localStorage.getItem("hyzerlab-gpu") === "1"; } catch { /* no storage */ }
       this.software = !asIf && /swiftshader|llvmpipe|software|basic render/i.test(name);
       // Without a graphics card, or on a phone, fewer trees in full detail
-      if (this.software) forestDetail.nearFt = 70;
+      if (this.software) { forestDetail.nearFt = 70; forestDetail.melt = false; grassBlades.perSpot = 1; groundShader.card = false; }
+      if (this.software || this.mobile) { leafThin.mid = [6, 2.3]; leafThin.far = [26, 4.6]; }
+      // (a computer with a graphics card: grass and tufts much farther out, and from higher up)
+      else Object.assign(grassReach, { blades: 1.6, tufts: 2.6, height: 520 });
       // (soft shadow edges: 32 looks a pixel, too many to do in software every frame)
       if (!this.software) softenShadows(this.mobile);
       else if (this.mobile) forestDetail.nearFt = 150;
@@ -704,8 +713,9 @@ export class CourseView {
     const hide = this.treesHidden;
     for (const [key, entry] of this.shapes) {
       const under = /:under(:|$)/.test(key);
-      if (under || key.startsWith("woods:") || key === "painted-woods") entry.obj.visible = !hide && !(under && this.dragging);
+      if (under || key.startsWith("woods:") || key === "painted-woods") entry.obj.visible = !hide && !(under && this.dragging && this.brushRests());
     }
+    if (this.farBrush) this.farBrush.forest.group.visible = !hide && !(this.dragging && this.brushRests());
     const doc = this.doc;
     if (doc) for (const item of doc.course.items) if (item.type === "tree") { const e = this.objects.get(item.id); if (e) e.obj.visible = !hide; }
   }
@@ -1284,7 +1294,8 @@ export class CourseView {
     if (holeId === this.povHole && nextTee === this.povTee && same(this.povStand, stand)) return;
     if (holeId === this.povHole && nextTee === this.povTee && stand && !this.walk) {
       this.povStand = { x: stand.x, y: stand.y, face: stand.face ?? this.faceDownHole(holeId!, stand) };
-      this.povLook = { yaw: 0, pitch: 0 };
+      // (told which way to face, at the end of a walk: still looking as you were, up or down too)
+      if (stand.face === undefined) this.povLook = { yaw: 0, pitch: 0 };
       this.invalidate();
       return;
     }
@@ -1294,9 +1305,15 @@ export class CourseView {
     this.povStand = holeId && stand ? { x: stand.x, y: stand.y, face: stand.face ?? this.faceDownHole(holeId, stand) } : null;
     if (holeId === this.povHole && nextTee === this.povTee) return;
     this.povTee = nextTee;
-    if (holeId === this.povHole) { this.povLook = { yaw: 0, pitch: 0 }; this.invalidate(); return; }
+    // (a walk that ended by another hole or tee says which way you face: the look stays as it is,
+    // never swung back to straight ahead)
+    const keepLook = !!holeId && !!this.povHole && stand?.face !== undefined;
+    if (holeId === this.povHole) { if (!keepLook) this.povLook = { yaw: 0, pitch: 0 }; this.invalidate(); return; }
+    const stood = !!this.povHole;
     this.povHole = holeId;
-    this.povLook = { yaw: 0, pitch: 0 };
+    if (!keepLook) this.povLook = { yaw: 0, pitch: 0 };
+    // (onto the course or off it: the map's outlines go or come back)
+    if (stood !== !!holeId && this.doc) this.syncShapes();
     if (!holeId) this.freeCam(false);
     this.detailReady = this.updateDetail().catch(() => {});
     this.controls.enabled = !holeId;
@@ -1938,7 +1955,7 @@ export class CourseView {
     // (the hole's On screen switches: flying, and from the tee)
     const hidden = this.povHole ? this.hideForFlight() : [];
     // (the ground's scans: not without a graphics card, where every pixel's work is the processor's)
-    this.ground.detailActive(!this.software && this.tier < 4);
+    this.ground.detailActive(!this.software, !this.software);
     // (standing under a tree, the leaves right in front of the eye melt away, those overhead stay;
     // a flyover never fades anything: it's for seeing what's really there)
     treeNearFade.value = this.fly ? 0 : 8;
@@ -2369,7 +2386,8 @@ export class CourseView {
    * Quality that keeps the view smooth: frame times are watched while the view moves, and when
    * frames run slow (under 30 a second) the picture gets a step less sharp (pixel ratio), then
    * less grass, softer shadows and fewer trees in full detail; it steps back up when there is
-   * room again. Software rendering (no graphics card) keeps its own fixed, lower settings.
+   * room again. The lightest step still looks like the place: the ground keeps its textures, the
+   * grass its blades and the shadows their shape. Software rendering (no graphics card) keeps its own fixed, lower settings.
    */
   /** When the flight now under way began (its quality picked in its first seconds, then held). */
   private flyStarted = 0;
@@ -2394,7 +2412,9 @@ export class CourseView {
       this.fastWindows = 0;
       // (Very slow, under about 14 frames a second: two steps at once)
       this.setTier(Math.min(most, this.tier + (median > 70 ? 2 : 1)));
-    } else if (median < (street ? 25 : 17) && this.tier > 0) {
+    // (back up at 40 frames a second or better: a 60 a second screen's frames run 16.7 ms, so a
+    // bar of 17 was all but never cleared, and one slow moment left the view light for good)
+    } else if (median < 25 && this.tier > 0) {
       // (only after a few quick windows in a row: no flickering between two levels)
       if (++this.fastWindows >= 3) {
         this.fastWindows = 0;
@@ -2429,7 +2449,8 @@ export class CourseView {
     }
     // (a video records with its own: see setVideoDetail)
     if (this.videoDetail) return this.invalidate();
-    const shadow = this.streetDetail ? (this.tier >= 2 ? 1024 : 2048) : this.tier >= 3 ? 512 : this.mobile || this.tier >= 2 ? 1024 : 2048;
+    // (never under 1024: at 512 a road's and a tree's shadow show as squares)
+    const shadow = this.streetDetail ? (this.tier >= 2 ? 1024 : 2048) : this.mobile || this.tier >= 2 ? 1024 : 2048;
     // (soft shadow edges: a few looks a pixel while frames keep up, one when they don't: no shader
     // made again, three/softShadows reads the radius)
     this.sun.shadow.radius = this.tier >= 2 ? 1 : SHADOW_SOFT;
@@ -2439,7 +2460,7 @@ export class CourseView {
       this.sun.shadow.map = null;
       this.shadowsDirty = true;
     }
-    forestDetail.nearFt = this.streetDetail ? (this.tier >= 2 ? 260 : 360) : (this.software ? 70 : this.mobile ? 150 : 260) * (this.tier >= 3 ? 0.6 : 1);
+    forestDetail.nearFt = this.streetDetail ? (this.tier >= 2 ? 260 : 360) : (this.software ? 70 : this.mobile ? 150 : 700) * (this.tier >= 3 ? 0.6 : 1);
     forestDetail.all = false;
     forestDetail.version++;
     retuneTrees(this.itemsGroup);
@@ -2568,7 +2589,7 @@ export class CourseView {
       this.lastLook.copy(this.camera.quaternion);
     }
     const tilted = this.controls.polarAngle > TILT_TOP;
-    this.ground.detailActive(dist < 250 && !this.software && this.tier < 4);
+    this.ground.detailActive(dist < 250 && !this.software, !this.software);
     // Tilted, the course is a place: sky, haze, land to the horizon and grass up close
     this.lastSky = false;
     const restore = tilted ? this.atmosphere(this.camera, false) : null;
@@ -2673,7 +2694,11 @@ export class CourseView {
     const q = this.grassQuality();
     this.grass.setQuality(on && doc ? q : 0);
     this.tufts.setQuality(on && doc ? q : 0);
-    if (!doc || !on || !q) {
+    // (the ground's own, no photo or painted map over it, paints itself from the same maps: from
+    // straight above too)
+    const grown = !!doc && !this.software && this.ground.detail.groundPlain.value > 0;
+    if (!doc || ((!on || !q) && !grown)) {
+      this.ground.detail.growOn.value = 0;
       this.grass.group.visible = false;
       this.tufts.group.visible = false;
       return;
@@ -2693,6 +2718,19 @@ export class CourseView {
         this.grassTimer = window.setTimeout(() => this.invalidate(), 320);
       }
     }
+    // (the ground paints itself from the maps as they are now, in this same picture)
+    const gm = this.grass.maps, gd = this.ground.detail;
+    if (gm && gd.growMap.value !== gm.field) {
+      gd.growMap.value = gm.field;
+      gd.growTint.value = gm.tint;
+      gd.growRect.value.copy(gm.rect);
+    }
+    gd.growOn.value = grown && gm ? 1 : 0;
+    if (!on || !q) {
+      this.grass.group.visible = false;
+      this.tufts.group.visible = false;
+      return;
+    }
     if (this.grassTerrainRef !== doc.heights) {
       this.grassTerrainRef = doc.heights;
       this.grass.setTerrain(grassTerrain(doc));
@@ -2706,6 +2744,7 @@ export class CourseView {
     const t = this.clock.elapsedTime;
     const wind = this.wind && this.povHole ? 0.14 : 0.05;
     const ground = (x: number, z: number) => this.h(clamp(x, 0, doc.canvas.width), clamp(z, 0, doc.canvas.height));
+    this.grass.zoom = this.povHole ? Math.tan((31 * Math.PI) / 180) / Math.tan((cam.fov * Math.PI) / 360) : 1;
     this.grass.update(p, ground(p.x, p.z), t, wind, ground);
     this.tufts.update(p, t, wind, this.grass.group.visible, ground);
   }
@@ -2887,6 +2926,9 @@ export class CourseView {
 
   /** Woods: the trees near the camera in full detail. */
   private updateForests(eye: THREE.Vector3, cam?: THREE.PerspectiveCamera, sun?: THREE.OrthographicCamera) {
+    // (standing or flying, zoomed in: trees change and end that much farther off; see treeLodZoom)
+    const zoom = cam && this.povHole ? Math.max(1, Math.tan((31 * Math.PI) / 180) / Math.tan((cam.fov * Math.PI) / 360)) : 1;
+    if (Math.abs(zoom - treeLodZoom.value) > 0.02 * treeLodZoom.value) { treeLodZoom.value = zoom; forestDetail.version++; }
     // (which they are: found again only when the things drawn changed, not every frame)
     const kids = this.itemsGroup.children;
     if (this.forestsOf.children !== kids.length || this.forestsOf.first !== kids[0] || this.forestsOf.last !== kids[kids.length - 1]) {
@@ -2912,7 +2954,8 @@ export class CourseView {
     // (standing: a computer's, on a phone too)
     if (this.streetDetail) return this.tier >= 2 ? 1 : 2;
     const base = this.software ? 0 : this.mobile ? 1 : 2;
-    return Math.max(0, base - (this.tier >= 4 ? 2 : this.tier >= 2 ? 1 : 0)) as GrassQuality;
+    // (thinner while frames run slow, never gone: bare ground reads as clay)
+    return Math.max(Math.min(base, 1), base - (this.tier >= 2 ? 1 : 0)) as GrassQuality;
   }
 
   /** Grass detail (0 off .. 3 high, or automatic) and whether it sways in the wind. */
@@ -3292,6 +3335,37 @@ export class CourseView {
   private syncShapes() {
     timed("3D shapes made again", () => this.syncShapesAll());
     this.syncSeeThrough();
+    this.syncFarBrush();
+  }
+
+  /**
+   * Underbrush far off, every wood's as one: each wood draws its own bushes out to a few hundred
+   * feet (dozens of draws a wood); past that they are all drawn together in their lightest
+   * version, a couple of dozen draws for the whole course, so a wood across the course still has
+   * its underbrush. A computer with a graphics card only.
+   */
+  private farBrush: { forest: Forest; key: string } | null = null;
+  private syncFarBrush() {
+    const under = this.software || this.mobile ? [] : [...this.shapes].filter(([k]) => /:under(:|$)/.test(k)).map(([, e]) => e.obj);
+    const key = under.map(o => o.uuid).join("|");
+    if (key === (this.farBrush?.key ?? "")) return;
+    if (this.farBrush) {
+      this.farBrush.forest.group.removeFromParent();
+      this.farBrush.forest.dispose();
+      this.farBrush = null;
+    }
+    const spots = under.flatMap(o => (o.userData.spots as TreeSpot[] | undefined) ?? []);
+    if (!spots.length) return;
+    const from = Math.min(...Object.values(BRUSH).map(b => b.reach));
+    const forest = new Forest(spots, 1500, { levels: ["brush", "brush", "brush"], nearFt: 1e9, midFt: 2e9, minFt: from });
+    forest.group.name = "far-underbrush";
+    forest.group.userData.forest = forest;
+    forest.group.userData.underbrush = true;
+    // (too small out there to throw a shadow worth its cost)
+    forest.group.traverse(o => { o.castShadow = false; });
+    this.itemsGroup.add(forest.group);
+    this.farBrush = { forest, key };
+    this.showTrees();
   }
 
   /** A building, a road or a path selected (its shape being changed): see-through, so the map
@@ -3395,6 +3469,8 @@ export class CourseView {
     // A map only looked at (shared to view, the public page): what stands there, rendered, and
     // the rules (OB, hazards, mandos); not the editor's outlines and dashes
     const clean = this.readOnly;
+    // Standing on the course or flying it: the place itself, none of the map's outlines
+    const standing = !!this.povHole;
     // Paths and roads stack where they cross as the style says (bottom first): each tier drawn
     // after the ones under it
     const tiers: PathTier[] = st.pathOrder?.length === 4 ? st.pathOrder : ["dirt", "gravel", "walkway", "road"];
@@ -3433,9 +3509,12 @@ export class CourseView {
             else run.push(p);
           }
           flush();
-          const mesh = new THREE.Mesh(drapedPolygon(poly, (x, y) => this.h(x, y), doc.gridSize, 0.12, runs, 8), k ? mown(mat.clone()) : mat);
+          const mesh: THREE.Mesh = new THREE.Mesh(drapedPolygon(poly, (x, y) => this.h(x, y), doc.gridSize, 0.12, runs, 8), k ? mown(mat.clone()) : mat);
           mesh.renderOrder = 1;
           mesh.receiveShadow = true;
+          // (on the ground's own, the ground paints the fairway itself, from what grows where: its
+          // shape stays for picking, drawing nothing)
+          if (!photo && !this.software) mesh.material = UNDRAWN;
           g.add(mesh);
           // (a line along it over the photo only, where the fill is faint: on the ground's own
           // colors the soft edge shows it)
@@ -3694,7 +3773,7 @@ export class CourseView {
       // (woods: no fill, the ground under the trees as it is; the trees show it, its edge line only)
       const bare = a.kind === "woods";
       const tinted = this.brushTint && a.kind === "woods" && (a.bushes ?? 0) >= 1 ? levelOf(a) : 0;
-      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted]), () => {
+      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted, standing]), () => {
         const g = new THREE.Group();
         // (underbrush being painted: tinted light, medium or heavy, the heavier over the lighter)
         if (tinted) {
@@ -3707,8 +3786,8 @@ export class CourseView {
         }
         const fill = photo ? meta.fill : Math.min(0.9, meta.fill + 0.35);
         const rule = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo";
-        // (on the painted ground, or looked at only: no translucent fills, only the rules' edges)
-        if ((painted || clean) && a.kind !== "water") {
+        // (on the painted ground: no fills, it has them painted; only the rules' edges)
+        if (painted && a.kind !== "water") {
           if (rule) g.add(this.fatLine(this.drapeLine(a.points, LIFT, true), c, 3, { order: 4, dashed: a.kind === "ob" ? undefined : 6 }));
           if (a.ob === true && a.kind !== "ob") obEdge(a, g);
           hazardEdge(a, g);
@@ -3758,22 +3837,24 @@ export class CourseView {
         const floor = a.kind === "woods";
         if (!bare) {
           // (grass, sand and dirt fade into the ground around them; paving keeps a crisp edge)
-          const soft = photo ? 0 : a.kind === "fairway" ? 8 : a.kind === "rough" ? 10 : a.kind === "green" ? 4 : a.kind === "sand" ? 3 : 0;
+          const soft = photo ? 0 : a.kind === "fairway" ? 4 : a.kind === "rough" ? 6 : a.kind === "green" ? 3 : a.kind === "sand" ? 3 : 0;
           const geo = drapedPolygon(a.points, (x, y) => this.h(x, y), doc.gridSize, floor ? 0.08 : 0.15 + order * 0.01, soft ? [[...a.points, a.points[0]]] : undefined, soft);
           const mat = new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: floor ? Math.min(fill, 0.45) : fill, depthWrite: false, polygonOffset: true, polygonOffsetFactor: floor ? -1 : -4, polygonOffsetUnits: floor ? -2 : -8 });
           // (up close, what it's made of: a fairway's mown grass, a parking lot's asphalt, a woods' floor)
           const scan: [SurfaceLayer, number] | null = a.kind === "fairway" || a.kind === "green" ? ["grass", 0.9] : a.kind === "rough" ? ["grass", 1] : a.kind === "sand" ? ["sand", 1]
             : a.kind === "parking" ? ["asphalt", 1] : null;
           if (scan) addSurfaceDetail(mat, this.ground.detail, layerOf(scan[0]), scan[1], a.kind === "fairway" || a.kind === "green", soft);
-          const mesh = new THREE.Mesh(geo, mat);
+          const mesh: THREE.Mesh = new THREE.Mesh(geo, mat);
           mesh.renderOrder = floor ? 0.5 : a.kind === "parking" ? tierOrder("road") : 2 + order * 0.001;
           mesh.receiveShadow = true;
+          // (grass and a woods' floor on the ground's own: the ground paints them itself)
+          if (!photo && !this.software && (floor || a.kind === "fairway" || a.kind === "rough" || a.kind === "green")) { mat.dispose(); mesh.material = UNDRAWN; }
           g.add(mesh);
         }
         const w = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo" ? 3 : 1.5;
         // (grass and sand with a soft edge: no hard line round them, unless over the photo)
         const softKind = !photo && (a.kind === "fairway" || a.kind === "rough" || a.kind === "green" || a.kind === "sand");
-        if (w === 3 || (!clean && !softKind)) g.add(this.fatLine(this.drapeLine(a.points, LIFT, true), c, w, { order: 4, dashed: a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo" ? 6 : undefined }));
+        if (w === 3 || (!clean && !standing && !softKind)) g.add(this.fatLine(this.drapeLine(a.points, LIFT, true), c, w, { order: 4, dashed: a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo" ? 6 : undefined }));
         // Marked OB (water, say): its red OB edge; a hazard, its dashed hazard edge
         if (a.ob === true && a.kind !== "ob") obEdge(a, g);
         hazardEdge(a, g);
@@ -6058,12 +6139,20 @@ export class CourseView {
     };
   }
 
+  /** Whether underbrush is left out while something is dragged: on a phone, without a graphics
+   * card, or once frames have run slow enough for the view to step down twice. */
+  private brushRests() {
+    return this.software || this.mobile || this.tier >= 2;
+  }
+
   private setDragging(on: boolean) {
     if (this.dragging === on) return;
     this.dragging = on;
-    // (underbrush out of sight while dragging: a big wood's thousands of bushes drawn at every step
-    // make the drag crawl, and they're mostly under the crowns anyway)
-    for (const [key, entry] of this.shapes) if (/:under(:|$)/.test(key)) entry.obj.visible = !on;
+    // (underbrush out of sight while dragging, where the device needs it: a big wood's thousands
+    // of bushes drawn at every step make the drag crawl there; a computer keeping up shows them)
+    const rest = on && this.brushRests();
+    for (const [key, entry] of this.shapes) if (/:under(:|$)/.test(key)) entry.obj.visible = !rest && !this.treesHidden;
+    if (this.farBrush) this.farBrush.forest.group.visible = !rest && !this.treesHidden;
     if (!on) {
       this.handleKey = "";
       this.syncHandles();

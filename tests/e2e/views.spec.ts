@@ -100,6 +100,8 @@ test("under the 3D trees the painted ground is grass, not painted treetops (the 
   // (slow under software rendering: the view from the tee drawn frame by frame)
   test.setTimeout(240_000);
   await blankCourse(page);
+  // (the painted map from a tee: the course's own ground is the usual)
+  await page.evaluate(() => (window as any).__dgEditor().set({ flyGround: "painted" }));
   await addHole(page, { x: 400, y: 700 }, { x: 750, y: 700 });
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").first().click();
@@ -137,9 +139,12 @@ test("Enter on a selected hole opens its tee view", async ({ page }) => {
   await expect(teeCard(page)).toBeVisible();
 });
 
-test("from a tee and flying over, the ground is the painted map with trees on its woods; Photo puts the photo back", async ({ page }) => {
+test("from a tee and flying over, the ground is the course's own; Painted map paints it with trees on its woods; Photo puts the photo back", async ({ page }) => {
   test.setTimeout(300_000);
   await blankCourse(page);
+  // (the course's own ground from a tee unless asked: the painted map here)
+  expect((await editorState(page)).flyGround).toBe("ground");
+  await page.evaluate(() => (window as any).__dgEditor().set({ flyGround: "painted" }));
   await addHole(page, { x: 400, y: 700 }, { x: 750, y: 700 });
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").first().click();
@@ -159,7 +164,7 @@ test("from a tee and flying over, the ground is the painted map with trees on it
   const viewGround = page.getByTestId("scene-panel").getByTestId("view-ground");
   await viewGround.getByRole("radio", { name: "Photo" }).click();
   await expect.poll(async () => (await ground()).painted).toBe(false);
-  expect((await editorState(page)).flyLook).toBe("photo");
+  expect((await editorState(page)).flyGround).toBe("photo");
   await viewGround.getByRole("radio", { name: "Painted map" }).click();
   await expect.poll(async () => (await ground()).painted, { timeout: 30_000 }).toBe(true);
   // Back on the map: the photo's ground again, no painted trees (closed while still resting:
@@ -173,6 +178,8 @@ test("from a tee, the hole's ground is painted sharper (over the whole site's pa
   // (slow under software rendering: the view from the tee drawn frame by frame)
   test.setTimeout(240_000);
   await blankCourse(page);
+  // (the painted map from a tee: the course's own ground is the usual)
+  await page.evaluate(() => (window as any).__dgEditor().set({ flyGround: "painted" }));
   await addHole(page, { x: 400, y: 700 }, { x: 750, y: 700 });
   await page.keyboard.press("Escape");
   await page.getByTestId("hole-row").first().click();

@@ -387,25 +387,50 @@ const mats = new Map<string, THREE.Material>();
  * do). CourseView sets it for each picture.
  */
 export const treeNearFade = { value: 0 };
+/**
+ * One version of a tree giving way to the next as the eye draws back: over this share past the
+ * distance where it changes, the nearer version melts out and the farther one in, in a fine dither
+ * (each the other's gaps, so the tree is whole all the way), never a swap from one frame to the
+ * next. A forest's meshes say where theirs come in and go out (`aLod`: feet; 0: no fade).
+ */
+export const LOD_BAND = 0.2;
+/** How much the eye is zoomed in (1: not): a tree twice as large in the picture changes twice as
+ * far off, so the melting stays where it is too small to see, never a stipple across a bush
+ * brought close by the zoom. */
+export const treeLodZoom = { value: 1 };
+/** How a tree's leaves thin for its middle and far versions: 1 kept in so many, each so many times
+ * larger. A computer's: fuller, so a tree far off looks like the tree it is up close. A phone's
+ * and a machine's without a graphics card: lighter (CourseView sets them before any tree grows). */
+export const leafThin: { mid: [number, number]; far: [number, number] } = { mid: [4, 1.9], far: [12, 3.2] };
 /** The fade on a tree material (with whatever else its shader has). */
 const withNearFade = (m: THREE.Material) => {
   const own = m.onBeforeCompile.bind(m);
   m.onBeforeCompile = (shader, r) => {
     own(shader, r);
     shader.uniforms.uNearFade = treeNearFade;
+    shader.uniforms.uLodZoom = treeLodZoom;
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;\nattribute vec2 aLod;\nvarying vec2 vLod;\nuniform float uLodZoom;")
       .replace("#include <project_vertex>", `#include <project_vertex>
         {
           vec4 tw = vec4( transformed, 1.0 );
+          vLod = vec2( 1.0, 0.0 );
           #ifdef USE_INSTANCING
             tw = instanceMatrix * tw;
+            // (the whole tree as one: how far its middle is)
+            float ld = distance( ( modelMatrix * instanceMatrix * vec4( 0.0, 0.5, 0.0, 1.0 ) ).xyz, cameraPosition ) / uLodZoom;
+            if ( aLod.x > 0.0 ) vLod.x = smoothstep( aLod.x, aLod.x * ${(1 + LOD_BAND).toFixed(2)}, ld );
+            if ( aLod.y > 0.0 ) vLod.y = smoothstep( aLod.y, aLod.y * ${(1 + LOD_BAND).toFixed(2)}, ld );
           #endif
           vTreeW = ( modelMatrix * tw ).xyz;
         }`);
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;\nuniform float uNearFade;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vTreeW;\nvarying vec2 vLod;\nuniform float uNearFade;")
       .replace("#include <clipping_planes_fragment>", `#include <clipping_planes_fragment>
+        if ( vLod.x < 1.0 || vLod.y > 0.0 ) {
+          float ln = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+          if ( ln >= vLod.x || ln < vLod.y ) discard;
+        }
         if ( uNearFade > 0.0 ) {
           float keep = smoothstep( uNearFade * 0.45, uNearFade, distance( vTreeW, cameraPosition ) );
           float n = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
@@ -663,8 +688,8 @@ export const ezTree = (shape: TreeShape, spec: TreeSpec, detail: Detail): TreePr
     const thin = CUSTOM[spec.preset]?.thin;
     const versions: [Detail, THREE.BufferGeometry, THREE.BufferGeometry][] = [
       ["near", bark0, leaves0],
-      ["mid", barkUpTo(bark0, levels, 1), thinLeaves(leaves0, ...(thin?.[0] ?? (bush ? [4, 1.9] : [6, 2.3])))],
-      ["far", barkUpTo(bark0, levels, pine ? 0 : 1), thinLeaves(leaves0, ...(thin?.[1] ?? (bush ? [12, 3.2] : [26, 4.6])))],
+      ["mid", barkUpTo(bark0, levels, 1), thinLeaves(leaves0, ...(thin?.[0] ?? (bush ? [4, 1.9] : leafThin.mid)))],
+      ["far", barkUpTo(bark0, levels, pine ? 0 : 1), thinLeaves(leaves0, ...(thin?.[1] ?? (bush ? [12, 3.2] : leafThin.far)))],
       // (underbrush past arm's reach: the main stems and a few big leaf clusters; our own thin
       // growths, their leaves alone)
       ["brush", barkUpTo(bark0, levels, bush && !thin ? 1 : 0), thinLeaves(leaves0, ...(thin?.[2] ?? (bush ? [30, 5] : [40, 5.6])))]
