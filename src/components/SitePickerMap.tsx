@@ -1,10 +1,11 @@
 import "leaflet/dist/leaflet.css";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import L from "leaflet";
 import { GeoBounds, SITE_MIN_WIDTH_FT, selectionFromBounds } from "../lib/geo/core";
 import { MAP_IMAGERY_SOURCES, MapImagerySource, PICKER_LAYERS, STATE_ORTHO_SOURCES } from "../lib/geo/imagery";
 import { fmtDist } from "../lib/units";
 import type { Units } from "../types";
+import { ImportSurvey } from "./ImportSurvey";
 
 
 /** The frame's color (the theme's fern green), drawing or not. */
@@ -35,7 +36,8 @@ export function SitePickerMap({
   brush,
   onTap,
   angle = 0,
-  onAngle
+  onAngle,
+  survey
 }: {
   imagery: MapImagerySource;
   /** The photos the frame was found to have (its states' own drawn over Esri's). */
@@ -54,6 +56,8 @@ export function SitePickerMap({
   outline?: { lat: number; lon: number }[] | null;
   /** Flown to, framed (each new `key`). */
   fit?: { bounds: GeoBounds; key: number } | null;
+  /** The survey shown while a site comes in (made with the map; the dialog starts and feeds it). */
+  survey?: MutableRefObject<ImportSurvey | null>;
   /** What has come in so far, drawn on the map as it lands: the photo, then the shapes and trees. */
   arrived?: Arrived | null;
   /** The brush as it's tuned, over what came in (drawn on its own, so tuning it stays quick). */
@@ -97,6 +101,8 @@ export function SitePickerMap({
     const map = L.map(containerRef.current, { zoomControl: true, maxZoom: 21, attributionControl: true, boxZoom: false })
       .setView([view.lat, view.lon], view.zoom);
     mapRef.current = map;
+    const surveying = new ImportSurvey(map);
+    if (survey) survey.current = surveying;
     const resize = window.setTimeout(() => map.invalidateSize(), 60);
     // (where you are: a button under the zoom buttons, in their look)
     const Locate = L.Control.extend({
@@ -162,6 +168,8 @@ export function SitePickerMap({
       container.removeEventListener("pointerdown", onPointerDown, true);
       container.removeEventListener("pointermove", onPointerMove, true);
       container.removeEventListener("pointerup", onPointerUp, true);
+      surveying.destroy();
+      if (survey) survey.current = null;
       map.remove();
       mapRef.current = null;
       rectRef.current = null;
@@ -260,7 +268,7 @@ export function SitePickerMap({
     const corner = (sx: number, sy: number) => { const q = turn({ x: sx * live.hw, y: sy * live.hh }, live.a); return { x: live.c.x + q.x, y: live.c.y + q.y }; };
     const SIGNS: [number, number][] = [[-1, 1], [1, 1], [1, -1], [-1, -1]];
     const ring = () => SIGNS.map(([sx, sy]) => toLL(corner(sx, sy)));
-    const frame = L.polygon(ring(), { color: FRAME, weight: 2.5, fillColor: FRAME, fillOpacity: 0.04, interactive: false }).addTo(map);
+    const frame = L.polygon(ring(), { color: FRAME, weight: 2.5, fillColor: FRAME, fillOpacity: 0.04, interactive: false, className: "site-frame" }).addTo(map);
     rectRef.current = frame as unknown as L.Rectangle;
     const topMid = () => { const q = turn({ x: 0, y: live.hh }, live.a); return toLL({ x: live.c.x + q.x, y: live.c.y + q.y }); };
     const knob = () => {
