@@ -22,7 +22,7 @@ import { conifersOf, treeMixOf } from "../lib/landscapes";
 import { LOOK_LABEL, sharesOf, standShares, type TreeLookId } from "../lib/treeMix";
 import { fmtArea, fmtDist, fmtElev } from "../lib/units";
 import { BASKET_BAND, createAmenity, createBasket, createDropZone, createMando, createTeePad, fitTeePad } from "../three/courseModels";
-import { drapedPoints, drapedPolygon, drapedRibbon } from "../three/drape";
+import { DrapeCache, drapedPoints, drapedPolygon, drapedRibbon } from "../three/drape";
 import { dab, strokeOutline } from "../lib/brush";
 import { disposeObjectDeep } from "../three/dispose";
 import { create3dTree, getTreeSignature, retuneTrees } from "../three/trees";
@@ -405,6 +405,9 @@ export class CourseView {
   private grassBuilt = 0;
   private grassTimer = 0;
   private lastSky = false;
+  // (on the scene always, at no density from straight above and in the corner map: three makes a
+  // second shader for every material the first time a scene gains fog, half a second of them on
+  // the first tilt)
   private readonly haze = new THREE.FogExp2(0xffffff, 0);
   private grassTerrainRef: unknown = null;
   private grassPhoto: unknown = null;
@@ -519,6 +522,7 @@ export class CourseView {
     this.sun.shadow.radius = SHADOW_SOFT;
     this.sun.shadow.mapSize.set(this.mobile ? 1024 : 2048, this.mobile ? 1024 : 2048);
     this.scene.add(this.sun, this.sun.target);
+    this.scene.fog = this.haze;
     // Two lines no one sees, kept for good: three.js drops a shader once nothing uses it, and a
     // lone outline (a selected shape's, redrawn as it is dragged) would otherwise have the fat
     // lines' shaders built again on every move, seconds each on a slow graphics chip
@@ -619,8 +623,11 @@ export class CourseView {
       this.heightsVersion++;
     }
     const groundChanged = this.ground.update(doc);
+    const made = performance.now();
     this.syncItems();
     this.syncShapes();
+    // (a long making, a course opened: the frames round it aren't the view's own pace)
+    if (performance.now() - made > 150) this.settling();
     this.syncSelection();
     this.syncOthers();
     this.syncOverlays();
@@ -1271,6 +1278,7 @@ export class CourseView {
     this.controls.dispose();
     this.ground.dispose();
     disposeObjectDeep(this.scene);
+    this.draped.clear();
     this.sky.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -2391,8 +2399,13 @@ export class CourseView {
    */
   /** When the flight now under way began (its quality picked in its first seconds, then held). */
   private flyStarted = 0;
+  /** Until then, frames aren't counted: the course is still being made (its trees, woods, shaders),
+   * and those frames say nothing of how the view will run. */
+  private settleUntil = performance.now() + 6000;
+  private settling(ms = 2500) { this.settleUntil = Math.max(this.settleUntil, performance.now() + ms); }
   perfSample(ms: number) {
     if (this.software && !this.adaptiveForced) return;
+    if (!this.adaptiveForced && performance.now() < this.settleUntil) { this.perfSamples.length = 0; return; }
     // A flight keeps one quality: picked in its first three seconds (its title, the camera still at
     // the tee), then held to the end, so the picture never steps down or up partway down the hole
     if (this.fly && performance.now() - this.flyStarted > 3000) { this.perfSamples.length = 0; return; }
@@ -2667,7 +2680,7 @@ export class CourseView {
     this.lastSky = true;
     this.skyBox.updateMatrixWorld();
     this.ground.landscape(true);
-    const prevFog = this.scene.fog;
+    const prevDensity = this.haze.density;
     const prevBg = this.scene.background;
     const haze = sm.uniforms.uHaze.value as THREE.Color;
     // Thin haze over the site, thick toward the horizon: distance reads as distance
@@ -2677,10 +2690,9 @@ export class CourseView {
     // worked out again, each frame)
     this.haze.density = (eyeLevel ? 0.8 / (span * 2.4) : 0.7 / (span * 3.2)) * thin;
     this.haze.color.copy(haze);
-    this.scene.fog = this.haze;
     this.scene.background = haze;
     return () => {
-      this.scene.fog = prevFog;
+      this.haze.density = prevDensity;
       this.scene.background = prevBg;
       this.skyBox.visible = false;
       if (this.photoSky) this.photoSky.visible = false;
@@ -3332,8 +3344,14 @@ export class CourseView {
    * 3D), putting circles, next-tee walks and mando lines. Each piece is rebuilt only when what it
    * depends on changes.
    */
+  /** Ground shapes' geometry kept while their look changes (see three/drape's DrapeCache). */
+  private draped = new DrapeCache();
   private syncShapes() {
     timed("3D shapes made again", () => this.syncShapesAll());
+    // (the kept geometries no shape uses any more: freed)
+    const used = new Set<THREE.BufferGeometry>();
+    for (const { obj } of this.shapes.values()) obj.traverse(o => { const g = (o as THREE.Mesh).geometry; if (g?.userData.shared) used.add(g); });
+    this.draped.sweep(used);
     this.syncSeeThrough();
     this.syncFarBrush();
   }
@@ -3509,7 +3527,7 @@ export class CourseView {
             else run.push(p);
           }
           flush();
-          const mesh: THREE.Mesh = new THREE.Mesh(drapedPolygon(poly, (x, y) => this.h(x, y), doc.gridSize, 0.12, runs, 8), k ? mown(mat.clone()) : mat);
+          const mesh: THREE.Mesh = new THREE.Mesh(this.draped.get(poly, (x, y) => this.h(x, y), hv, doc.gridSize, 0.12, runs, 8), k ? mown(mat.clone()) : mat);
           mesh.renderOrder = 1;
           mesh.receiveShadow = true;
           // (on the ground's own, the ground paints the fairway itself, from what grows where: its
@@ -3778,7 +3796,7 @@ export class CourseView {
         // (underbrush being painted: tinted light, medium or heavy, the heavier over the lighter)
         if (tinted) {
           const tc = ["", "#fde68a", "#f59e0b", "#b45309"][tinted];
-          const geo = drapedPolygon(a.points, (x, y) => this.h(x, y), doc.gridSize, 0.2 + tinted * 0.02);
+          const geo = this.draped.get(a.points, (x, y) => this.h(x, y), hv, doc.gridSize, 0.2 + tinted * 0.02);
           const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: tc, transparent: true, opacity: 0.13, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 }));
           mesh.renderOrder = 3 + tinted * 0.01;
           g.add(mesh);
@@ -3838,7 +3856,7 @@ export class CourseView {
         if (!bare) {
           // (grass, sand and dirt fade into the ground around them; paving keeps a crisp edge)
           const soft = photo ? 0 : a.kind === "fairway" ? 4 : a.kind === "rough" ? 6 : a.kind === "green" ? 3 : a.kind === "sand" ? 3 : 0;
-          const geo = drapedPolygon(a.points, (x, y) => this.h(x, y), doc.gridSize, floor ? 0.08 : 0.15 + order * 0.01, soft ? [[...a.points, a.points[0]]] : undefined, soft);
+          const geo = this.draped.get(a.points, (x, y) => this.h(x, y), hv, doc.gridSize, floor ? 0.08 : 0.15 + order * 0.01, soft ? [[...a.points, a.points[0]]] : undefined, soft);
           const mat = new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: floor ? Math.min(fill, 0.45) : fill, depthWrite: false, polygonOffset: true, polygonOffsetFactor: floor ? -1 : -4, polygonOffsetUnits: floor ? -2 : -8 });
           // (up close, what it's made of: a fairway's mown grass, a parking lot's asphalt, a woods' floor)
           const scan: [SurfaceLayer, number] | null = a.kind === "fairway" || a.kind === "green" ? ["grass", 0.9] : a.kind === "rough" ? ["grass", 1] : a.kind === "sand" ? ["sand", 1]
@@ -4158,6 +4176,7 @@ export class CourseView {
         this.shapes.delete(key);
       }
       const obj = timed(`3D ${key.split(":")[0]} made`, job.make);
+      this.settling();
       this.needWarm = true;
       this.pondsAgain();
       if (obj) {
@@ -4178,6 +4197,7 @@ export class CourseView {
     // isn't held up waiting for each; then the drawing, which only sends their shapes)
     if (this.warming) return;
     this.warming = true;
+    this.settling();
     const done = () => { this.warming = false; if (!this.disposed) this.warmDraw(); };
     // (three's own compileAsync trips over a material let go while it waits, as when the course is
     // made again meanwhile: the same wait here, the ones let go passed over)

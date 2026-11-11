@@ -1001,17 +1001,19 @@ export const standingTrees = (lidar: NonNullable<CourseDoc["lidar"]>, cleared: (
     else if (!kept.has(k) && (cleared(p, t[3] * 0.3) || nowhere(p) || t[2] < (lidar.minHeight ?? 0))) cut.push(k);
     else stand.push(k);
   });
-  return { stand: withoutTwins(lidar.trees, stand, kept), cut };
+  return { stand: withoutTwins(lidar.trees, stand, kept, removed), cut };
 };
 
 /** Standing trees less any that are one tree found twice: one standing closer to a taller one than
  * the survey can tell two treetops apart (half its search window for that height, 0.07 H + 3 m,
  * as lidR has it), or well inside its crown at about its height. Not cut (no stump): the taller is
- * the tree, in 3D and on the map alike. A tree kept by hand always stands. */
-const withoutTwins = (trees: LidarTree[], stand: number[], kept: Set<number>) => {
+ * the tree, in 3D and on the map alike. A tree kept by hand always stands. A tree taken out by hand
+ * (cut down, or made the course's own to move or delete) still counts as the taller one: its twin
+ * never stands up in its place. */
+const withoutTwins = (trees: LidarTree[], stand: number[], kept: Set<number>, removed: Set<number> = new Set()) => {
   const CELL = 40, grid = new Map<string, number[]>();
   const at = (x: number, y: number) => `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
-  const tallest = [...stand].sort((a, b) => trees[b][2] - trees[a][2]);
+  const tallest = [...stand, ...[...removed].filter(k => !!trees[k])].sort((a, b) => trees[b][2] - trees[a][2]);
   const out = new Set<number>();
   for (const k of tallest) {
     const [x, y, h, r] = trees[k];
@@ -1027,7 +1029,7 @@ const withoutTwins = (trees: LidarTree[], stand: number[], kept: Set<number>) =>
       }
     }
     if (twin) continue;
-    out.add(k);
+    if (!removed.has(k)) out.add(k);
     const key = at(x, y);
     (grid.get(key) ?? grid.set(key, []).get(key)!).push(k);
   }

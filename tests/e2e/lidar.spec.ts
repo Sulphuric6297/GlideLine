@@ -205,6 +205,13 @@ plain("measured trees never stand where no tree does (in water, on a road): cut,
   plainExpect(cut).toEqual([1]);
 });
 
+plain("a tree the survey found twice stands once; the taller taken out by hand (cut, or made the course's own to move or delete), the shorter doesn't stand up in its place (pure logic)", () => {
+  const trees: LidarTree[] = [[100, 100, 60, 12, 0], [103, 100, 57, 10, 0], [300, 300, 40, 9, 0]];
+  const lidar = { trees, year: 2020 } as any;
+  plainExpect(standingTrees(lidar, () => false).stand).toEqual([0, 2]);
+  plainExpect(standingTrees({ ...lidar, removed: [0] }, () => false)).toEqual({ stand: [2], cut: [0] });
+});
+
 plain("measured trees smaller than the course keeps are cut, unless kept by hand (pure logic)", () => {
   const lidar = { source: "test", trees: [[10, 10, 12, 6, 0], [100, 100, 40, 12, 0], [200, 200, 8, 4, 0]] as LidarTree[], kept: [2], minHeight: 15 };
   const { stand, cut } = standingTrees(lidar, () => false);

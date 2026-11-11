@@ -470,9 +470,22 @@ const materialFor = (kind: "bark" | "leaves", fromOf: () => THREE.MeshPhongMater
         float greenish = ltD / max( ltMax, 1e-4 ) < 0.03 ? 1.0 : smoothstep( 0.19, 0.28, ltHue ) * ( 1.0 - smoothstep( 0.6, 0.7, ltHue ) );
         vec3 leafPhoto = diffuseColor.rgb / max( diffuse, vec3( 1e-3 ) );
         float leafLum = dot( leafPhoto, vec3( 0.299, 0.587, 0.114 ) );
-        diffuseColor.rgb = mix( leafLum * 3.0 * leafTint, leafPhoto * leafTint, greenish );`);
+        diffuseColor.rgb = mix( leafLum * 3.0 * leafTint, leafPhoto * leafTint, greenish );`)
+        // A leaf's cut-out keeps its cover far off: the smaller copies of the picture the card
+        // reads there average each leaf's edge away, till most of it falls under the cut and the
+        // crown goes bare. Its cover is raised by how small a copy is being read.
+        .replace("#include <alphatest_fragment>", /* glsl */ `
+        #ifdef USE_MAP
+        {
+          vec2 lts = vec2( textureSize( map, 0 ) );
+          vec2 ldx = dFdx( vMapUv * lts ), ldy = dFdy( vMapUv * lts );
+          float llod = max( 0.0, 0.5 * log2( max( dot( ldx, ldx ), dot( ldy, ldy ) ) ) );
+          diffuseColor.a = min( 1.0, diffuseColor.a * ( 1.0 + max( 0.0, llod - 1.0 ) * 0.3 ) );
+        }
+        #endif
+        #include <alphatest_fragment>`);
     };
-    m.customProgramCacheKey = () => "ez-leaves";
+    m.customProgramCacheKey = () => "ez-leaves-cover";
   }
   withNearFade(m);
   m.userData.shared = true;
@@ -542,8 +555,12 @@ const thinLeaves = (g: THREE.BufferGeometry, keep: number, growBy: number) => {
 const barkUpTo = (g: THREE.BufferGeometry, levels: { level: number; from: number; to: number }[], maxLevel: number) => {
   const idx = g.getIndex()!, I: number[] = [];
   for (const l of levels) if (l.level <= maxLevel) for (let i = l.from; i < l.to; i++) I.push(idx.getX(i));
-  const out = g.clone();
+  // (the same corners, fewer of them drawn: none copied)
+  const out = new THREE.BufferGeometry();
+  for (const [name, a] of Object.entries(g.attributes)) out.setAttribute(name, a);
   out.setIndex(I);
+  out.boundingBox = g.boundingBox;
+  out.boundingSphere = g.boundingSphere;
   return out;
 };
 
@@ -597,8 +614,10 @@ const toKeep: Kept[] = [];
 // most every 1.5 s, in the browser's cheaper write mode; a tree lost to a closed page grows again)
 const opened = typeof performance !== "undefined" ? performance.now() : 0;
 const idle = (fn: () => void) => {
-  const wait = Math.max(1500, 10_000 - (performance.now() - opened));
-  setTimeout(() => (typeof requestIdleCallback === "function" ? requestIdleCallback(fn, { timeout: 20_000 }) : fn()), wait);
+  // (soon enough that a short first visit leaves the next one its trees: all of a course's in
+  // about half a minute, not three)
+  const wait = Math.max(250, 6000 - (performance.now() - opened));
+  setTimeout(() => (typeof requestIdleCallback === "function" ? requestIdleCallback(fn, { timeout: 5000 }) : fn()), wait);
 };
 const keepNext = () => {
   const x = toKeep.shift();
@@ -686,6 +705,15 @@ export const ezTree = (shape: TreeShape, spec: TreeSpec, detail: Detail): TreePr
     const h = Math.max(0.01, box.max.y - foot), w = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
     const bush = shape === "bush", pine = shape === "conifer";
     const thin = CUSTOM[spec.preset]?.thin;
+    // The grown tree stood on its foot at height 1, once, in one pass over its corners (its versions
+    // are made from it after: none moved and measured again, eight times over)
+    for (const geo of [bark0, leaves0]) {
+      const at = geo.getAttribute("position") as THREE.BufferAttribute, a = at.array as Float32Array, k = 1 / h, step = at.itemSize;
+      for (let i = 0; i < a.length; i += step) { a[i] *= k; a[i + 1] = (a[i + 1] - foot) * k; a[i + 2] *= k; }
+      at.needsUpdate = true;
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+    }
     const versions: [Detail, THREE.BufferGeometry, THREE.BufferGeometry][] = [
       ["near", bark0, leaves0],
       ["mid", barkUpTo(bark0, levels, 1), thinLeaves(leaves0, ...(thin?.[0] ?? (bush ? [4, 1.9] : leafThin.mid)))],
@@ -697,10 +725,8 @@ export const ezTree = (shape: TreeShape, spec: TreeSpec, detail: Detail): TreePr
     g = {} as Grown;
     for (const [d, bark, leaves] of versions) {
       for (const geo of [bark, leaves]) {
-        geo.translate(0, -foot, 0);
-        geo.scale(1 / h, 1 / h, 1 / h);
-        geo.computeBoundingSphere();
-        geo.computeBoundingBox();
+        if (!geo.boundingBox) geo.computeBoundingBox();
+        if (!geo.boundingSphere) geo.computeBoundingSphere();
         geo.userData.shared = true;
       }
       g[d] = { bark, leaves, needles: pine, barkMat, leafMat, natural: w / h };
