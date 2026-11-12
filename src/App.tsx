@@ -20,7 +20,7 @@ import { startTour } from "./components/Tour";
 import { Inspector } from "./components/Inspector";
 import { stepHole } from "./components/HoleSteps";
 import { GoTo } from "./components/GoTo";
-import { playImportShow } from "./viewport/importShow";
+import { liveShowEnded, playImportShow } from "./viewport/importShow";
 import { SiteImportDialog } from "./components/SiteImportDialog";
 import { PerfPanel } from "./components/PerfPanel";
 import { CourseFileDialog, FIND_PARK_EVENT, useCourseFile, type FindParkNear } from "./components/CourseFileDialog";
@@ -297,7 +297,7 @@ export default function App() {
     if (turn) v?.rotateBy(turn);
     v?.fitSite();
   };
-  const onImported = (site: ImportedSite, opts?: { course?: boolean; turn?: number }) => {
+  const onImported = (site: ImportedSite, opts?: { course?: boolean; turn?: number; live?: boolean }) => {
     // (the disc golf course mapped there, when asked for: its holes after the ones here)
     const mappedCourse = opts?.course && site.course?.holes.length ? site.course : null;
     // What was designed stays on the same ground when the frame grows, shrinks or moves
@@ -334,7 +334,7 @@ export default function App() {
     const name = getDoc().name.replace(/ Disc Golf Course$/, "");
     // (what came in is said once the show is over, or at once where it doesn't play)
     const ready = { name, facts: readyFacts(site, getDoc().units, mappedCourse?.holes.length ?? 0), said: `Site brought in${cameIn(site)}.${outside}` };
-    void playImportShow().finally(() => setSiteReady(ready));
+    void (opts?.live ? liveShowEnded() : playImportShow()).finally(() => setSiteReady(ready));
     if (outside) toast(outside.trim(), "info");
     if (site.osmFailed) osmFailedToast();
   };

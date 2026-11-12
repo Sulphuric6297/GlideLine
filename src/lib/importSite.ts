@@ -131,11 +131,17 @@ export type ImportOptions = {
   onProgress?: (p: ImportProgress) => void;
   /** What each source brought, as it lands. */
   onLayer?: (layer: ImportLayer) => void;
+  /** Waited for once every source is in, before they're sorted out against each other (the one
+   * long piece of work on the page's own thread): whoever is drawing meanwhile says when. */
+  beforeSort?: () => Promise<void>;
   /** Stops it: every download, at once (the import then rejects with an AbortError). */
   signal?: AbortSignal;
   /** (older callers) What it is doing, and how far along all of it is (`fraction`). */
   onStatus?: (text: string, progress?: { step: number; of: number; fraction?: number }) => void;
 };
+
+/** A moment for the page to draw between two long pieces of work (stopped: throws as the import does). */
+const breath = (signal?: AbortSignal) => new Promise<void>((ok, no) => setTimeout(() => (signal?.aborted ? no(new DOMException("Aborted", "AbortError")) : ok()), 24));
 
 /** Terrain grid spacing for a site this wide: about 160 cells across, 4 to 20 ft. */
 export const gridFor = (widthFt: number) => clamp(Math.round(widthFt / 160), 4, 20);
@@ -867,6 +873,10 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     const [map, ground, measured, traced, nature, osm, gov, seasons] = await untilAborted(Promise.all([photoJob, elevationJob, lidarJob, tracedJob, natureJob, osmJob, govJob, seasonsJob]), signal);
 
     // ------------------------------------------------------------ put together
+    // (in pieces, the page given a moment between them: whatever is drawing meanwhile, the site
+    // being built in front of you say, keeps moving; the same work in the same order)
+    if (opts.beforeSort) await untilAborted(opts.beforeSort(), signal);
+    await breath(signal);
     const background = map?.url ?? null;
     if (map?.partial) notes.push("Some map tiles were missing.");
     if (opts.imagery !== "none" && !map) notes.push(satellite ? "Couldn't download the satellite photo or the street map, so there's plain ground under the course." : "Couldn't download the street map, so there's plain ground under the course.");
@@ -1020,6 +1030,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     // Where brush grows: the chance of it in each 10 ft block, from the survey and the satellite's
     // seasons (the areas themselves made as the import's How much and How thick ask)
     const m = measured?.lidar.measured;
+    await breath(signal);
     const underbrush = underbrushChance(width, height, measured?.lidar.undergrowth ?? null, seasons, {
       areas: all.filter((i): i is AreaItem => i.type === "area" && i.kind === "water").map(i => i.points),
       lines: all.filter(i => i.type === "line" && i.kind === "stream").map(i => (i as { points: P[] }).points)

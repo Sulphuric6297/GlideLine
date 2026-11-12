@@ -18,6 +18,7 @@ import { fmtArea, fmtDist } from "../lib/units";
 import { getDoc } from "../state/course";
 import type { CourseItem } from "../types";
 import { HelpLink, Slider } from "./ui";
+import { startLiveImport } from "../viewport/importShow";
 import { BEST_GUESS, UG_BLOCK, brushAcres, brushAreas, brushLevels, tapPatch, type BrushTune } from "../lib/undergrowth";
 import { useLayout, useTouch } from "./useLayout";
 import { BottomSheet, type Detent } from "./mobile/BottomSheet";
@@ -120,7 +121,7 @@ const drawnAs = (i: CourseItem): { area?: string; line?: string; weight?: number
   return {};
 };
 
-export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBounds; onClose: () => void; onImported: (site: ImportedSite, opts: { trees: boolean; osm: boolean; course?: boolean; turn?: number }) => void }) {
+export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBounds; onClose: () => void; onImported: (site: ImportedSite, opts: { trees: boolean; osm: boolean; course?: boolean; turn?: number; live?: boolean }) => void }) {
   // (open again each time it mounts: React mounts it twice in development, and a flag only ever
   // set to closed left every import there unapplied, stuck short of the end)
   const open = useRef(true);
@@ -164,6 +165,8 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   const [arrived, setArrived] = useState<Arrived | null>(null);
   // (closing while a site comes in: asked first, in the dialog)
   const [stopping, setStopping] = useState(false);
+  // (the site built in front of you while it comes in: this screen out of its way meanwhile)
+  const [liveOn, setLiveOn] = useState(false);
   const [started, setStarted] = useState(0);
   const [, tick] = useState(0);
   useEffect(() => {
@@ -290,6 +293,8 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
 
   // What has come in, put on the map as it lands
   const landed = useRef<Arrived | null>(null);
+  /** Out of sight while the site is built in front of you: nothing drawn on its own map meanwhile. */
+  const liveHid = useRef(false);
   const onLayer = (l: ImportLayer) => {
     if (l.source === "frame") { landed.current = { bounds: l.bounds, width: l.canvas.width, height: l.canvas.height, areas: [], lines: [], trees: [] }; }
     const a = landed.current;
@@ -304,7 +309,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
     }
     // (measured trees: a few thousand at most, so the map stays quick)
     if (l.source === "lidar") { const step = Math.max(1, Math.ceil(l.trees.length / 4000)); for (let k = 0; k < l.trees.length; k += step) a.trees.push({ x: l.trees[k][0], y: l.trees[k][1], r: l.trees[k][3] }); }
-    setArrived({ ...a });
+    if (!liveHid.current) setArrived({ ...a });
   };
 
   // Looked at before it comes in: what's on, each source in its own color, where it came from on hover
@@ -351,8 +356,10 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
     landed.current = null;
     setArrived(null);
     setStatus({ state: "loading", text: "Starting…" });
+    const live = startLiveImport({ name: label.split(",")[0].trim() || "your site", hide: on => { liveHid.current = on; setLiveOn(on); if (!on && landed.current) setArrived({ ...landed.current }); } });
     try {
-      const site = await importSite(selectionFromBounds(turnedBox(selection, angle), label), { imagery, trees, surveyed: !!survey, osm, lidar, summerFill: fill, gov, photo: photoId, signal: stop.signal, onLayer, onProgress: p => {
+      const site = await importSite(selectionFromBounds(turnedBox(selection, angle), label), { imagery, trees, surveyed: !!survey, osm, lidar, summerFill: fill, gov, photo: photoId, signal: stop.signal, beforeSort: live ? () => live.beforeSort() : undefined, onLayer: l => { onLayer(l); live?.layer(l); }, onProgress: p => {
+        live?.progress(p.fraction, p.text);
         (window as { __dgImportProgress?: unknown }).__dgImportProgress = p;
         if (!stop.signal.aborted) { setStatus({ state: "loading", text: p.text, progress: { fraction: p.fraction } }); setSources({ ...p.sources }); }
       } });
@@ -360,11 +367,14 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
       if (open.current && !stop.signal.aborted) {
         const counts = sourceCounts(site);
         const on = Object.fromEntries((Object.keys(counts) as SourceKey[]).map(k => [k, startsOn(k, site)]));
+        // (built in front of you: brought in as it stands once the show reaches it; skipped, looked at first as ever)
+        if (live && !live.dead() && (await live.final(() => onImported(reviewedSite(site, on, "osm", tune), { trees, osm, course: course && !!outline?.course?.holes, turn: angle, live: true })))) return;
         setReview({ site, on, keep: "osm", photo: photoId ?? (site.site.photo?.id as PhotoSourceId | undefined) });
         setStatus({ state: "idle", text: "" });
       }
     } catch (err) {
       // (stopped: nothing to say; anything else, said, never left hanging)
+      live?.abort();
       if (stop.signal.aborted) return;
       console.error(err);
       setStatus({ state: "error", text: err instanceof Error ? err.message : "Couldn't bring in the site." });
@@ -640,7 +650,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
 
   if (phone) {
     return (
-      <div className="dg-compact fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="dg-compact fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={liveOn ? { display: "none" } : undefined}>
         <div className="absolute inset-0">{mapEl}</div>
         <div className="absolute left-3 right-3 top-[max(10px,env(safe-area-inset-top))] z-[1100] flex items-center gap-2">
           <div className="flex-1 min-w-0">{placeChip}</div>
@@ -670,7 +680,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title}>
+    <div className="fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={liveOn ? { display: "none" } : undefined}>
       <div className="absolute inset-0">{mapEl}</div>
       <div className="absolute top-4 right-4 z-[1100]">{closeBtn}</div>
       {!framing && !loading && (
