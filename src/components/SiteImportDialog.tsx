@@ -180,12 +180,21 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     useEditor.getState().set({ ...b.ed, reviewing: false, selectedId: null } as never);
   };
   const end3d = () => { leave3d.current(); setIn3d(false); setReady3d(false); };
-  const begin3d = () => {
-    if (!onPreview || base.current) return;
+  /** The course and the screen as they are now, kept to go back to. */
+  const keepBase = () => {
+    if (base.current) return;
     const cs = useCourse.getState(), ed = useEditor.getState();
     base.current = { doc: cs.doc, past: cs.past, future: cs.future, ed: { step: ed.step, view: ed.view, photo: ed.photo, tool: ed.tool } };
+  };
+  const begin3d = () => {
+    if (!onPreview || in3d) return;
+    keepBase();
     setLeft([]); setLook(null); setReady3d(false); setIn3d(true);
   };
+  /** The build has been shown for the site in hand (or skipped): it's never played a second time. */
+  const played = useRef(false);
+  /** The site is in the course as it was built: not put in again as the look-over opens. */
+  const builtIn = useRef(false);
   // How much brush and how thick (as the course last had it), and the patches set by a tap
   const [tune, setTune] = useState<BrushTune>(() => ({ ...BEST_GUESS, ...(getDoc().site.brushTune ?? {}) }));
   const [tuneOpen, setTuneOpen] = useState(false);
@@ -387,7 +396,11 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     landed.current = null;
     setArrived(null);
     setStatus({ state: "loading", text: "Starting…" });
-    const live = startLiveImport({ name: label.split(",")[0].trim() || "your site", hide: on => { liveHid.current = on; setLiveOn(on); if (!on && landed.current) setArrived({ ...landed.current }); } });
+    played.current = false; builtIn.current = false;
+    const live = !onPreview ? null : startLiveImport({ name: label.split(",")[0].trim() || "your site", hide: on => { liveHid.current = on; setLiveOn(on); if (!on && landed.current) setArrived({ ...landed.current }); } });
+    // (built in the 3D view from this moment, the photo under it: the course as it was kept to go
+    // back to, and nothing else worked meanwhile)
+    if (live) { keepBase(); played.current = true; useEditor.getState().set({ photo: true, reviewing: true, selectedId: null } as never); }
     try {
       const site = await importSite(selectionFromBounds(turnedBox(selection, angle), label), { imagery, trees, surveyed: !!survey, osm, lidar, summerFill: fill, gov, photo: photoId, signal: stop.signal, beforeSort: live ? () => live.beforeSort() : undefined, onLayer: l => { onLayer(l); live?.layer(l); }, onProgress: p => {
         live?.progress(p.fraction, p.text);
@@ -399,8 +412,12 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
         const counts = sourceCounts(site);
         const on = Object.fromEntries((Object.keys(counts) as SourceKey[]).map(k => [k, startsOn(k, site)]));
         // (built in front of you: brought in as it stands once the show reaches it; skipped, looked at first as ever)
-        if (live && !live.dead() && (await live.final(() => onImported(reviewedSite(site, on, "osm", tune), { trees, osm, course: course && !!outline?.course?.holes, turn: angle, live: true })))) return;
+        const kept = base.current;
+        const builtOk = !!live && !!kept && !live.dead() && (await live.final(() => onPreview!(kept.doc, reviewedSite(site, on, "osm", tune), { trees, osm, course: course && !!outline?.course?.holes, turn: angle })));
+        if (!open.current || stop.signal.aborted) return;
         setReview({ site, on, keep: "osm", photo: photoId ?? (site.site.photo?.id as PhotoSourceId | undefined) });
+        // (built as it came in: looked over where it stands, with nothing played again)
+        if (builtOk) { builtIn.current = true; liveHid.current = false; setLiveOn(false); setLeft([]); setLook(null); setIn3d(true); setReady3d(true); setStatus({ state: "idle", text: "" }); return; }
         // (looked over in the 3D view, where there is one that can keep up)
         begin3d();
         setStatus({ state: "idle", text: "" });
@@ -408,6 +425,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     } catch (err) {
       // (stopped: nothing to say; anything else, said, never left hanging)
       live?.abort();
+      end3d();
       if (stop.signal.aborted) return;
       console.error(err);
       setStatus({ state: "error", text: err instanceof Error ? err.message : "Couldn't bring in the site." });
@@ -427,6 +445,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   const shownSite = useMemo(() => (site0 ? withoutLeft(site0, left) : null), [site0, left]);
   useEffect(() => {
     if (!in3d || !shownSite || !base.current || !onPreview) return;
+    if (builtIn.current) { builtIn.current = false; return; }
     onPreview(base.current.doc, shownSite, { trees, osm, course: course && !!outline?.course?.holes, turn: angle, ...(look ? { look } : {}) });
   }, [in3d, shownSite, look]);
   // Into the 3D view with the photo under it; built in front of you once, then looked over.
@@ -444,9 +463,14 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
       }
       if (gone) return;
       if (!v?.doc || v.software) { end3d(); return; }
-      await playImportShow();
-      if (gone) return;
-      if ((window as { __dgImportShow?: { state?: string } }).__dgImportShow?.state === "skipped") v.fitSite?.();
+      // (the build, once: not again on coming back from the flat map, nor after it built as it came in)
+      if (played.current) { if (!ready3d) v.fitSite?.(); }
+      else {
+        played.current = true;
+        await playImportShow();
+        if (gone) return;
+        if ((window as { __dgImportShow?: { state?: string } }).__dgImportShow?.state === "skipped") v.fitSite?.();
+      }
       setReady3d(true);
     })();
     return () => { gone = true; };
@@ -635,7 +659,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     // (looked over in 3D: the course as it was, so it comes in as one step; the view stays as it is, in 3D with the photo)
     const b = base.current, was3d = !!b;
     if (b) { base.current = null; useCourse.setState({ doc: b.doc, past: b.past, future: b.future, gestureStart: null }); useEditor.getState().set({ reviewing: false, selectedId: null } as never); }
-    onImported(shownSite, { ...bringOpts(), ...(was3d && ready3d ? { shown: true } : {}) });
+    onImported(shownSite, { ...bringOpts(), ...((was3d && ready3d) || played.current ? { shown: true } : {}) });
   };
   const reviewButtons = (
     <div className="flex gap-2">

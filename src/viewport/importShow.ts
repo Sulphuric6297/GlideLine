@@ -8,7 +8,7 @@ import * as THREE from "three";
 import { forestDetail } from "../three/treeKit";
 import { getView } from "../state/view";
 import { changeDoc, getDoc, useEditor } from "../state/course";
-import type { ImportLayer } from "../lib/importSite";
+import { isImported, type ImportLayer } from "../lib/importSite";
 
 type P = { x: number; y: number };
 const cl = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x));
@@ -28,7 +28,7 @@ const say = (state: ShowState, extra: Record<string, unknown> = {}) => { (window
 
 /** A site still coming in, handed to the show a part at a time: each part waits in line and is let
  * into the course at a moment the picture is at rest. */
-type LivePart = { kind: "ground" | "lidar" | "sort" | "final"; apply: () => void };
+type LivePart = { kind: "ground" | "photo" | "lidar" | "things" | "sort" | "final"; apply: () => void };
 type LiveState = { queue: LivePart[]; fraction: number; text: string; finalDone: boolean; ended: boolean; name: string; photo?: string; reveal?: () => void };
 const BIG = 1e6;
 const LIVE_ROWS: [string, string][] = [["ground", "Ground"], ["trees", "Trees"], ["water", "Water"], ["paths", "Paths, roads and more"], ["build", "Buildings and more"]];
@@ -106,9 +106,11 @@ const viewReady = async () => {
 export function startLiveImport(o: { name: string; hide: (on: boolean) => void }): LiveImport | null {
   const w = window as any, v0: any = getView(), d0 = getDoc();
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let on = w.__dgLiveImport === true;
-  try { on = on || localStorage.getItem("dg-live-import") === "on"; } catch { /* no storage */ }
-  if (!on || !v0 || v0.software || v0.mobile || reduced || d0.holes.length || d0.items.length) return null;
+  let on = w.__dgLiveImport !== false;
+  try { on = on && localStorage.getItem("dg-live-import") !== "off"; } catch { /* no storage */ }
+  // (the old way, a hand acting it out: a computer only, as it was made)
+  if (HAND && v0?.mobile) on = false;
+  if (!on || !v0 || v0.software || reduced || d0.holes.length || d0.items.some(i => !isImported(i))) return null;
   const L: LiveState = { queue: [], fraction: 0, text: "", finalDone: false, ended: false, name: o.name };
   const snap = { canvas: d0.canvas, gridSize: d0.gridSize, terrainHeights: d0.terrainHeights, terrainOriginal: d0.terrainOriginal, background: d0.background, items: d0.items, lidar: d0.lidar, groundPaint: d0.groundPaint, cutTrees: d0.cutTrees };
   let dead = false, started = false, finish: (ok: boolean) => void = () => {};
@@ -138,7 +140,10 @@ export function startLiveImport(o: { name: string; hide: (on: boolean) => void }
     layer(l) {
       if (dead) return;
       if (l.source === "frame") { if (!started) { started = true; void begin(l); } }
-      else if (l.source === "photo") L.photo = l.background;
+      else if (l.source === "photo") { L.photo = l.background; if (!HAND) L.queue.push({ kind: "photo", apply: () => changeDoc(() => ({ background: l.background }), false) }); }
+      // (what the map has, as it lands: its water, paths, roads and buildings. Its woods wait for
+      // the end, when it's known whether measured trees stand in them.)
+      else if (l.source === "osm" && !HAND) { const add = l.items.filter(i => !(i.type === "area" && i.kind === "woods")); if (add.length) L.queue.push({ kind: "things", apply: () => changeDoc(d => ({ items: [...d.items, ...add] }), false) }); }
       else if (l.source === "elevation") L.queue.push({ kind: "ground", apply: () => changeDoc(() => ({ terrainHeights: l.terrainHeights }), false) });
       else if (l.source === "lidar" && l.trees.length) L.queue.push({ kind: "lidar", apply: () => changeDoc(() => ({ lidar: { source: l.label, trees: l.trees }, terrainHeights: l.terrainHeights }), false) });
     },
@@ -147,7 +152,7 @@ export function startLiveImport(o: { name: string; hide: (on: boolean) => void }
     final(commit) {
       if (dead) return Promise.resolve(false);
       // (the course as it was, then the import's own bringing-in on top of it: one step to undo)
-      L.queue.push({ kind: "final", apply: () => { changeDoc(() => snap, false); commit(); } });
+      L.queue.push({ kind: "final", apply: () => { if (HAND) changeDoc(() => snap, false); commit(); } });
       return done;
     },
     abort: fail,
@@ -187,6 +192,15 @@ class ImportShow {
   private extras: THREE.Object3D | null = null;
   private treeKick = false;
   private treesPlayed = false;
+  /** What's been taken in hand before, by what it is (made again since: left whole, not built twice). */
+  private keys = new Set<string>();
+  /** The parts already built: whole, and put back with the rest at the end. */
+  private was: { trees: ImportShow["trees"]; inst: ImportShow["inst"]; shapes: ImportShow["shapes"]; built: ImportShow["built"] }[] = [];
+  private tally: Record<string, number> = {};
+  /** A site coming in: open at once, straight down, the ground rising when it lands. */
+  private noCover = false;
+  private grounded = true;
+  private groundAt: number | undefined;
   /** A part being let in: the picture comes to rest, the part goes into the course, its things are held back. */
   private absorbing: { part: LivePart; at: number; applied: boolean } | null = null;
   private awaiting: LivePart["kind"] | null = null;
@@ -262,6 +276,17 @@ class ImportShow {
     const fov = ((v.camera.fov ?? 30) * Math.PI) / 180, aspect = box.width / box.height;
     const top = Math.max(this.H / 2 / Math.tan(fov / 2), this.W / 2 / (Math.tan(fov / 2) * aspect)) * 1.45;
     this.cam = { from: { az: 0, polar: 0.0015, dist: top, tx: cx, tz: cy }, to: { az: -0.55, polar: this.phone ? 1.08 : 1.17, dist: span * 1.12 * (aspect < 1 ? Math.min(2.1, 1.05 / aspect + 0.35) : 1), tx: cx - this.W * 0.03, tz: cy + this.H * 0.02 }, orbit: 0.85, lower: 0.1 };
+    const quick = !!this.live && !HAND;
+    if (quick) {
+      // (nothing to make ready: the view straight down over the frame at once, each part as it lands)
+      const f = this.cam.from;
+      this.camTo(f.az, f.polar, f.dist, f.tx, 0, f.tz);
+      this.noCover = true; this.grounded = false; this.cover.style.display = "none";
+      this.T = { cover: 0.01, groundClick: BIG, swoop: [BIG, BIG + 3.5], rise: [BIG, BIG + 2], sunClick: BIG, sun: [BIG, BIG + 3.3], sunClose: BIG + 4, back: BIG + 5, end: BIG + 7 };
+      this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Shaping the ground", val: "", click: BIG, from: BIG, to: BIG + 2 });
+      this.live!.reveal?.(); shield.style.display = ""; skip.style.display = "";
+      v.dirty = true;
+    } else {
     // (from where it ends, so every tree is made as it will be seen; then the scene left to finish)
     this.camTo(this.cam.to.az + this.cam.orbit * 0.5, this.cam.to.polar, this.cam.to.dist, this.cam.to.tx, 30, this.cam.to.tz);
     v.dirty = true;
@@ -302,6 +327,7 @@ class ImportShow {
       this.gather();
       this.beats();
     }
+    }
     this.dress(name);
     say("playing", { steps: this.steps.map(s => s.id), seconds: this.T.end });
     // --- played by the clock (a late frame only shows a later moment: nothing is skipped over)
@@ -328,8 +354,9 @@ class ImportShow {
     for (const it of d.items as any[]) {
       const e = v.objects.get(it.id);
       if (!e || this.seen.has(e.obj)) continue;
-      if (it.type === "tree" ? !want.trees : !want.shapes) { if (it.type === "tree") this.seen.add(e.obj); continue; }
-      this.seen.add(e.obj);
+      if (this.keys.has("o:" + it.id)) { this.seen.add(e.obj); continue; }
+      if (it.type === "tree" ? !want.trees : !want.shapes) { if (it.type === "tree") { this.seen.add(e.obj); this.keys.add("o:" + it.id); } continue; }
+      this.seen.add(e.obj); this.keys.add("o:" + it.id);
       if (it.type === "tree") this.trees.push({ o: e.obj, x: it.x, y: it.y, at: 0, s: -1 });
       else if (it.type === "amenity") this.built.push({ o: e.obj, x: it.x, y: it.y, e: -1 });
     }
@@ -338,7 +365,9 @@ class ImportShow {
       const f = g.userData.forest;
       if (!f || this.seen.has(g)) continue;
       this.seen.add(g);
-      if (!want.trees) continue;
+      const again = !!g.name && this.keys.has("f:" + g.name);
+      if (g.name) this.keys.add("f:" + g.name);
+      if (!want.trees || again) continue;
       const was = Object.prototype.hasOwnProperty.call(f, "update") ? f.update : undefined;
       f.update = () => {};
       this.undo.push(() => { if (was) f.update = was; else delete f.update; });
@@ -350,6 +379,8 @@ class ImportShow {
       if (!it || !(kind === "area" || kind === "line" || kind === "struct") || !want.shapes || this.seen.has(e.obj)) continue;
       this.seen.add(e.obj);
       if (it.type === "area" && it.kind === "woods") { const o = e.obj, vis = o.visible; o.visible = false; this.undo.push(() => { o.visible = vis; }); continue; }
+      if (this.keys.has("s:" + key)) continue;
+      this.keys.add("s:" + key);
       const pts: P[] = it.points?.length ? it.points : [{ x: it.x, y: it.y }];
       const mx = pts.reduce((s, p) => s + p.x, 0) / pts.length, my = pts.reduce((s, p) => s + p.y, 0) / pts.length;
       const water = (it.type === "area" && it.kind === "water") || (it.type === "line" && it.kind === "stream");
@@ -456,7 +487,16 @@ class ImportShow {
     if (this.phone) t += 1.4;
     this.T.sunClick = t + 0.7; this.T.sun = [t + 1.4, t + 4.7]; this.T.sunClose = t + 5.3; this.T.back = t + 5.6; this.T.end = t + 7.6;
   }
-  private step(id: Step["id"]) { return this.steps.find(s => s.id === id); }
+  private step(id: Step["id"]) { for (let i = this.steps.length - 1; i >= 0; i--) if (this.steps[i].id === id) return this.steps[i]; return undefined; }
+  /** The part in hand made whole and put by: the next one is built on its own. */
+  private retire() {
+    for (const tr of this.trees) { tr.o.visible = true; tr.o.scale.set(1, 1, 1); tr.o.updateMatrixWorld(true); }
+    for (const q of this.inst) { (q.m.instanceMatrix.array as Float32Array).set(q.base); q.m.instanceMatrix.needsUpdate = true; }
+    for (const s of this.shapes) { s.o.visible = true; for (const r of s.rev) { if (r.line) r.geo.instanceCount = r.max; else r.geo.setDrawRange(0, Infinity); } for (const q of s.mats) { q.m.transparent = q.tr; q.m.opacity = q.op; } }
+    for (const s of this.built) { s.o.visible = true; s.o.scale.set(1, 1, 1); s.o.updateMatrixWorld(true); if (s.out) s.out.style.opacity = "0"; }
+    this.was.push({ trees: this.trees, inst: this.inst, shapes: this.shapes, built: this.built });
+    this.trees = []; this.inst = []; this.shapes = []; this.built = [];
+  }
 
   /** A step joined on, starting a little after now (or after the one before it). */
   private appendStep(id: Step["id"], t: number) {
@@ -469,8 +509,17 @@ class ImportShow {
       paths: ["paths", "Paths, roads and more", "drawing", "Drawing paths and roads", String(others), HAND ? 3.0 : 0.9, others > 0],
       build: ["build", "Buildings and more", "placing", "Setting down the buildings", String(this.built.length), !HAND ? Math.min(1.4, 0.6 + structs * 0.25) : structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
     };
-    const [tool, name, doing, now, val, len, has] = def[id];
+    const [tool, name, doing, now, val0, len0, has] = def[id];
     if (!has) return;
+    if (!HAND) {
+      // (how many of it there are by now, with what came before)
+      const n = id === "trees" ? nTrees : id === "water" ? waters : id === "paths" ? others : this.built.length;
+      this.tally[id] = (id === "trees" && v.lidarState?.stand?.length ? 0 : this.tally[id] ?? 0) + n;
+      const click = Math.max(t, last.to) + 0.15, len = id === "trees" ? 2.4 : len0;
+      this.steps.push({ id, tool, name, doing, now, val: this.tally[id].toLocaleString(), click, from: click + 0.1, to: click + 0.1 + len });
+      return;
+    }
+    const val = val0, len = len0;
     const click = Math.max(t + (this.live?.finalDone === false && id !== "trees" ? 0.9 : 0), last.to) + 1.0;
     this.steps.push({ id, tool, name, doing, now, val, click, from: click + 0.35, to: click + 0.35 + len });
   }
@@ -478,7 +527,26 @@ class ImportShow {
   /** A site coming in: the next part let in once the step in hand is done, the picture at rest. */
   private liveTick(t: number) {
     const L = this.live!, last = this.steps[this.steps.length - 1];
-    if (!this.absorbing && L.queue.length && t >= last.to + 0.3) this.absorbing = { part: L.queue.shift()!, at: t + 0.45, applied: false };
+    // (the photo: laid on the ground the moment it's here, whatever else is under way)
+    { const pi = L.queue.findIndex(q => q.kind === "photo"); if (pi >= 0) L.queue.splice(pi, 1)[0].apply(); }
+    if (!this.grounded) {
+      // (before the ground: the photo laid down as soon as it's here, then the ground, which starts it all)
+      const v = this.v;
+      for (let i = L.queue.length - 1; i >= 0; i--) if (L.queue[i].kind === "sort") L.queue.splice(i, 1)[0].apply();
+      const gi = this.groundAt === undefined ? L.queue.findIndex(q => q.kind === "ground") : -1;
+      if (gi >= 0) { L.queue.splice(gi, 1)[0].apply(); this.groundAt = t; }
+      const inNow = this.groundAt !== undefined && t >= this.groundAt + 0.4 && ((Object.keys(getDoc().terrainHeights).length > 0 && (v.slowQueue?.size ?? 0) === 0 && v.doc?.heights === v.heightsRef) || t >= this.groundAt + 2.8);
+      if (inNow || (this.groundAt === undefined && L.queue.some(q => q.kind === "final"))) {
+        const hs = Object.values(getDoc().terrainHeights ?? {}) as number[];
+        let lo = 0, hi = 0; for (const h of hs) { if (h < lo) lo = h; if (h > hi) hi = h; }
+        this.T.groundClick = t + 0.2; this.T.swoop = [t + 0.3, t + 3.8]; this.T.rise = [t + 0.5, t + 2.5];
+        const g = this.steps[0]; g.click = t + 0.2; g.from = this.T.rise[0]; g.to = this.T.rise[1]; g.val = `${Math.round(hi - lo)} ft of climb`;
+        this.grounded = true;
+        say("playing", { steps: this.steps.map(s => s.id), seconds: this.T.end });
+      }
+      return;
+    }
+    if (!this.absorbing && L.queue.length && t >= last.to + 0.3) this.absorbing = { part: L.queue.shift()!, at: t + (HAND ? 0.45 : 0.15), applied: false };
     const a = this.absorbing;
     if (a && !a.applied && t >= a.at) {
       a.applied = true;
@@ -498,7 +566,23 @@ class ImportShow {
     if (!kind) return;
     this.awaiting = null;
     for (let n = 0; n < 60 && (v.slowQueue?.size ?? 0) > 0; n++) v.drainSlow(1e9);
-    if (kind === "lidar") {
+    if (kind === "photo") {
+      const d = this.realDoc;
+      this.photoReal = d.background?.url ? (d.background.opacity ?? 1) : 0;
+    } else if (!HAND && kind !== "ground") {
+      // (each part built on its own: what was built before stays whole)
+      this.retire();
+      this.gather();
+      for (const id of ["trees", "water", "paths", "build"] as const) this.appendStep(id, t);
+      if (kind === "final") {
+        const end = Math.max(t, this.steps[this.steps.length - 1].to);
+        this.T.sunClick = end + 0.3; this.T.sun = [end + BIG, end + 2 * BIG]; this.T.sunClose = end + 0.2; this.T.back = end + 0.2; this.T.end = end + 1.8;
+        const d = this.realDoc;
+        this.sunReal = { azimuth: d.sun?.azimuth ?? 225, altitude: d.sun?.altitude ?? 38, shadows: d.sun?.shadows ?? 0.65 };
+        this.photoReal = d.background?.url ? (d.background.opacity ?? 1) : 0;
+        this.live!.finalDone = true;
+      }
+    } else if (kind === "lidar") {
       this.gather({ trees: true, shapes: false });
       if (this.trees.length + this.inst.length) { this.appendStep("trees", t); this.treesPlayed = true; }
     } else if (kind === "final") {
@@ -550,7 +634,7 @@ class ImportShow {
     { const v2 = this.v, own = Object.prototype.hasOwnProperty.call(v2, "photoSkyFor") ? v2.photoSkyFor : undefined; v2.photoSkyFor = () => {}; this.undo.push(() => { if (own) v2.photoSkyFor = own; else delete v2.photoSkyFor; }); }
     // (whatever the app hands the view meanwhile, the show's sun and ground stay the show's)
     const v = this.v, had = Object.prototype.hasOwnProperty.call(v, "setDoc") ? v.setDoc : undefined, set = v.setDoc.bind(v);
-    v.setDoc = (doc: any) => { this.realDoc = doc; set(this.dressed(doc)); if (this.live) this.afterDoc(); };
+    v.setDoc = (doc: any) => { this.realDoc = doc; if (this.live && !HAND) this.photoReal = doc.background?.url ? (doc.background.opacity ?? 1) : 0; set(this.dressed(doc)); if (this.live) this.afterDoc(); };
     this.undo.push(() => { if (had) v.setDoc = had; else delete v.setDoc; set(this.realDoc); });
   }
   private dressed(doc: any) {
@@ -563,7 +647,7 @@ class ImportShow {
     if (this.extras?.visible) this.extras.visible = false;
     let shade = false;
     // the cover lifts off the photo, seen straight down
-    const cv = 1 - io(t / T.cover);
+    const cv = this.noCover ? 0 : 1 - io(t / T.cover);
     this.cover.style.opacity = String(cv); this.cover.style.display = cv <= 0.001 ? "none" : "grid";
     // the camera: one move, down from overhead and on round the site, lower at the end to take in the sky
     const k = io((t - T.swoop[0]) / (T.swoop[1] - T.swoop[0])), a = this.cam.from, b = this.cam.to;
@@ -707,11 +791,13 @@ class ImportShow {
     c.style.display = this.scene.open && !this.scene.shut ? "none" : "";
     const curStep = this.steps.find(s => t < s.to);
     q("ttl").textContent = `Bringing in ${name}`;
-    q("now").textContent = done ? (HAND ? "The light through the day" : "Putting it together") : curStep && t >= curStep.from ? curStep.now : this.live && !curStep ? this.live.text || "Fetching the rest…" : "…";
+    q("now").textContent = done ? (HAND ? "The light through the day" : "Putting it together") : curStep && t >= curStep.from ? curStep.now : this.live && (!curStep || !HAND) ? this.live.text || "Fetching the rest…" : "…";
     q("bar").style.width = `${(this.live && !this.live.finalDone ? cl(this.live.fraction) * 0.85 : cl((t - T.cover) / (lastStep.to - T.cover))) * 100}%`; q("barbox").style.display = done ? "none" : "";
-    this.steps.forEach(s => { const row = c.querySelector(`[data-row="${s.id}"]`) as HTMLElement;
-      if (!row) return;
-      const on2 = t >= s.from && t < s.to, dn = t >= s.to, dot = row.querySelector("[data-dot]") as HTMLElement, vv = row.querySelector("[data-v]") as HTMLElement;
+    c.querySelectorAll<HTMLElement>("[data-row]").forEach(row => { const ss = this.steps.filter(x => x.id === row.dataset.row);
+      if (!ss.length) return;
+      // (a part that came in more than once: at work while any of it is, done once the last is)
+      const s = ss.find(x => t >= x.from && t < x.to) ?? [...ss].reverse().find(x => t >= x.to) ?? ss[0];
+      const on2 = t >= s.from && t < s.to, dn = !on2 && t >= s.to, dot = row.querySelector("[data-dot]") as HTMLElement, vv = row.querySelector("[data-v]") as HTMLElement;
       row.style.color = on2 ? "#fafafa" : dn ? "#e4e4e7" : "#71717a"; dot.textContent = dn ? "✓" : ""; dot.style.background = dn ? "#a2cf6a" : "none"; dot.style.boxShadow = dn ? "none" : on2 ? "inset 0 0 0 2px #a2cf6a" : "inset 0 0 0 1.5px rgba(255,255,255,.14)";
       vv.textContent = on2 ? s.doing : dn ? s.val : ""; vv.style.color = on2 ? "#a2cf6a" : "#a1a1aa"; vv.style.fontWeight = on2 ? "600" : "400"; });
     if (shade && (!this.phone || this.frameN % 3 === 0)) v.shadowsDirty = true;
@@ -777,10 +863,7 @@ class ImportShow {
     useEditor.getState().set({ view: "3d" } as any);
     if (v.disposed) { for (const e of this.els) e.remove(); return; }
     v.ground.group.scale.y = 1; v.ground.group.updateMatrixWorld(true);
-    for (const tr of this.trees) { tr.o.visible = true; tr.o.scale.set(1, 1, 1); tr.o.updateMatrixWorld(true); }
-    for (const q of this.inst) { (q.m.instanceMatrix.array as Float32Array).set(q.base); q.m.instanceMatrix.needsUpdate = true; }
-    for (const s of this.shapes) { s.o.visible = true; for (const r of s.rev) { if (r.line) r.geo.instanceCount = r.max; else r.geo.setDrawRange(0, Infinity); } for (const q of s.mats) { q.m.transparent = q.tr; q.m.opacity = q.op; } }
-    for (const s of this.built) { s.o.visible = true; s.o.scale.set(1, 1, 1); s.o.updateMatrixWorld(true); }
+    this.retire();
     if (v.haze) v.haze.density = 0;
     this.sunSet = null; this.photoNow = this.photoReal;
     for (const u of this.undo.reverse()) { try { u(); } catch (err) { console.warn(err); } }
