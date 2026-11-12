@@ -232,7 +232,8 @@ const offLimits = (bx: number, by: number, never: (p: P) => boolean, roofs?: { n
 
 /** How much brush (0 only the surest .. 4 every hint; 2 the best guess) and how thick (-1 thinner
  * .. 1 thicker), and patches made lighter by hand (by a block in them: how many steps lighter). */
-export type BrushTune = { much: number; thick: number; set?: Record<number, number> };
+/** `put`: blocks given a level by hand (0 none to 3 heavy), whatever was found there. */
+export type BrushTune = { much: number; thick: number; set?: Record<number, number>; put?: Record<number, number> };
 export const BEST_GUESS: BrushTune = { much: 2, thick: 0 };
 
 // (the chance a block needs for brush at each step of How much; and over it, how much more for
@@ -241,18 +242,23 @@ const AT = [0.75, 0.62, 0.5, 0.4, 0.3];
 
 /** Each block's level as tuned: 0 none, 1 light, 2 medium, 3 heavy (NaN: never). */
 export const brushLevels = (u: Underbrush, t: BrushTune) => {
-  const at = AT[Math.max(0, Math.min(4, Math.round(t.much)))], step = 0.07 * (1 - 0.6 * t.thick);
+  // (medium and heavy where the brush is surest, wherever How much stands: asking for more adds
+  // light brush at the edges, and never makes what was found thicker)
+  const at = AT[Math.max(0, Math.min(4, Math.round(t.much)))], thick = Math.max(-1, Math.min(1, t.thick)), s = 1 - 0.6 * thick;
+  const med = Math.max(at + 0.05 * s, 0.6 - 0.08 * thick), hvy = Math.max(at + 0.1 * s, 0.7 - 0.08 * thick);
   const out = new Uint8Array(u.bx * u.by);
   for (let q = 0; q < out.length; q++) {
     const p = u.chance[q];
     if (!(p >= at)) continue;
-    out[q] = p >= at + 2 * step ? 3 : p >= at + step ? 2 : 1;
+    out[q] = p >= hvy ? 3 : p >= med ? 2 : 1;
   }
   // (patches made lighter by hand: every block of the patch the tap fell in, as it was found)
   if (t.set) {
     const found = out.slice();
     for (const [k, steps] of Object.entries(t.set)) for (const q of patchOf(found, u.bx, u.by, Number(k))) out[q] = Math.max(0, found[q] - steps);
   }
+  // (blocks given a level by hand; never where brush can't be: a road, a roof, water)
+  if (t.put) for (const [k, level] of Object.entries(t.put)) { const q = Number(k); if (q >= 0 && q < out.length && !Number.isNaN(u.chance[q])) out[q] = Math.max(0, Math.min(3, level)); }
   return out;
 };
 

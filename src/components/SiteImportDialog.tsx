@@ -104,7 +104,7 @@ function BrushRow({ on, onSwitch, tune, onTune, open, onOpen, acres, from, surve
             <div className="mt-1">
               <Slider label="How thick" min={-1} max={1} step={0.25} value={tune.thick} onChange={v => onTune({ ...tune, thick: v })} format={v => (v <= -0.75 ? "Much thinner" : v < 0 ? "Thinner" : v === 0 ? "As found" : v < 0.75 ? "Thicker" : "Much thicker")} />
               <p className="text-[11.5px] text-zinc-400 leading-snug">Tap a patch on the map to make it lighter, a step at a time, then gone. Tap again to bring it back.</p>
-              {(tune.much !== BEST_GUESS.much || tune.thick !== BEST_GUESS.thick || Object.keys(tune.set ?? {}).length > 0) && (
+              {(tune.much !== BEST_GUESS.much || tune.thick !== BEST_GUESS.thick || Object.keys(tune.set ?? {}).length > 0 || Object.keys(tune.put ?? {}).length > 0) && (
                 <button className="text-[12px] text-orange-300 hover:text-orange-200 py-1" onClick={() => onTune({ ...BEST_GUESS })} data-testid="review-underbrush-reset">Back to the best guess</button>
               )}
             </div>
@@ -410,6 +410,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
       // (all in: looked at first, each source on or off, before any of it comes into the course)
       if (open.current && !stop.signal.aborted) {
         const counts = sourceCounts(site);
+        (window as { __dgImportSite?: unknown }).__dgImportSite = site;
         const on = Object.fromEntries((Object.keys(counts) as SourceKey[]).map(k => [k, startsOn(k, site)]));
         // (built in front of you: brought in as it stands once the show reaches it; skipped, looked at first as ever)
         const kept = base.current;
@@ -752,7 +753,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   ) : null;
   const review3d = in3d && ready3d && review && site0 && createPortal(
     <ImportReview3d phone={phone} again={again} site0={site0} left={left} onLeave={b => setLeft(l => [...l, b])} onUndo={() => setLeft(l => l.slice(0, -1))} look={look} onLook={setLook}
-      groups={groupEls} photoChoice={photoChoiceEl} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
+      groups={groupEls} photoChoice={photoChoiceEl} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
   const closeBtn = <button className="glass w-11 h-11 rounded-full grid place-items-center text-zinc-300 hover:text-zinc-50" onClick={close} aria-label="Close" title="Close"><X size={20} /></button>;
 
   if (phone) {

@@ -775,7 +775,7 @@ export class CourseView {
     this.tool = tool;
     if (tool.mode === "select") this.updateGhost(null);
     // (painting underbrush: each patch tinted by how thick it is, as Look first shows it)
-    const k = this.paintKind(), tint = !!k?.brush;
+    const k = this.paintKind(), tint = !!k?.brush || this.brushShown;
     if (tint !== this.brushTint) { this.brushTint = tint; if (this.doc) this.syncShapes(); }
     if (this.doc) this.syncSelection();
     this.updateCursor();
@@ -786,6 +786,17 @@ export class CourseView {
 
   /** Underbrush tinted by its level (while it's being painted). */
   private brushTint = false;
+  /** Underbrush shown tinted and outlined whatever the tool (a site being looked over). */
+  private brushShown = false;
+  /** The patch of it in hand: brighter, its edge white. */
+  private brushPicked: string | null = null;
+  setBrushShown(on: boolean, picked: string | null = null) {
+    if (on === this.brushShown && picked === this.brushPicked) return;
+    this.brushShown = on; this.brushPicked = picked;
+    this.brushTint = on || !!this.paintKind()?.brush;
+    if (this.doc) this.syncShapes();
+    this.invalidate();
+  }
   /** What the brush paints: the area being reshaped's kind, or the tool's (a stand of bushes is
    * underbrush); null when it isn't painting areas. */
   private paintKind(): PaintKind | null {
@@ -3791,16 +3802,18 @@ export class CourseView {
       // (woods: no fill, the ground under the trees as it is; the trees show it, its edge line only)
       const bare = a.kind === "woods";
       const tinted = this.brushTint && a.kind === "woods" && (a.bushes ?? 0) >= 1 ? levelOf(a) : 0;
-      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted, standing]), () => {
+      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted, tinted && a.id === this.brushPicked, standing]), () => {
         const g = new THREE.Group();
         // (underbrush being painted: tinted light, medium or heavy, the heavier over the lighter)
         if (tinted) {
-          const tc = ["", "#fde68a", "#f59e0b", "#b45309"][tinted];
+          const tc = ["", "#fde68a", "#f59e0b", "#b45309"][tinted], hot = a.id === this.brushPicked;
           const geo = this.draped.get(a.points, (x, y) => this.h(x, y), hv, doc.gridSize, 0.2 + tinted * 0.02);
-          const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: tc, transparent: true, opacity: 0.13, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 }));
+          const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: tc, transparent: true, opacity: hot ? 0.36 : 0.13, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 }));
           mesh.renderOrder = 3 + tinted * 0.01;
           g.add(mesh);
-          g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.1, true), tc, 2, { order: 5 }));
+          g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.1, true), hot ? "#ffffff" : tc, hot ? 3.5 : 2, { order: hot ? 6 : 5 }));
+          // (seen through the trees: underbrush lies under them, and it has to be plain where it is)
+          g.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m && !Array.isArray(m)) { m.depthTest = false; o.renderOrder = 40 + tinted + (hot ? 5 : 0); } });
         }
         const fill = photo ? meta.fill : Math.min(0.9, meta.fill + 0.35);
         const rule = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo";
