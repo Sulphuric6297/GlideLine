@@ -330,10 +330,11 @@ export default function App() {
     useEditor.getState().set({ step: "design", tool: "select" });
     setTimeout(() => getView()?.fitSite(), 50);
     // (a first site, on a computer: built in front of you in 3D; see viewport/importShow)
-    void playImportShow();
     const outside = carried.outside ? ` ${carried.outside} ${carried.outside === 1 ? "thing you drew is" : "things you drew are"} now past the site's edges.` : "";
     const name = getDoc().name.replace(/ Disc Golf Course$/, "");
-    setSiteReady({ name, facts: readyFacts(site, getDoc().units, mappedCourse?.holes.length ?? 0), said: `Site brought in${cameIn(site)}.${outside}` });
+    // (what came in is said once the show is over, or at once where it doesn't play)
+    const ready = { name, facts: readyFacts(site, getDoc().units, mappedCourse?.holes.length ?? 0), said: `Site brought in${cameIn(site)}.${outside}` };
+    void playImportShow().finally(() => setSiteReady(ready));
     if (outside) toast(outside.trim(), "info");
     if (site.osmFailed) osmFailedToast();
   };

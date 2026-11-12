@@ -42,7 +42,8 @@ export async function playImportShow(opts: { force?: boolean } = {}): Promise<vo
   }
   const doc = getDoc();
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (!v?.doc || (!opts.force && (v.software || v.mobile || reduced || doc.holes.length > 0))) { say("skipped"); return; }
+  const why = !v?.doc ? "no 3D view" : opts.force ? "" : v.software ? "no graphics card" : v.mobile ? "a phone" : reduced ? "reduced motion" : doc.holes.length > 0 ? "the course has holes" : "";
+  if (why) { say("skipped", { why }); console.info(`Import show not played: ${why}`); return; }
   const show = new ImportShow(v, speed);
   try { await show.run(); } catch (err) { console.warn("Import show stopped", err); } finally { show.restore(); say("done"); }
 }
@@ -418,8 +419,8 @@ class ImportShow {
     c.style.opacity = String(io((t - T.cover + 0.2) / 0.6) * (1 - io((t - T.end + 1.0) / 0.8)));
     c.style.display = this.scene.open && !this.scene.shut ? "none" : "";
     const curStep = this.steps.find(s => t < s.to);
-    q("ttl").textContent = done ? `${name} is in` : `Bringing in ${name}`;
-    q("now").textContent = done ? "Press H for New hole to lay out your first one." : curStep && t >= curStep.from ? curStep.now : "…";
+    q("ttl").textContent = `Bringing in ${name}`;
+    q("now").textContent = done ? "The light through the day" : curStep && t >= curStep.from ? curStep.now : "…";
     q("bar").style.width = `${cl((t - T.cover) / (lastStep.to - T.cover)) * 100}%`; q("barbox").style.display = done ? "none" : "";
     this.steps.forEach((s, i) => { const row = c.querySelector(`[data-row="${i}"]`) as HTMLElement, on2 = t >= s.from && t < s.to, dn = t >= s.to, dot = row.querySelector("[data-dot]") as HTMLElement, vv = row.querySelector("[data-v]") as HTMLElement;
       row.style.color = on2 ? "#fafafa" : dn ? "#e4e4e7" : "#71717a"; dot.textContent = dn ? "✓" : ""; dot.style.background = dn ? "#a2cf6a" : "none"; dot.style.boxShadow = dn ? "none" : on2 ? "inset 0 0 0 2px #a2cf6a" : "inset 0 0 0 1.5px rgba(255,255,255,.14)";
@@ -471,6 +472,8 @@ class ImportShow {
     const v = this.v;
     try { this.shutScene(); } catch { /* the panel's gone */ }
     if (this.picked !== "select") { try { this.pick("select"); } catch { /* no toolbar */ } }
+    // (left in 3D, where it ended: looking straight down at its start had the app call the view 2D)
+    useEditor.getState().set({ view: "3d" } as any);
     if (v.disposed) { for (const e of this.els) e.remove(); return; }
     v.ground.group.scale.y = 1; v.ground.group.updateMatrixWorld(true);
     for (const tr of this.trees) { tr.o.visible = true; tr.o.scale.set(1, 1, 1); tr.o.updateMatrixWorld(true); }
