@@ -808,7 +808,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
       groups={groupEls} photoChoice={photoChoiceEl} brushRow={brushRowEl} notes={reviewNotes} failed={failedNames} onRetry={() => void run(review.photo, true)} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { stopImportMusic(1200); end3d(); setReview(null); setArrived(null); }} />, document.body);
   // (out of the way while the site is built or looked over in the 3D view: it fades into the view
   // as the build begins, and is gone while the site is looked over)
-  const awayStyle: React.CSSProperties | undefined = in3d ? { display: "none" } : liveOn ? { opacity: 0, visibility: "hidden", pointerEvents: "none", transition: "opacity .6s ease, visibility 0s linear .6s" } : { transition: "opacity .3s ease" };
+  const awayStyle: React.CSSProperties | undefined = in3d ? { display: "none" } : liveOn ? { opacity: 0, visibility: "hidden", pointerEvents: "none", transition: "opacity .75s ease, visibility 0s linear .75s" } : { transition: "opacity .3s ease" };
   const closeBtn = <button className="glass w-11 h-11 rounded-full grid place-items-center text-zinc-300 hover:text-zinc-50" onClick={close} aria-label="Close" title="Close"><X size={20} /></button>;
 
   if (phone) {

@@ -39,11 +39,14 @@ type Step = { id: "ground" | "trees" | "water" | "paths" | "build"; tool: string
 /** Whether a hand acts the build out with the app's tools (off: each part comes in on its own). */
 const HAND = typeof window !== "undefined" && (window as any).__dgShowHand === true;
 
+/** How fast the build plays: with no hand acting it out, a quarter slower than its own timings. */
+const PACE = HAND ? 1 : 0.8;
+
 /** Plays the show on the course just brought in (a first site, on a device with a graphics card:
  * a computer, or a phone in its own layout; with motion reduced, nothing happens). Resolves when
  * it's over. */
 export async function playImportShow(opts: { force?: boolean } = {}): Promise<void> {
-  const w = window as any, speed: number = w.__dgShowSpeed ?? 1;
+  const w = window as any, speed: number = w.__dgShowSpeed ?? PACE;
   say("waiting");
   // (the Design step's 3D view, once it's there with this course)
   useEditor.getState().set({ step: "design", view: "3d", tool: "select", selectedId: null } as any);
@@ -135,7 +138,7 @@ export function startLiveImport(o: { name: string; hide: (on: boolean) => void }
     say("waiting");
     const v = await viewReady();
     if (!v || dead) { fail(); return; }
-    const show = new ImportShow(v, w.__dgShowSpeed ?? 1, L);
+    const show = new ImportShow(v, w.__dgShowSpeed ?? PACE, L);
     try { await show.run(); } catch (err) { console.warn("Import show stopped", err); }
     show.restore();
     if (L.finalDone) { L.ended = true; say("done"); finish(true); } else fail();
@@ -377,12 +380,15 @@ class ImportShow {
       else if (it.type === "amenity") this.built.push({ o: e.obj, x: it.x, y: it.y, e: -1 });
     }
     // (the woods' and the measured trees: each one's own place kept, to grow it by; held as they are)
+    const keyOf = new Map<object, string>();
+    for (const [k, e2] of v.shapes as Map<string, { obj: THREE.Object3D }>) keyOf.set(e2.obj, k);
     for (const g of v.itemsGroup.children as THREE.Object3D[]) {
       const f = g.userData.forest;
       if (!f || this.seen.has(g)) continue;
       this.seen.add(g);
-      const again = !!g.name && this.keys.has("f:" + g.name);
-      if (g.name) this.keys.add("f:" + g.name);
+      // (which woods it is: by the view's own name for it, as every wood's group is called the same)
+      const fk = keyOf.get(g), again = !!fk && this.keys.has("f:" + fk);
+      if (fk) this.keys.add("f:" + fk);
       if (!want.trees || again) continue;
       const was = Object.prototype.hasOwnProperty.call(f, "update") ? f.update : undefined;
       f.update = () => {};
@@ -727,10 +733,12 @@ class ImportShow {
     const rise = 0.0001 + 0.9999 * io((t - T.rise[0]) / (T.rise[1] - T.rise[0]));
     if (v.ground.group.scale.y !== rise) { v.ground.group.scale.y = rise; v.ground.group.updateMatrixWorld(true); shade = true; }
     // the trees, each as the hand reaches its stand: up out of the ground
-    const ts = this.step("trees"), tp = ts ? (t - ts.from) / (ts.to - ts.from) : 2, span = 0.13;
+    // (a part just taken in, its steps not begun: all of it held back till they do)
+    const hold = !!this.pending;
+    const ts = this.step("trees"), tp = hold ? -1 : ts ? (t - ts.from) / (ts.to - ts.from) : 2, span = 0.13;
     const growing = tp > -0.05 && tp < 1.05;
     // (a rush of air as they come up)
-    if (!HAND && ts && ts !== this.rushFor && t >= ts.from && t < ts.to) { this.rushFor = ts; playTreesSound((ts.to - ts.from) / this.speed); }
+    if (!HAND && !hold && ts && ts !== this.rushFor && t >= ts.from && t < ts.to) { this.rushFor = ts; playTreesSound((ts.to - ts.from) / this.speed); }
     if (growing || this.frameN === 1 || this.treeKick || (tp >= 1.05 && this.trees[0]?.s !== 1 && this.trees.length)) {
       for (const tr of this.trees) { const s = out((tp - tr.at * (1 - span)) / span); if (s === tr.s) continue; tr.s = s; tr.o.visible = s > 0.001; tr.o.scale.set(0.35 + 0.65 * s, Math.max(0.0001, s), 0.35 + 0.65 * s); tr.o.updateMatrixWorld(true); }
     }
@@ -747,7 +755,7 @@ class ImportShow {
     }
     // the water runs down its bed; then each path, road and area is drawn along its length
     const ws = this.step("water"), ps = this.step("paths");
-    const wp = ws ? (t - ws.from) / (ws.to - ws.from) : 2, pp = ps ? (t - ps.from) / (ps.to - ps.from) : 2;
+    const wp = hold ? -1 : ws ? (t - ws.from) / (ws.to - ws.from) : 2, pp = hold ? -1 : ps ? (t - ps.from) / (ps.to - ps.from) : 2;
     for (const s of this.shapes) {
       if (s.struct) continue;
       const tr = this.traced.get(s), last = this.pathPath.length - 1;
@@ -758,7 +766,7 @@ class ImportShow {
       for (const q of s.mats) { q.m.transparent = p < 1 ? true : q.tr; q.m.opacity = q.op * p; }
     }
     // buildings: each drawn on the ground by its outline, then lifted; what stands beside them after
-    const bs = this.step("build"), bp = bs ? (t - bs.from) / (bs.to - bs.from) : 2;
+    const bs = this.step("build"), bp = hold ? -1 : bs ? (t - bs.from) / (bs.to - bs.from) : 2;
     let drawing: { s: ImportShow["built"][number]; line: number } | null = null, acc = 0;
     const wOf = (s: ImportShow["built"][number]) => (s.pts ? 1 : 0.25), total = this.built.reduce((n, s) => n + wOf(s), 0);
     for (const s of this.built) {

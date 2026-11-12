@@ -482,8 +482,8 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
       tip("Click anything in the view to leave just it out.")
     ] : [
       <div className={`${box} !py-1.5`} data-testid="review-summary">
-        {summary.map(([label, n, unit], k) => <div key={label} className="flex py-[6px] text-[13px] border-b border-white/[0.06] dg-step-row" style={{ animationDelay: `${90 + k * 55}ms` }}><span>{label}</span><span className="ml-auto tabular-nums text-zinc-300"><CountUp to={n} />{unit}</span></div>)}
-        <div className="flex py-[6px] text-[13px] text-orange-300 dg-step-row" style={{ animationDelay: `${90 + summary.length * 55}ms` }}><span>Left out by you</span><span className="ml-auto tabular-nums">{leftN.toLocaleString()}</span></div>
+        {summary.map(([label, n, unit], k) => <div key={label} className="flex py-[6px] text-[13px] border-b border-white/[0.06] dg-step-row" style={{ animationDelay: `${110 + k * 70}ms` }}><span>{label}</span><span className="ml-auto tabular-nums text-zinc-300"><CountUp to={n} />{unit}</span></div>)}
+        <div className="flex py-[6px] text-[13px] text-orange-300 dg-step-row" style={{ animationDelay: `${110 + summary.length * 70}ms` }}><span>Left out by you</span><span className="ml-auto tabular-nums">{leftN.toLocaleString()}</span></div>
       </div>,
       notesEl,
       <button className="self-start text-[12px] text-zinc-400 hover:text-zinc-100 py-0.5" onClick={onFlat} data-testid="review-flat">Look at it on the flat map ›</button>
@@ -512,7 +512,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
               <div className="text-[13px] text-zinc-300 mt-0.5">{step.q}{step.id === "bring" ? " You can still change all of it after, in Design." : ""}</div>
               {failedEl}
             </div>
-            {body.filter(Boolean).map((b, k) => <div key={k} className="flex flex-col dg-step-row" style={{ animationDelay: `${40 + k * 50}ms` }}>{b}</div>)}
+            {body.filter(Boolean).map((b, k) => <div key={k} className="flex flex-col dg-step-row" style={{ animationDelay: `${50 + k * 62}ms` }}>{b}</div>)}
           </div>
         </AutoHeight>
         {treeRow && (

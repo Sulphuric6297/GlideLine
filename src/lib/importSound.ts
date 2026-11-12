@@ -1,11 +1,18 @@
 // The import's sound: music played softly from the moment a site is asked for till it's brought
-// in (it fades out as Design begins), and a rush of air as the trees come up. Off with one switch,
-// remembered. A sound that isn't there (the music is kept out of the public code: see
-// public/sound/README.md) is simply not played.
+// in (quieter once the build is done, fading out as Design begins), a rush of air as the trees
+// come up, and a chime as the build ends. Off with one switch, remembered. A sound that isn't
+// there (the music and the chime are kept out of the public code: see public/sound/README.md) is
+// simply not played.
+//
+// The music is a file played as it loads. The two effects are fetched and made ready at the
+// import's press, so each sounds the instant it's asked for (and from where its sound begins, past
+// the silence at its start).
 const KEY = "dg-import-sound";
 const MUSIC = `${import.meta.env.BASE_URL}zz-import-music.mp3`, TREES = `${import.meta.env.BASE_URL}sound/import-trees.mp3`;
 const CHIME = `${import.meta.env.BASE_URL}zz-import-chime.mp3`;
-const MUSIC_VOLUME = 0.16, MUSIC_DIMMED = 0.07, TREES_VOLUME = 0.2, CHIME_VOLUME = 0.3;
+const MUSIC_VOLUME = 0.16, MUSIC_DIMMED = 0.07;
+/** Each effect: where its sound begins in its file (s), and how loud (both files are quiet ones). */
+const FX = { [TREES]: { from: 0.3, gain: 2.0 }, [CHIME]: { from: 0.42, gain: 2.4 } };
 
 export const importSoundOn = () => { try { return localStorage.getItem(KEY) !== "off"; } catch { return true; } };
 
@@ -22,10 +29,42 @@ const fade = (el: HTMLAudioElement, to: number, ms: number, then?: () => void) =
   fades.set(el, id);
 };
 
+// --- the effects, ready before they're wanted
+let ctx: AudioContext | null = null;
+const ready = new Map<string, AudioBuffer>(), asked = new Set<string>();
+const sounding = new Set<{ src: AudioBufferSourceNode; gain: GainNode }>();
+const prepare = () => {
+  const AC = typeof window === "undefined" ? undefined : window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AC) return;
+  if (!ctx) ctx = new AC();
+  void ctx.resume().catch(() => { /* not allowed yet */ });
+  for (const url of [TREES, CHIME]) {
+    if (asked.has(url)) continue;
+    asked.add(url);
+    fetch(url).then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error("not there")))).then(b => ctx!.decodeAudioData(b)).then(buf => { ready.set(url, buf); }).catch(() => { asked.delete(url); });
+  }
+};
+/** An effect, at once; `hold`: faded out after that many seconds, over `out`. */
+const play = (url: string, hold?: number, out = 1.6) => {
+  const buf = ready.get(url), fx = FX[url];
+  if (!ctx || !buf || !fx || !importSoundOn()) return null;
+  const src = ctx.createBufferSource(), gain = ctx.createGain(), one = { src, gain };
+  src.buffer = buf; gain.gain.value = fx.gain;
+  src.connect(gain); gain.connect(ctx.destination);
+  src.onended = () => { sounding.delete(one); };
+  sounding.add(one);
+  src.start(0, Math.min(fx.from, Math.max(0, buf.duration - 0.1)));
+  if (hold !== undefined) { const t = ctx.currentTime + hold; gain.gain.setValueAtTime(fx.gain, t); gain.gain.linearRampToValueAtTime(0, t + out); src.stop(t + out + 0.05); }
+  return one;
+};
+
+// --- the music
 let music: HTMLAudioElement | null = null, leaving = false;
-/** The music, from quiet, round and round (asked for from a press, as browsers want). */
+/** The music, from quiet, round and round, and the effects made ready (asked for from a press, as
+ * browsers want). */
 export const startImportMusic = () => {
   if (!importSoundOn() || typeof Audio === "undefined") return;
+  prepare();
   if (music && !leaving) return;
   if (music) { window.clearInterval(fades.get(music)); music.pause(); }
   const el = new Audio(MUSIC);
@@ -42,24 +81,17 @@ export const stopImportMusic = (ms = 3000) => {
 
 /** The build's end: a chime, as the music dims (it plays on, quieter, while the site is looked over). */
 export const playImportChime = () => {
-  if (!importSoundOn() || typeof Audio === "undefined") return;
+  if (!importSoundOn()) return;
   if (music && !leaving) fade(music, MUSIC_DIMMED, 2800);
-  const el = new Audio(CHIME);
-  el.volume = CHIME_VOLUME;
-  void el.play().catch(() => { /* not there: no chime */ });
+  play(CHIME);
 };
 
-let rush: HTMLAudioElement | null = null;
-/** The rush of air as trees come up, for about as long as they take (not over one still sounding). */
+let rush: object | null = null;
+/** The rush of air as trees come up, swelling for about as long as they take (not over one still
+ * sounding). */
 export const playTreesSound = (seconds: number) => {
-  if (!importSoundOn() || typeof Audio === "undefined" || rush) return;
-  const el = new Audio(TREES);
-  el.volume = 0; rush = el;
-  const done = () => { el.pause(); if (rush === el) rush = null; };
-  void el.play().then(() => {
-    fade(el, TREES_VOLUME, 350);
-    window.setTimeout(() => fade(el, 0, 1600, done), Math.max(900, seconds * 1000 + 900));
-  }).catch(done);
+  if (rush && sounding.has(rush as never)) return;
+  rush = play(TREES, Math.max(1.2, seconds + 0.9), 1.8);
 };
 
 /** The import's sound on or off, remembered; off, whatever is sounding stops. */
@@ -67,5 +99,5 @@ export const setImportSound = (on: boolean) => {
   try { localStorage.setItem(KEY, on ? "on" : "off"); } catch { /* no storage */ }
   if (on) { startImportMusic(); return; }
   if (music) { leaving = false; stopImportMusic(350); }
-  if (rush) { const el = rush; fade(el, 0, 250, () => { el.pause(); if (rush === el) rush = null; }); }
+  for (const one of sounding) { try { one.gain.gain.cancelScheduledValues(0); one.gain.gain.value = 0; one.src.stop(); } catch { /* ended already */ } }
 };
