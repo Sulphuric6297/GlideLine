@@ -4,7 +4,8 @@
 // public/sound/README.md) is simply not played.
 const KEY = "dg-import-sound";
 const MUSIC = `${import.meta.env.BASE_URL}zz-import-music.mp3`, TREES = `${import.meta.env.BASE_URL}sound/import-trees.mp3`;
-const MUSIC_VOLUME = 0.16, TREES_VOLUME = 0.2;
+const CHIME = `${import.meta.env.BASE_URL}zz-import-chime.mp3`;
+const MUSIC_VOLUME = 0.16, MUSIC_DIMMED = 0.07, TREES_VOLUME = 0.2, CHIME_VOLUME = 0.3;
 
 export const importSoundOn = () => { try { return localStorage.getItem(KEY) !== "off"; } catch { return true; } };
 
@@ -37,6 +38,15 @@ export const stopImportMusic = (ms = 3000) => {
   if (!el || leaving) return;
   leaving = true;
   fade(el, 0, ms, () => { el.pause(); if (music === el) { music = null; leaving = false; } });
+};
+
+/** The build's end: a chime, as the music dims (it plays on, quieter, while the site is looked over). */
+export const playImportChime = () => {
+  if (!importSoundOn() || typeof Audio === "undefined") return;
+  if (music && !leaving) fade(music, MUSIC_DIMMED, 2800);
+  const el = new Audio(CHIME);
+  el.volume = CHIME_VOLUME;
+  void el.play().catch(() => { /* not there: no chime */ });
 };
 
 let rush: HTMLAudioElement | null = null;

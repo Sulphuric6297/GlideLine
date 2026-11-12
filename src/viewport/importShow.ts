@@ -9,7 +9,7 @@ import { forestDetail } from "../three/treeKit";
 import { getView } from "../state/view";
 import { changeDoc, getDoc, useEditor } from "../state/course";
 import { isImported, type ImportLayer } from "../lib/importSite";
-import { playTreesSound } from "../lib/importSound";
+import { playImportChime, playTreesSound } from "../lib/importSound";
 
 type P = { x: number; y: number };
 const cl = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x));
@@ -720,6 +720,8 @@ class ImportShow {
       const x = HAND ? Math.max((1 - io((t - T.rise[0] - 0.7) / (T.rise[1] - T.rise[0] - 0.2))) * this.photoReal, home * this.photoReal) : this.photoReal * (this.photoAt === undefined ? 1 : io((t - this.photoAt) / 0.9)), g = v.ground, mat = g.mapPlane?.material;
       if (Math.abs(x - this.photoNow) > 0.0005 || this.frameN === 1) { this.photoNow = x; g.bgOpacity = x; if (mat && g.photo && !g.painted) { mat.opacity = x; mat.visible = x > 0.001; } }
     }
+    // (the sun home for the last time, the build done: a chime, as the music dims)
+    if (!HAND && !this.chimed && T.end < BIG && t >= T.end - 0.4) { this.chimed = true; playImportChime(); }
     if (!this.tipped && k > 0.45) { this.tipped = true; useEditor.getState().set({ view: "3d" } as any); }
     // the ground comes up
     const rise = 0.0001 + 0.9999 * io((t - T.rise[0]) / (T.rise[1] - T.rise[0]));
@@ -854,6 +856,7 @@ class ImportShow {
   }
   private instDone = false;
   private rushFor: Step | null = null;
+  private chimed = false;
   /** How many frames in a row came on time (the graphics card done with what it had to make ready). */
   private even = 0;
   /** A part taken in, its things held back: its steps begin once the frames come evenly. */
