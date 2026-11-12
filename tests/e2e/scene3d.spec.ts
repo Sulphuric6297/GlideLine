@@ -48,7 +48,8 @@ test("a site just brought in is built in front of you: the show plays its steps 
   expect({ ...after, show: 0, steps: 0 }).toEqual({ ...before, show: 0, steps: 0 });
   expect(after.left).toBe(0);
   // Skip, part-way: over at once, all of it back just the same
-  await page.evaluate(() => { (window as any).__dgShowSpeed = 1; void (window as any).__dgImportShow.play(true); });
+  // (slowed: with no hand acting it out the build is short, and Skip has to find it still going)
+  await page.evaluate(() => { (window as any).__dgShowSpeed = 0.35; void (window as any).__dgImportShow.play(true); });
   await expect.poll(async () => (await state()).show, { timeout: 90_000 }).toBe("playing");
   await page.waitForTimeout(2500);
   await expect(page.getByTestId("import-show-card")).toBeVisible();
