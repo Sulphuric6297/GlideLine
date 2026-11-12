@@ -108,25 +108,46 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
   const pickedName = pickedKey ? `${GROUPS.find(g => g.id === SOURCES[pickedKey].group)?.label ?? "Thing"}: ${SOURCES[pickedKey].label}` : "";
   const leftN = left.reduce((n, l) => n + l.ids.length + l.trees.length, 0);
   const said = useRef<string>("");
-  const leave = (b: LeftOut, what: string) => { if (!b.ids.length && !b.trees.length) { said.current = "Nothing lies wholly inside that box."; setNote(n => n + 1); return; } onLeave(b); said.current = `${what} left out`; setNote(n => n + 1); };
+  // (every change made here, newest last: Undo takes back the last one, whatever it was)
+  const hist = useRef<("left" | { tune: BrushTune; on: boolean })[]>([]);
+  const leave = (b: LeftOut, what: string) => { if (!b.ids.length && !b.trees.length) { said.current = "Nothing lies wholly inside that box."; setNote(n => n + 1); return; } onLeave(b); hist.current.push("left"); said.current = `${what} left out`; setNote(n => n + 1); };
   const [, setNote] = useState(0);
+  const brushRef = useRef(brush); brushRef.current = brush;
+  const undo = () => {
+    const h = hist.current.pop();
+    if (!h) return;
+    if (h === "left") { onUndo(); said.current = "Put back"; }
+    else { const b = brushRef.current; if (b) { b.onTune(h.tune); if (b.on !== h.on) b.onSwitch(h.on); } said.current = "Underbrush put back"; }
+    setNote(n => n + 1);
+  };
+  const undoRef = useRef(undo); undoRef.current = undo;
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z" && !(e.target as HTMLElement)?.closest?.("input,textarea")) { e.preventDefault(); undoRef.current(); } };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, []);
   const leavePicked = () => { if (!picked || !canLeave) return; leave({ ids: [picked.id], trees: [] }, "1 thing"); select(null); if (tapHint) { setTapHint(false); markSeen(SEEN_TAP); } };
   // Underbrush: tinted and outlined by its level in the view, so it's plain what is underbrush;
   // one patch (picked in the view, with every level inside it) or all of it given a level
   // (the patch: the one under the last click or tap in the view, the thickest there; trees stand
   // over underbrush, so a click picks the tree and the patch under it both)
+  // (picking a patch is its own thing: while it's on, a click picks the patch there and no tree
+  // or anything else; while it's off, a click picks things, and never a patch)
+  const [pickPatch, setPickPatchState] = useState(false);
+  const pickRef = useRef(false);
+  const setPickPatch = (on: boolean) => { pickRef.current = on; setPickPatchState(on); if (!on) setTapAt(null); else select(null); };
   const [tapAt, setTapAt] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
     const v = getView() as { container?: HTMLElement; toPlan?: (x: number, y: number) => { x: number; y: number } | null } | null, el = v?.container;
     if (!el || !v?.toPlan) return;
     let down: { x: number; y: number } | null = null;
     const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
-    const onUp = (e: PointerEvent) => { if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) return; setTapAt(v.toPlan!(e.clientX, e.clientY)); setAllBrush(false); };
+    const onUp = (e: PointerEvent) => { if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) return; if (!pickRef.current) return; setTapAt(v.toPlan!(e.clientX, e.clientY)); window.setTimeout(() => select(null), 0); };
     el.addEventListener("pointerdown", onDown, true); el.addEventListener("pointerup", onUp, true);
     return () => { el.removeEventListener("pointerdown", onDown, true); el.removeEventListener("pointerup", onUp, true); };
   }, []);
   let patch: AreaItem | null = null;
-  if (brush?.on && tapAt) for (const i of doc.items) {
+  if (brush?.on && pickPatch && tapAt) for (const i of doc.items) {
     if (i.type !== "area" || i.kind !== "woods" || ((i as AreaItem).bushes ?? 0) < 1 || sourceOf(i) !== "underbrush") continue;
     if (pointInPolygon(tapAt, (i as AreaItem).points) && (!patch || levelOf(i as AreaItem) >= levelOf(patch))) patch = i as AreaItem;
   }
@@ -136,15 +157,15 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
     v?.setBrushShown?.(!!brush?.on, patchId);
   }, [brush?.on, patchId]);
   useEffect(() => () => (getView() as { setBrushShown?: (on: boolean) => void } | null)?.setBrushShown?.(false), []);
-  const [allBrush, setAllBrush] = useState(false);
-  const whole = !patch || allBrush;
+  const whole = !pickPatch;
   const found = brush ? brushLevels(brush.u, { ...brush.tune, put: undefined }) : null;
   const nowLv = brush ? brushLevels(brush.u, brush.tune) : null;
   let allLevel = -1;
   if (nowLv) { let seenLv = 0; for (const l of nowLv) { if (!l) continue; if (!seenLv) seenLv = l; else if (seenLv !== l) { seenLv = -1; break; } } allLevel = seenLv; }
-  const brushLevel = !brush?.on ? 0 : whole ? allLevel : levelOf(patch!);
+  const brushLevel = !brush?.on ? 0 : whole ? allLevel : patch ? levelOf(patch) : -1;
   const setBrush = (level: number) => {
-    if (!brush || !found) return;
+    if (!brush || !found || (!whole && !patch)) return;
+    hist.current.push({ tune: brush.tune, on: brush.on });
     if (whole) {
       if (level === 0) { brush.onSwitch(false); said.current = "Underbrush off"; }
       else { const put: Record<number, number> = {}; found.forEach((l, q) => { if (l) put[q] = level; }); if (!brush.on) brush.onSwitch(true); brush.onTune({ ...brush.tune, set: undefined, put }); said.current = `All underbrush ${LEVELS[level].toLowerCase()}`; }
@@ -158,7 +179,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
       said.current = level ? `Patch ${LEVELS[level].toLowerCase()}` : "Patch removed";
       setTapAt(null);
     }
-    setAllBrush(false); setNote(n => n + 1);
+    setNote(n => n + 1);
   };
   const brushPicks = (id: string) => <div className="flex flex-col" role="radiogroup" aria-label="Underbrush level">{LEVELS.map((l, k) => <PickRow key={l} on={k === brushLevel} onClick={() => setBrush(k)} color={LEVEL_COLOR[k]} label={l} testid={`${id}-${l.toLowerCase()}`} />)}</div>;
   const boxed = (r: Box) => { setArea(false); const b = insideBox(site0, left, r), n = b.ids.length + b.trees.length; leave(b, `${n.toLocaleString()} ${n === 1 ? "thing" : "things"}`); };
@@ -187,7 +208,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
   const note = said.current && (
     <div className="flex items-center gap-2 text-[12.5px] text-zinc-200" role="status" data-testid="review-said">
       <span className="truncate">{said.current}</span>
-      {leftN > 0 && <button className="ml-auto shrink-0 inline-flex items-center gap-1 text-[#a2cf6a] font-semibold" onClick={() => { onUndo(); said.current = "Put back"; setNote(n => n + 1); }} data-testid="review-undo"><Undo2 size={13} />Undo</button>}
+      {hist.current.length > 0 && <button className="ml-auto shrink-0 inline-flex items-center gap-1 text-[#a2cf6a] font-semibold" onClick={undo} data-testid="review-undo"><Undo2 size={13} />Undo</button>}
     </div>
   );
   const areaEl = area && <AreaPick onBox={boxed} onCancel={() => setArea(false)} />;
@@ -195,14 +216,16 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
   if (phone) {
     const navTop = document.querySelector('nav[aria-label="Steps"]')?.getBoundingClientRect().top ?? window.innerHeight - 76;
     const settings: BarSetting[] = [
-      ...(patch && brush?.on && !allBrush ? [{ id: "patch", name: "This patch", value: LEVELS[levelOf(patch)], control: brushPicks("review-patch"), testid: "review-patch" } as BarSetting] : []),
-      ...(brush ? [{ id: "brushall", name: "All underbrush", value: !brush.on ? "Off" : allLevel > 0 ? LEVELS[allLevel] : "Mixed", control: <div onPointerDownCapture={() => setAllBrush(true)}>{brushPicks("review-brush-all")}</div>, testid: "review-brush-all" } as BarSetting] : []),
+      ...(brush?.on ? [(pickPatch && patch
+        ? { id: "patch", name: "This patch", value: LEVELS[levelOf(patch)], control: <div className="flex flex-col">{brushPicks("review-patch")}<button className="text-left px-3 py-2.5 text-[14px] font-semibold text-[#a2cf6a]" onClick={() => setPickPatch(false)} data-testid="review-patch-stop">Done with patches</button></div>, testid: "review-patch" }
+        : { id: "patch", name: "Underbrush patch", value: pickPatch ? "Tap one" : "Pick one", run: () => setPickPatch(!pickPatch), testid: "review-patch-pick" }) as BarSetting] : []),
+      ...(brush ? [{ id: "brushall", name: "All underbrush", value: !brush.on ? "Off" : allLevel > 0 ? LEVELS[allLevel] : "Mixed", control: <div onPointerDownCapture={() => setPickPatch(false)}>{brushPicks("review-brush-all")}</div>, testid: "review-brush-all" } as BarSetting] : []),
       ...(canLeave ? [{ id: "leave", name: SOURCES[pickedKey!].label, value: "Leave out", run: leavePicked, testid: "review-leave" } as BarSetting] : []),
       { id: "photo", name: "Photo", value: photo ? "On" : "Off", run: () => setPhoto(!photo), on: photo, testid: "review-photo-on" },
       { id: "colors", name: "Tree colors", value: lookLabel, testid: "review-tree-colors", control: <div className="flex flex-col" role="radiogroup" aria-label="Tree colors">{COLOR_PICKS.trees.map(c => <PickRow key={c.id} on={c.id === lookId} onClick={() => pickLook(c)} color={DOT[c.id]} label={c.label} testid={`review-color-${c.id}`} />)}</div> },
       ...groups.map(g => ({ id: g.id, name: g.label, value: g.total.toLocaleString(), wide: true, control: <div className="max-h-[30dvh] overflow-y-auto">{g.el}</div> }) as BarSetting),
       { id: "area", name: "Leave out", value: "An area", run: () => setArea(true), testid: "review-area-on" },
-      ...(leftN > 0 ? [{ id: "undo", name: `${leftN.toLocaleString()} left out`, value: "Undo", run: onUndo, testid: "review-undo" } as BarSetting] : [])
+      ...(hist.current.length > 0 ? [{ id: "undo", name: "Last change", value: "Undo", run: undo, testid: "review-undo" } as BarSetting] : [])
     ];
     const row = "w-full flex items-center gap-3 text-left rounded-[18px] px-3 min-h-[46px] py-2 text-zinc-100 active:bg-white/[0.1] text-[15px] font-semibold";
     const menu = (
@@ -257,13 +280,13 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
               <span className="ml-auto flex items-center gap-2 font-normal text-[11.5px] text-zinc-400">{[1, 2, 3].map(l => <span key={l} className="inline-flex items-center gap-1"><span className="w-[9px] h-[9px] rounded-[2px]" style={{ background: LEVEL_COLOR[l] }} />{LEVELS[l]}</span>)}</span>
             </div>
             <div className="flex p-[3px] gap-[2px] rounded-[10px] bg-white/[0.07]" role="radiogroup" aria-label="Change">
-              <button type="button" role="radio" aria-checked={!whole} disabled={!patch} onClick={() => setAllBrush(false)} data-testid="review-brush-this" className={`flex-1 py-1.5 rounded-[8px] ${!whole ? "bg-white/[0.16] text-zinc-50 font-semibold" : patch ? "text-zinc-300 hover:text-zinc-100" : "text-zinc-600"}`}>This patch</button>
-              <button type="button" role="radio" aria-checked={whole} onClick={() => setAllBrush(true)} data-testid="review-brush-all" className={`flex-1 py-1.5 rounded-[8px] ${whole ? "bg-white/[0.16] text-zinc-50 font-semibold" : "text-zinc-300 hover:text-zinc-100"}`}>All underbrush</button>
+              <button type="button" role="radio" aria-checked={pickPatch} onClick={() => setPickPatch(true)} data-testid="review-brush-this" className={`flex-1 py-1.5 rounded-[8px] ${pickPatch ? "bg-white/[0.16] text-zinc-50 font-semibold" : "text-zinc-300 hover:text-zinc-100"}`}>A patch</button>
+              <button type="button" role="radio" aria-checked={!pickPatch} onClick={() => setPickPatch(false)} data-testid="review-brush-all" className={`flex-1 py-1.5 rounded-[8px] ${!pickPatch ? "bg-white/[0.16] text-zinc-50 font-semibold" : "text-zinc-300 hover:text-zinc-100"}`}>All underbrush</button>
             </div>
             <div className="flex p-[3px] gap-[2px] rounded-[10px] bg-white/[0.07]" role="radiogroup" aria-label="Underbrush level">
-              {LEVELS.map((l, k) => <button key={l} type="button" role="radio" aria-checked={k === brushLevel} onClick={() => setBrush(k)} data-testid={`review-brush-${l.toLowerCase()}`} className={`flex-1 py-1.5 rounded-[8px] ${k === brushLevel ? "bg-amber-400 text-zinc-950 font-semibold" : "text-zinc-300 hover:text-zinc-100"}`}>{l}</button>)}
+              {LEVELS.map((l, k) => <button key={l} type="button" role="radio" aria-checked={k === brushLevel} disabled={pickPatch && !patch} onClick={() => setBrush(k)} data-testid={`review-brush-${l.toLowerCase()}`} className={`flex-1 py-1.5 rounded-[8px] disabled:text-zinc-600 ${k === brushLevel ? "bg-amber-400 text-zinc-950 font-semibold" : "text-zinc-300 hover:text-zinc-100"}`}>{l}</button>)}
             </div>
-            {!patch && brush.on && <div className="text-[11.5px] text-zinc-400">Outlined in the view. Click inside an outline to change just that patch.</div>}
+            {brush.on && <div className="text-[11.5px] text-zinc-400">{pickPatch ? (patch ? "Pick its level, or click another patch." : "Click inside an outline. Trees aren't picked while this is on.") : "Sets every outlined patch. Choose A patch to change one."}</div>}
           </div>
         )}
         {canLeave ? (
