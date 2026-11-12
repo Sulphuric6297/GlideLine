@@ -130,6 +130,16 @@ const simpleWoods = (items: CourseItem[]): CourseItem[] => {
 };
 
 /** Fills in anything an older or hand-edited file is missing. */
+/** What a thing brought in is like, as a short code (the same as lib/importSite's signOf, which
+ * can't be reached from here without a circle). */
+const signOfItem = (i: CourseItem) => {
+  const { id: _id, importSig: _sig, ...rest } = i as CourseItem & { importSig?: string };
+  const text = JSON.stringify(rest, (_k, v) => (v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]])) : v));
+  let h = 0x811c9dc5;
+  for (let k = 0; k < text.length; k++) h = Math.imul(h ^ text.charCodeAt(k), 0x01000193);
+  return (h >>> 0).toString(36);
+};
+
 export const normalizeCourse = (raw: Partial<CourseDoc>): CourseDoc => {
   const base = createEmptyCourse();
   // (a course's look is its own: an older one, saved without one, stays Classic)
@@ -160,6 +170,9 @@ export const normalizeCourse = (raw: Partial<CourseDoc>): CourseDoc => {
     items: Array.isArray(raw.items) ? raw.items.filter(i => i.type !== "structure" || (Array.isArray(i.points) && i.kind in STRUCTURE_KINDS)).map(i => {
       // (palms are gone: one placed before is a leafy tree now)
       if (i.type === "tree" && (i.treeType as string) === "palm") return { ...i, treeType: "deciduous" as const };
+      // (a line from the maps brought in when they came curved: straight between its points, as
+      // it's mapped, unless it's been changed by hand since)
+      if (i.type === "line" && i.straight === undefined && i.importSig && (i.importSource === "osm" || i.importSource === "usgs" || i.importSource === "nwi") && i.importSig === signOfItem(i)) { const st = { ...i, straight: true as const }; i = { ...st, importSig: signOfItem(st) }; }
       // (a line's OB stretches: pairs of numbers, or none; the holes it's OB for: holes on the course)
       if (i.type !== "line" || (i.obStretches === undefined && i.obHoles === undefined)) return i;
       const ok = Array.isArray(i.obStretches) ? mergeStretches(i.obStretches.filter(st => Array.isArray(st) && st.length === 2 && st.every(v => Number.isFinite(v)))) : [];

@@ -156,7 +156,7 @@ function goStep(id: Step, setDetent: (d: Detent) => void, toggle: () => void) {
 const STEP_OPEN: Record<Step, boolean> = { site: true, design: false, map: false, export: true };
 
 function BottomNav({ onStep, motion = null }: { onStep: (s: Step) => void; motion?: "out" | "in" | null }) {
-  const step = useEditor(e => e.step);
+  const step = useEditor(e => (e.reviewing ? "site" : e.step)), reviewing = useEditor(e => e.reviewing);
   // (the checks on Design's tab, as a count: its panel has the list)
   const issues = useSummary().issues;
   return (
@@ -168,7 +168,7 @@ function BottomNav({ onStep, motion = null }: { onStep: (s: Step) => void; motio
           return (
             <li key={s.id} className="flex-1 min-w-0">
               <button
-                onClick={() => onStep(s.id)}
+                onClick={() => { if (!reviewing) onStep(s.id); }}
                 aria-current={on ? "step" : undefined}
                 className="w-full h-[60px] flex flex-col items-center justify-center gap-1 focus:outline-none focus-visible:bg-white/[0.08] rounded-[26px]"
               >
@@ -186,7 +186,7 @@ function BottomNav({ onStep, motion = null }: { onStep: (s: Step) => void; motio
 }
 
 function NavRail({ onStep, onMenu, panelOpen, onPanel }: { onStep: (s: Step) => void; onMenu: () => void; panelOpen: boolean; onPanel: () => void }) {
-  const step = useEditor(e => e.step);
+  const step = useEditor(e => (e.reviewing ? "site" : e.step)), reviewing = useEditor(e => e.reviewing);
   return (
     <nav aria-label="Steps" className="glass w-[72px] shrink-0 relative z-40 flex flex-col items-center my-2 ml-[max(8px,env(safe-area-inset-left))] rounded-[26px] py-1" data-testid="nav-rail">
       <button className={`${iconBtn} [@media(max-height:400px)]:h-10`} aria-label="Menu: files, help" onClick={onMenu} data-testid="app-menu-button"><Logo size={28} /></button>
@@ -196,7 +196,7 @@ function NavRail({ onStep, onMenu, panelOpen, onPanel }: { onStep: (s: Step) => 
           const on = step === s.id;
           return (
             <li key={s.id} className="flex-1 min-h-0 max-h-[52px]">
-              <button onClick={() => onStep(s.id)} aria-current={on ? "step" : undefined} className="w-full h-full flex flex-col items-center justify-center gap-0.5 focus:outline-none focus-visible:bg-white/[0.06]">
+              <button onClick={() => { if (!reviewing) onStep(s.id); }} aria-current={on ? "step" : undefined} className="w-full h-full flex flex-col items-center justify-center gap-0.5 focus:outline-none focus-visible:bg-white/[0.06]">
                 <span className={`flex items-center justify-center w-[46px] h-[26px] rounded-full ${on ? "bg-orange-500/20 text-orange-300" : "text-zinc-400"}`}><Icon size={19} strokeWidth={on ? 2.4 : 2} /></span>
                 <span className={`text-[11px] leading-none font-semibold ${on ? "text-zinc-50" : "text-zinc-400"}`}><span className="sr-only">Step {i + 1}: </span>{s.label}</span>
               </button>

@@ -337,7 +337,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
         {areaEl}{paintEl}{treeMark}
         <div className="dg-compact fixed inset-x-0 top-0 z-[60] pointer-events-none" style={{ bottom: Math.max(0, window.innerHeight - navTop) }}>
           {area && <button className="absolute right-3 top-[max(76px,env(safe-area-inset-top))] pointer-events-auto glass rounded-full h-11 px-4 text-[14px] font-semibold text-zinc-100" onClick={() => setArea(false)}>Cancel</button>}
-          {!area && <GlassBar remember="import-review" testid="import-review" pill={{ name: "What comes in", small: leftN ? `${leftN.toLocaleString()} left out` : undefined, back: onBack }} pillMenu={menu} settings={settings} onDone={onBring} doneLabel={again ? "Bring it in again" : "Bring it in"} doneTestid="review-bring" />}
+          {!area && <GlassBar remember="import-review" testid="import-review" pill={{ name: "Import", small: leftN ? `${leftN.toLocaleString()} left out` : "What comes in", back: onBack }} pillMenu={menu} settings={settings} onDone={onBring} doneLabel={again ? "Bring it in again" : "Bring it in"} doneTestid="review-bring" />}
         </div>
       </>
     );
@@ -348,8 +348,9 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
       {areaEl}{paintEl}{treeMark}
       <div className="fixed left-4 top-[72px] z-[60] w-[336px] max-h-[calc(100%-96px)] overflow-y-auto glass rounded-[22px] p-4 flex flex-col gap-2 text-zinc-100" data-testid="import-review">
         <div>
+          <div className="text-[10.5px] font-bold uppercase tracking-[0.08em] text-[#a2cf6a]">Import</div>
           <div className="font-bold text-[15.5px] flex items-center gap-1.5">What comes in <HelpLink topic="import-options" label="What comes in" /></div>
-          <div className="text-[12.5px] text-zinc-400">{failed.length ? <><span className="text-orange-300">{failed.join(", ")} didn't come.</span>{onRetry && <> <button className="underline text-[#a2cf6a] font-semibold" onClick={onRetry} data-testid="review-retry">Try again</button></>} The rest is in.</> : "Everything's in."} Switch off what you don't want, then bring it in.</div>
+          <div className="text-[12.5px] text-zinc-400">{failed.length ? <><span className="text-orange-300">{failed.join(", ")} didn't come.</span>{onRetry && <> <button className="underline text-[#a2cf6a] font-semibold" onClick={onRetry} data-testid="review-retry">Try again</button></>} The rest is in.</> : "Everything's in."} Fine-tune what was fetched, then bring it in. You design the course after, in Design.</div>
           {notesEl}
         </div>
         <div className="flex items-center gap-2 text-[12.5px] font-semibold">

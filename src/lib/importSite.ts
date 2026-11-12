@@ -398,6 +398,8 @@ export const osmFeatureItems = (features: OsmFeature[], ref: GeoBounds & { width
         const pts = simplify(piece, 1);
         if (pts.length < 2) continue;
         const line = createLine(f.kind, pts) as LineItem;
+        // (as it's mapped, point to point: a curve through the points leaves the road)
+        line.straight = true;
         if (f.name && f.kind !== "path") line.label = f.name;
         if ((f.kind === "path" || f.kind === "road") && f.surface) line.surface = f.surface;
         if ((f.kind === "path" || f.kind === "road" || f.kind === "stream") && f.widthM) line.width = halfFt(clamp(f.widthM * FEET_PER_METER, 2, LINE_KINDS[f.kind].maxWidth));
