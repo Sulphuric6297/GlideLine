@@ -62,7 +62,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
     if (!ref.current) return;
     const v = new CourseView(ref.current, {
       onSelect: (id, add) => select(id, add),
-      onAdoptTree: (tree, look) => adoptTree(tree, look),
+      // (a site being looked over: its trees aren't made the course's own by a click; the look-over picks them)
+      onAdoptTree: (tree, look) => { if (!useEditor.getState().reviewing) adoptTree(tree, look); },
       onBoxSelect: (ids, add, trees) => boxSelect(ids, add, trees),
       onMoveGroup: (base, ids, dx, dy) => moveGroup(base, ids, dx, dy, false),
       onPlace: (mode, p) => placeAt(mode, p),

@@ -12,8 +12,8 @@ import { findSiteOutline, type SiteOutline } from "../lib/geo/parks";
 import { lidarCoverage } from "../lib/geo/lidarFetch";
 import { inUS } from "../lib/geo/usgov";
 import { photoChoices, photoDateText, photoFeetPerPx, type PhotoChoice } from "../lib/geo/photoSources";
-import { importSite, type ImportedSite, type ImportLayer, type SourceId, type SourceStatus } from "../lib/importSite";
-import { GROUPS, SOURCES, reviewedSite, sharedBuildings, sourceCounts, sourceOf, startsOn, withoutLeft, type LeftOut, type SourceKey } from "../lib/importReview";
+import { importSite, signOf, type ImportedSite, type ImportLayer, type SourceId, type SourceStatus } from "../lib/importSite";
+import { GROUPS, KINDED, SOURCES, kindCounts, reviewedSite, sharedBuildings, sourceCounts, sourceOf, startsOn, withoutLeft, type LeftOut, type ReviewOpts, type SourceKey } from "../lib/importReview";
 import type { PhotoSourceId } from "../lib/geo/photoSources";
 import { fmtArea, fmtDist } from "../lib/units";
 import { getDoc, useCourse, useEditor } from "../state/course";
@@ -169,6 +169,12 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   const [ready3d, setReady3d] = useState(false);
   const base = useRef<{ doc: CourseDoc; past: CourseDoc[]; future: CourseDoc[]; ed: Record<string, unknown> } | null>(null);
   const [left, setLeft] = useState<LeftOut[]>([]);
+  // (the finer choices: kinds of a source switched off, the measured trees' own settings)
+  const [offKinds, setOffKinds] = useState<string[]>([]);
+  const [lidarTune, setLidarTune] = useState<{ minHeight?: number; crownSize?: number }>({});
+  const [lidarOpen, setLidarOpen] = useState(false);
+  const ropts = useMemo<ReviewOpts>(() => ({ offKinds, lidar: lidarTune }), [offKinds, lidarTune]);
+  const in3dRef = useRef(false);
   const [look, setLook] = useState<TreeLook3d | null>(null);
   /** The course put back as it was, and the screen as it was. */
   const leave3d = useRef(() => {});
@@ -179,7 +185,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     useCourse.setState({ doc: b.doc, past: b.past, future: b.future, gestureStart: null });
     useEditor.getState().set({ ...b.ed, reviewing: false, selectedId: null } as never);
   };
-  const end3d = () => { leave3d.current(); setIn3d(false); setReady3d(false); };
+  const end3d = () => { leave3d.current(); in3dRef.current = false; setIn3d(false); setReady3d(false); };
   /** The course and the screen as they are now, kept to go back to. */
   const keepBase = () => {
     if (base.current) return;
@@ -187,9 +193,9 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     base.current = { doc: cs.doc, past: cs.past, future: cs.future, ed: { step: ed.step, view: ed.view, photo: ed.photo, tool: ed.tool } };
   };
   const begin3d = () => {
-    if (!onPreview || in3d) return;
+    if (!onPreview || in3dRef.current) return;
     keepBase();
-    setReady3d(false); setIn3d(true);
+    in3dRef.current = true; setReady3d(false); setIn3d(true);
   };
   /** The build has been shown for the site in hand (or skipped): it's never played a second time. */
   const played = useRef(false);
@@ -354,7 +360,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   // Looked at before it comes in: what's on, each source in its own color, where it came from on hover
   useEffect(() => {
     if (!review || !landed.current) return;
-    const s = withoutLeft(reviewedSite(review.site, { ...review.on, underbrush: false }, review.keep), left);
+    const s = withoutLeft(reviewedSite(review.site, { ...review.on, underbrush: false }, review.keep, undefined, ropts), left);
     const a: Arrived = { ...landed.current, areas: [], lines: [], trees: [] };
     for (const i of [...s.mapped, ...s.trees]) {
       const k = sourceOf(i), c = k ? SOURCES[k].color : "#e5e7eb", tip = k ? `${SOURCES[k].label}${SOURCES[k].who ? ` · ${SOURCES[k].who}` : ""}` : undefined;
@@ -365,7 +371,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     const lt = s.lidar?.trees ?? [], fromSummer = lt.length - (s.lidar?.fromPhoto ?? 0), step = Math.max(1, Math.ceil(lt.length / 4000));
     for (let k = 0; k < lt.length; k += step) a.trees.push({ x: lt[k][0], y: lt[k][1], r: lt[k][3], color: k >= fromSummer ? SOURCES.summerTrees.color : SOURCES.lidarTrees.color });
     setArrived(a);
-  }, [review, left]);
+  }, [review, left, ropts]);
 
   // The brush as tuned: each block's level, the areas (on a layer of their own, drawn again while
   // How much or How thick moves), and a tap on a patch stepping it lighter, then off, then back
@@ -381,8 +387,16 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     if (next) setTune(next);
   };
 
-  const run = async (photoId?: PhotoSourceId) => {
+  const run = async (photoId?: PhotoSourceId, again = false) => {
     if (!selection || tooBig || running.current) return;
+    // (fetched again with the choices made kept: what's switched off, what's left out by hand, by
+    // what each thing is like, as its id is new each time)
+    const everything = (st: ImportedSite) => [...st.mapped, ...st.trees, ...(st.alternates?.photoWater ?? []), ...(st.alternates?.fema ?? [])];
+    const prev = again && review ? (() => {
+      const sig = new Map(everything(review.site).map(i => [i.id, signOf(i)] as const));
+      return { on: review.on, keep: review.keep, was3d: in3dRef.current, lidarN: review.site.lidar?.trees.length, lidarSrc: review.site.lidar?.source,
+        left: left.map(l => ({ sigs: l.ids.map(id => sig.get(id)).filter((x): x is string => !!x), trees: l.trees })) };
+    })() : null;
     end3d();
     setReview(null);
     if (importing) { setStatus({ state: "error", text: "The site from before is still coming in. Try again in a moment." }); return; }
@@ -396,8 +410,9 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     landed.current = null;
     setArrived(null);
     setStatus({ state: "loading", text: "Starting…" });
-    played.current = false; builtIn.current = false; setLeft([]); setLook(null);
-    const live = !onPreview ? null : startLiveImport({ name: label.split(",")[0].trim() || "your site", hide: on => { liveHid.current = on; setLiveOn(on); if (!on && landed.current) setArrived({ ...landed.current }); } });
+    if (!prev) { played.current = false; setLeft([]); setLook(null); setOffKinds([]); setLidarTune({}); }
+    builtIn.current = false;
+    const live = !onPreview || prev ? null : startLiveImport({ name: label.split(",")[0].trim() || "your site", hide: on => { liveHid.current = on; setLiveOn(on); if (!on && landed.current) setArrived({ ...landed.current }); } });
     // (built in the 3D view from this moment, the photo under it: the course as it was kept to go
     // back to, and nothing else worked meanwhile)
     if (live) { keepBase(); played.current = true; useEditor.getState().set({ photo: true, reviewing: true, selectedId: null } as never); }
@@ -416,11 +431,18 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
         const kept = base.current;
         const builtOk = !!live && !!kept && !live.dead() && (await live.final(() => onPreview!(kept.doc, reviewedSite(site, on, "osm", tune), { trees, osm, course: course && !!outline?.course?.holes, turn: angle })));
         if (!open.current || stop.signal.aborted) return;
-        setReview({ site, on, keep: "osm", photo: photoId ?? (site.site.photo?.id as PhotoSourceId | undefined) });
+        const on2 = prev ? { ...on, ...Object.fromEntries(Object.entries(prev.on).filter(([k]) => k in on)) } : on;
+        setReview({ site, on: on2, keep: prev?.keep ?? "osm", photo: photoId ?? (site.site.photo?.id as PhotoSourceId | undefined) });
+        if (prev) {
+          const bySig = new Map<string, string[]>();
+          for (const i of everything(site)) { const sg = signOf(i), a = bySig.get(sg); if (a) a.push(i.id); else bySig.set(sg, [i.id]); }
+          const same = site.lidar?.trees.length === prev.lidarN && site.lidar?.source === prev.lidarSrc;
+          setLeft(prev.left.map(l => ({ ids: l.sigs.flatMap(sg => { const a = bySig.get(sg); return a?.length ? [a.shift()!] : []; }), trees: same ? l.trees : [] })).filter(l => l.ids.length || l.trees.length));
+        }
         // (built as it came in: looked over where it stands, with nothing played again)
-        if (builtOk) { builtIn.current = true; liveHid.current = false; setLiveOn(false); setLeft([]); setLook(null); setIn3d(true); setReady3d(true); setStatus({ state: "idle", text: "" }); return; }
+        if (builtOk) { builtIn.current = true; liveHid.current = false; setLiveOn(false); setLeft([]); setLook(null); in3dRef.current = true; setIn3d(true); setReady3d(true); setStatus({ state: "idle", text: "" }); return; }
         // (looked over in the 3D view, where there is one that can keep up)
-        begin3d();
+        if (!prev || prev.was3d) begin3d();
         setStatus({ state: "idle", text: "" });
       }
     } catch (err) {
@@ -442,7 +464,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   };
 
   // The site as switched (site0), and without what was left out by hand: shown in the course while it's looked over
-  const site0 = useMemo(() => (review ? reviewedSite(review.site, review.on, review.keep, tune) : null), [review, tune]);
+  const site0 = useMemo(() => (review ? reviewedSite(review.site, review.on, review.keep, tune, ropts) : null), [review, tune, ropts]);
   const shownSite = useMemo(() => (site0 ? withoutLeft(site0, left) : null), [site0, left]);
   useEffect(() => {
     if (!in3d || !shownSite || !base.current || !onPreview) return;
@@ -673,7 +695,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
           <div className="text-[13px] font-semibold px-2 pt-1 pb-1">Which photo</div>
           <div className="flex gap-0.5 p-[2px] rounded-[10px] bg-white/[0.06]">
             {choices.slice(0, 3).map(c => (
-              <button key={c.id} className={`flex-1 min-w-0 truncate px-2 py-1.5 rounded-[8px] text-[11.5px] ${review.photo === c.id ? "bg-white/[0.14] text-zinc-50 font-semibold" : "text-zinc-400 hover:text-zinc-200"}`} onClick={() => { if (review.photo !== c.id) void run(c.id); }}>
+              <button key={c.id} className={`flex-1 min-w-0 truncate px-2 py-1.5 rounded-[8px] text-[11.5px] ${review.photo === c.id ? "bg-white/[0.14] text-zinc-50 font-semibold" : "text-zinc-400 hover:text-zinc-200"}`} onClick={() => { if (review.photo !== c.id) void run(c.id, true); }}>
                 {c.label.replace(/ aerial photo| satellite/i, "")}{c.year ? ` · ${c.season === "leaf-on" ? "summer " : c.season === "leaf-off" ? "winter " : ""}${c.year}` : ""}
               </button>
             ))}
@@ -711,6 +733,26 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
                     </button>
                   </div>
                   {k === "photoWater" && !on && <div className="text-[11.5px] text-zinc-500 pl-[27px] pb-1">Off: here most are tree shadows</div>}
+                  {on && KINDED.includes(k) && (() => { const kinds = kindCounts(review.site, k); return kinds.length < 2 ? null : (
+                    <div className="pl-[27px] pr-2 pb-1 flex flex-col" data-testid={`review-kinds-${k}`}>
+                      {kinds.map(([kind, n]) => { const id = `${k}:${kind}`, kon = !offKinds.includes(id); return (
+                        <div key={kind} className={`flex items-center gap-2 py-[3px] text-[12px] ${kon ? "text-zinc-300" : "text-zinc-500"}`}>
+                          <span className="truncate">{kind}</span><span className="ml-auto tabular-nums">{n.toLocaleString()}</span>
+                          <button type="button" role="switch" aria-checked={kon} aria-label={`${s.label}: ${kind}`} data-testid={`review-kind-${id}`} onClick={() => setOffKinds(o => (kon ? [...o, id] : o.filter(x => x !== id)))}
+                            className={`relative w-[26px] h-[15px] rounded-full shrink-0 ${kon ? "bg-[#a2cf6a]" : "bg-white/[0.14]"}`}><span className={`absolute top-[2px] w-[11px] h-[11px] rounded-full ${kon ? "right-[2px] bg-zinc-900" : "left-[2px] bg-zinc-400"}`} /></button>
+                        </div>); })}
+                    </div>); })()}
+                  {on && k === "lidarTrees" && (
+                    <div className="pl-[27px] pr-2 pb-1" data-testid="review-lidar-tune">
+                      <button className="text-[12px] text-zinc-300 hover:text-zinc-50 py-1" aria-expanded={lidarOpen} onClick={() => setLidarOpen(o => !o)} data-testid="review-lidar-more">{lidarOpen ? "▾" : "▸"} Fine-tune</button>
+                      {lidarOpen && (() => { const lt = review.site.lidar?.trees ?? [], m = lidarTune.minHeight ?? 0, keptN = m ? lt.filter(t => t[2] >= m).length : lt.length; return (
+                        <div>
+                          <Slider label="Leave out trees shorter than" min={0} max={60} step={1} value={m} onChange={v => setLidarTune(t => ({ ...t, minHeight: v || undefined }))} format={v => (v ? fmtDist(v, units) : "None")} />
+                          <div className="text-[11.5px] text-zinc-500 -mt-1 mb-1">{keptN.toLocaleString()} of {lt.length.toLocaleString()} kept</div>
+                          <Slider label="Crown size" min={0.6} max={1.5} step={0.05} value={lidarTune.crownSize ?? 1} onChange={v => setLidarTune(t => ({ ...t, crownSize: v }))} format={v => (Math.abs(v - 1) < 0.001 ? "As measured" : `${Math.round(v * 100)}%`)} />
+                        </div>); })()}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -732,7 +774,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   const reviewNotes = review?.site.notes ?? [];
   const reviewPanel = review && (
     <div className="flex flex-col gap-2" data-testid="import-review">
-      <div className="rounded-xl px-3 py-2 bg-white/[0.07] text-[13px] text-zinc-200"><span className="font-semibold">{failedNames.length ? <><span className="text-orange-300">{failedNames.join(", ")} didn't come.</span> The rest is in.</> : "Everything's in."}</span> <span className="text-zinc-400">Switch off what you don't want, then bring it in.</span>
+      <div className="rounded-xl px-3 py-2 bg-white/[0.07] text-[13px] text-zinc-200"><span className="font-semibold">{failedNames.length ? <><span className="text-orange-300">{failedNames.join(", ")} didn't come.</span> <button className="underline text-[#a2cf6a]" onClick={() => void run(review.photo, true)} data-testid="review-retry">Try again</button> The rest is in.</> : "Everything's in."}</span> <span className="text-zinc-400">Switch off what you don't want, then bring it in.</span>
         {reviewNotes.length > 0 && <details className="text-[12px] text-zinc-400 mt-1" data-testid="review-notes"><summary className="cursor-pointer text-zinc-300">What the import found ({reviewNotes.length})</summary><ul className="mt-1 flex flex-col gap-1 list-disc pl-4 leading-snug">{reviewNotes.map((n, k) => <li key={k}>{n}</li>)}</ul></details>}</div>
       {onPreview && <button className="self-start text-[12.5px] font-semibold text-[#a2cf6a] hover:text-[#b3db80] px-1" onClick={begin3d} data-testid="review-3d">Look at it in 3D ›</button>}
       <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mt-1 flex justify-between"><span>What comes in</span><span className="font-normal normal-case tracking-normal">shown on the map</span></div>
@@ -756,7 +798,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   ) : null;
   const review3d = in3d && ready3d && review && site0 && createPortal(
     <ImportReview3d phone={phone} again={again} site0={site0} left={left} onLeave={b => setLeft(l => [...l, b])} onUndo={() => setLeft(l => l.slice(0, -1))} look={look} onLook={setLook}
-      groups={groupEls} photoChoice={photoChoiceEl} notes={reviewNotes} failed={failedNames} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
+      groups={groupEls} photoChoice={photoChoiceEl} notes={reviewNotes} failed={failedNames} onRetry={() => void run(review.photo, true)} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
   const closeBtn = <button className="glass w-11 h-11 rounded-full grid place-items-center text-zinc-300 hover:text-zinc-50" onClick={close} aria-label="Close" title="Close"><X size={20} /></button>;
 
   if (phone) {
