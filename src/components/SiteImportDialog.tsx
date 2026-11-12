@@ -540,7 +540,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     // (only where no survey covers the site: where one does, its measured trees are the ones)
     !survey && photo ? pill({ id: "photo-trees", icon: <TreeDeciduous size={15} />, label: "Trees from the photo", on: trees, set: setTrees }) : null,
     // (and where one does: the trees it missed, filled in from the photo)
-    survey && lidar && photo ? pill({ id: "photo-fill", icon: <TreeDeciduous size={15} />, label: "Trees from the photo", value: "where the survey missed them", on: fill, set: setFill }) : null,
+    survey && lidar && photo ? pill({ id: "photo-fill", icon: <TreeDeciduous size={15} />, label: "Fill gaps from the photo", value: "trees the survey missed", on: fill, set: setFill }) : null,
     pill({ id: "osm", icon: <Route size={15} />, label: "Paths, roads and more", value: "OpenStreetMap", on: osm, set: setOsm }),
     // (the US government's maps, only over the US)
     selection && inUS(selection) ? pill({ id: "gov", icon: <Droplets size={15} />, label: "Creeks, wetlands and buildings", value: "USGS · USFWS · FEMA", on: gov, set: setGov }) : null,

@@ -161,6 +161,7 @@ function ScenePanel({ onClose, big, place, sheet }: { onClose: () => void; big?:
             </div>
           ) : <Toggle label="Satellite photo" checked={ed.photo} onChange={v => set({ photo: v })} />}
           <Toggle label="Trees" checked={!ed.hideTrees} onChange={v => set({ hideTrees: !v })} />
+          <Toggle label="Underbrush outlines" checked={ed.brushOutlines} onChange={v => set({ brushOutlines: v })} />
           <Toggle label="Contour lines" checked={ed.contours} onChange={v => set({ contours: v })} />
           <Toggle label="Hill shading" checked={ed.shading} onChange={v => set({ shading: v })} />
           <Toggle label="Ground texture up close" checked={ed.groundDetail} onChange={v => set({ groundDetail: v })} />

@@ -775,7 +775,7 @@ export class CourseView {
     this.tool = tool;
     if (tool.mode === "select") this.updateGhost(null);
     // (painting underbrush: each patch tinted by how thick it is, as Look first shows it)
-    const k = this.paintKind(), tint = !!k?.brush || this.brushShown;
+    const k = this.paintKind(), tint = !!k?.brush || this.brushShown || this.brushLayer;
     if (tint !== this.brushTint) { this.brushTint = tint; if (this.doc) this.syncShapes(); }
     if (this.doc) this.syncSelection();
     this.updateCursor();
@@ -788,12 +788,20 @@ export class CourseView {
   private brushTint = false;
   /** Underbrush shown tinted and outlined whatever the tool (a site being looked over). */
   private brushShown = false;
+  /** Underbrush shown that way as a setting of the view's (View's Underbrush outlines). */
+  private brushLayer = false;
+  setBrushLayer(on: boolean) {
+    if (on === this.brushLayer) return;
+    this.brushLayer = on;
+    const tint = on || this.brushShown || !!this.paintKind()?.brush;
+    if (tint !== this.brushTint) { this.brushTint = tint; if (this.doc) this.syncShapes(); this.invalidate(); }
+  }
   /** The patch of it in hand: brighter, its edge white. */
   private brushPicked: string | null = null;
   setBrushShown(on: boolean, picked: string | null = null) {
     if (on === this.brushShown && picked === this.brushPicked) return;
     this.brushShown = on; this.brushPicked = picked;
-    this.brushTint = on || !!this.paintKind()?.brush;
+    this.brushTint = on || this.brushLayer || !!this.paintKind()?.brush;
     if (this.doc) this.syncShapes();
     this.invalidate();
   }

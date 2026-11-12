@@ -237,6 +237,8 @@ type EditorStore = {
   stumps: boolean;
   /** Every tree hidden, to see the photo under them (this screen only, not kept). */
   hideTrees: boolean;
+  /** Underbrush tinted and outlined by how thick it is, seen through the trees. */
+  brushOutlines: boolean;
   /** The ground from a tee, in flyovers and videos: the course's own ground (as Design shows it
    * with the photo off), the painted map, or the photo. (Named anew when the ground's own became
    * the usual: a course's old pick, kept on this device, was only ever the old default.) */
@@ -315,6 +317,7 @@ export const useEditor = create<EditorStore>()(set => ({
   ...DISPLAY_DEFAULTS,
   stumps: false,
   hideTrees: false,
+  brushOutlines: false,
   set: patch => {
     set(patch);
     if (DISPLAY.some(k => k in patch)) {

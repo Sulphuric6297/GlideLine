@@ -1,13 +1,14 @@
 // The map's menu for a hole or a thing on it, and for open ground (a right-click on a computer, a
 // finger held on a phone): one list, so both menus offer the same rows in the same words.
-import { ClipboardPaste, Copy, Eye, Lock, Maximize2, MessageSquarePlus, Plane, Ruler, Trash2, Unlock, type LucideIcon } from "lucide-react";
+import { ClipboardPaste, Copy, Eye, ListChecks, Lock, Maximize2, MessageSquarePlus, Plane, Ruler, Trash2, Unlock, type LucideIcon } from "lucide-react";
 import { SERVER } from "../auth/api";
 import { startComment } from "../auth/Comments";
 import { useServerCourse } from "../auth/courses";
 import { AREA_KINDS, LINE_KINDS, STRUCTURE_KINDS } from "../constants";
 import { holeLabel } from "../lib/course";
 import { holeStats } from "../lib/holeStats";
-import { bendHoleAt, canPaste, copySelection, deleteSelection, duplicateSelection, markObBeyond, pasteClipboard, placeAt, select, setFieldPlay, setObChoice } from "../state/actions";
+import { bendHoleAt, canPaste, copySelection, deleteSelection, duplicateSelection, markObBeyond, pasteClipboard, pickGroup, placeAt, select, setFieldPlay, setObChoice } from "../state/actions";
+import { GROUPS, SOURCES, sourceOf } from "../lib/importReview";
 import { changeDoc, getDoc, updateItem, useCourse, useEditor } from "../state/course";
 import { toast } from "../state/toast";
 import { getView } from "../state/view";
@@ -68,6 +69,13 @@ export const itemActions = (itemId: string, ground: P | null, named = false): It
   else a.push(...commentRow("Comment here", ground));
   // (view only: nothing that changes the course)
   if (readOnly) return a;
+  // (a thing the import brought in: all that came from the same source picked together, to
+  // copy, lock or delete as one)
+  const src = item ? sourceOf(item) : null;
+  if (src) {
+    const same = doc.items.filter(i => !i.locked && sourceOf(i) === src);
+    if (same.length > 1) a.push({ label: `Select all ${same.length.toLocaleString()} from this source`, icon: ListChecks, run: () => { pickGroup(same.map(i => i.id)); toast(`${GROUPS.find(g => g.id === SOURCES[src].group)?.label ?? "Things"}: ${SOURCES[src].label}. ${same.length.toLocaleString()} selected.`, "info"); }, testid: "menu-select-source" });
+  }
   if (hole && done && ground) a.push({ label: "Bend the hole here", run: () => bendHoleAt(hole.id, ground), testid: "menu-bend" });
   // Any area or line that isn't OB itself, a fairway or a landing zone can have an OB edge, all of it
   // or a stretch (from the spot when there is one)

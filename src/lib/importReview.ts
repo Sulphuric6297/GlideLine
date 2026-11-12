@@ -20,7 +20,7 @@ export type SourceGroup = "trees" | "buildings" | "water" | "parking" | "paths" 
 /** Each source: its group, what to call it and where it's from, its color on the map. */
 export const SOURCES: Record<SourceKey, { group: SourceGroup; label: string; who?: string; color: string }> = {
   lidarTrees: { group: "trees", label: "Measured", who: "LiDAR", color: "#4ade80" },
-  summerTrees: { group: "trees", label: "From the photo", who: "the survey's gaps", color: "#bef264" },
+  summerTrees: { group: "trees", label: "Gaps filled from the photo", color: "#bef264" },
   photoTrees: { group: "trees", label: "From the photo", color: "#bef264" },
   bushes: { group: "trees", label: "Bushes", who: "LiDAR", color: "#6ee7b7" },
   underbrush: { group: "trees", label: "Underbrush", who: "survey and satellite", color: "#f59e0b" },
