@@ -29,7 +29,7 @@ const say = (state: ShowState, extra: Record<string, unknown> = {}) => { (window
 /** A site still coming in, handed to the show a part at a time: each part waits in line and is let
  * into the course at a moment the picture is at rest. */
 type LivePart = { kind: "ground" | "lidar" | "sort" | "final"; apply: () => void };
-type LiveState = { queue: LivePart[]; fraction: number; text: string; finalDone: boolean; ended: boolean; name: string };
+type LiveState = { queue: LivePart[]; fraction: number; text: string; finalDone: boolean; ended: boolean; name: string; photo?: string; reveal?: () => void };
 const BIG = 1e6;
 const LIVE_ROWS: [string, string][] = [["ground", "Ground"], ["trees", "Trees"], ["water", "Water"], ["paths", "Paths, roads and more"], ["build", "Buildings and more"]];
 
@@ -121,7 +121,8 @@ export function startLiveImport(o: { name: string; hide: (on: boolean) => void }
   };
   const begin = async (l: Extract<ImportLayer, { source: "frame" }>) => {
     changeDoc(() => ({ canvas: l.canvas, gridSize: l.gridSize, terrainHeights: {}, terrainOriginal: undefined, background: null, items: [], lidar: undefined, groundPaint: {}, cutTrees: [] }), false);
-    o.hide(true);
+    // (the import's own screen stays, its frame and its list, till the ground is in and the show begins)
+    L.reveal = () => o.hide(true);
     say("waiting");
     const v = await viewReady();
     if (!v || dead) { fail(); return; }
@@ -134,6 +135,7 @@ export function startLiveImport(o: { name: string; hide: (on: boolean) => void }
     layer(l) {
       if (dead) return;
       if (l.source === "frame") { if (!started) { started = true; void begin(l); } }
+      else if (l.source === "photo") L.photo = l.background;
       else if (l.source === "elevation") L.queue.push({ kind: "ground", apply: () => changeDoc(() => ({ terrainHeights: l.terrainHeights }), false) });
       else if (l.source === "lidar" && l.trees.length) L.queue.push({ kind: "lidar", apply: () => changeDoc(() => ({ lidar: { source: l.label, trees: l.trees }, terrainHeights: l.terrainHeights }), false) });
     },
@@ -241,6 +243,7 @@ class ImportShow {
     skip.textContent = "Skip"; skip.setAttribute("data-testid", "import-show-skip");
     const stop = () => { this.stopped = true; };
     skip.onclick = stop;
+    if (this.live) for (const e of [this.cover, shield, skip]) e.style.display = "none";
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); stop(); } };
     window.addEventListener("keydown", onKey, true);
     this.undo.push(() => window.removeEventListener("keydown", onKey, true));
@@ -280,10 +283,14 @@ class ImportShow {
       // (the ground first: nothing plays till it's in, or till everything is)
       const L = this.live;
       const sortNow = () => { for (let i = L.queue.length - 1; i >= 0; i--) if (L.queue[i].kind === "sort") L.queue.splice(i, 1)[0].apply(); };
-      while (!this.stopped && !v.disposed && !L.queue.some(q => q.kind === "ground" || q.kind === "final")) { sortNow(); await new Promise(r => setTimeout(r, 80)); }
-      if (this.stopped || v.disposed) return;
+      while (!this.stopped && !L.ended && !v.disposed && !L.queue.some(q => q.kind === "ground" || q.kind === "final")) { sortNow(); await new Promise(r => setTimeout(r, 80)); }
+      if (this.stopped || v.disposed || L.ended) return;
       const gi = L.queue.findIndex(q => q.kind === "ground");
       if (gi >= 0) { L.queue.splice(gi, 1)[0].apply(); for (let n = 0; n < 40; n++) { await new Promise(r => setTimeout(r, 60)); if (Object.keys(getDoc().terrainHeights).length && (v.slowQueue?.size ?? 0) === 0 && v.doc?.heights === v.heightsRef) break; } await new Promise(r => setTimeout(r, 350)); }
+      // (the photo, when it's in already: on the ground as the show opens, straight down, as it was framed)
+      if (L.photo) { changeDoc(() => ({ background: L.photo! }), false); await new Promise(r => setTimeout(r, 450)); this.realDoc = v.doc; this.photoReal = this.photoNow = v.doc.background?.url ? (v.doc.background.opacity ?? 1) : 0; }
+      if (this.stopped || v.disposed || L.ended) return;
+      L.reveal?.(); shield.style.display = ""; skip.style.display = ""; this.cover.style.display = "grid"; this.cover.textContent = "";
       const d = getDoc() as any, hs = Object.values(d.terrainHeights ?? {}) as number[];
       let lo = 0, hi = 0; for (const h of hs) { if (h < lo) lo = h; if (h > hi) hi = h; }
       this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Shaping the ground", val: `${Math.round(hi - lo)} ft of climb`, click: this.T.groundClick, from: this.T.rise[0], to: this.T.rise[1] });
@@ -300,7 +307,7 @@ class ImportShow {
       const tick = () => {
         const held = (window as any).__dgShowClock as (() => number) | undefined;
         const t = held ? held() : ((performance.now() - t0) / 1000) * this.speed;
-        if (this.stopped || v.disposed || t >= this.T.end) { done(); return; }
+        if (this.stopped || v.disposed || this.live?.ended || t >= this.T.end) { done(); return; }
         this.tNow = t;
         if (this.live) this.liveTick(t);
         this.frame(t);
