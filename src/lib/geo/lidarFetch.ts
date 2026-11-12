@@ -30,6 +30,9 @@ export type LidarSite = {
 };
 
 export type LidarOptions = {
+  /** Waited for before each tile's points are taken in on the page's own thread (a piece of work
+   * that would hold a moving picture still): whoever is drawing meanwhile says when. */
+  calm?: () => Promise<void>;
   /** The ground's elevation from USGS 3DEP (the import's own download; not the coarser terrain
    * tiles), to check the survey's ground against; awaited only once the points are in. */
   dem?: Dem | null | Promise<Dem | null>;
@@ -223,6 +226,7 @@ export const fetchLidar = async (ref: GeoRef, onProgress: (fraction: number) => 
             return res.arrayBuffer();
           };
           const pts = await pool.tile(await get(), ref, box).catch(async () => pool.tile(await get(), ref, box));
+          if (opts.calm) await opts.calm();
           gather(g, pts, k);
           ugFeed(ug, pts);
           opts.onPoints?.(pts);

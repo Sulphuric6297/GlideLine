@@ -9,6 +9,7 @@ import { forestDetail } from "../three/treeKit";
 import { getView } from "../state/view";
 import { changeDoc, getDoc, useEditor } from "../state/course";
 import { isImported, type ImportLayer } from "../lib/importSite";
+import { playTreesSound } from "../lib/importSound";
 
 type P = { x: number; y: number };
 const cl = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x));
@@ -29,7 +30,7 @@ const say = (state: ShowState, extra: Record<string, unknown> = {}) => { (window
 /** A site still coming in, handed to the show a part at a time: each part waits in line and is let
  * into the course at a moment the picture is at rest. */
 type LivePart = { kind: "ground" | "photo" | "lidar" | "things" | "sort" | "final"; apply: () => void };
-type LiveState = { queue: LivePart[]; fraction: number; text: string; finalDone: boolean; ended: boolean; name: string; photo?: string; reveal?: () => void };
+type LiveState = { waiters: (() => void)[]; queue: LivePart[]; fraction: number; text: string; finalDone: boolean; ended: boolean; name: string; photo?: string; reveal?: () => void };
 const BIG = 1e6;
 const LIVE_ROWS: [string, string][] = [["ground", "Ground"], ["trees", "Trees"], ["water", "Water"], ["paths", "Paths, roads and more"], ["build", "Buildings and more"]];
 
@@ -68,6 +69,9 @@ export type LiveImport = {
   /** Resolves when the picture is at rest: the import sorts its sources out then (a long piece of
    * work on the page's thread, which would hold a moving picture still). */
   beforeSort(): Promise<void>;
+  /** Resolves at a moment nothing of the build is moving (within a few seconds at most): for a
+   * short piece of the import's work on the page's own thread. */
+  calm(): Promise<void>;
   /** How far the whole import has got, and what it's doing. */
   progress(fraction: number, text: string): void;
   /** Everything's in: `commit` brings it into the course once the show reaches it. Resolves true
@@ -111,7 +115,7 @@ export function startLiveImport(o: { name: string; hide: (on: boolean) => void }
   // (the old way, a hand acting it out: a computer only, as it was made)
   if (HAND && v0?.mobile) on = false;
   if (!on || !v0 || v0.software || reduced || d0.holes.length || d0.items.some(i => !isImported(i))) return null;
-  const L: LiveState = { queue: [], fraction: 0, text: "", finalDone: false, ended: false, name: o.name };
+  const L: LiveState = { waiters: [], queue: [], fraction: 0, text: "", finalDone: false, ended: false, name: o.name };
   const snap = { canvas: d0.canvas, gridSize: d0.gridSize, terrainHeights: d0.terrainHeights, terrainOriginal: d0.terrainOriginal, background: d0.background, items: d0.items, lidar: d0.lidar, groundPaint: d0.groundPaint, cutTrees: d0.cutTrees };
   let dead = false, started = false, finish: (ok: boolean) => void = () => {};
   const done = new Promise<boolean>(r => (finish = r));
@@ -148,6 +152,7 @@ export function startLiveImport(o: { name: string; hide: (on: boolean) => void }
       else if (l.source === "lidar" && l.trees.length) L.queue.push({ kind: "lidar", apply: () => changeDoc(() => ({ lidar: { source: l.label, trees: l.trees }, terrainHeights: l.terrainHeights }), false) });
     },
     beforeSort() { return dead ? Promise.resolve() : new Promise<void>(ok => { L.queue.push({ kind: "sort", apply: ok }); setTimeout(ok, 20000); }); },
+    calm() { return dead || L.ended ? Promise.resolve() : new Promise<void>(ok => { L.waiters.push(ok); setTimeout(ok, 4000); }); },
     progress(fraction, text) { L.fraction = fraction; L.text = text; },
     final(commit) {
       if (dead) return Promise.resolve(false);
@@ -199,6 +204,10 @@ class ImportShow {
   private tally: Record<string, number> = {};
   /** A site coming in: open at once, straight down, the ground rising when it lands. */
   private noCover = false;
+  /** The site's footprint, dark with a lit edge, till the first of it is here: then it lifts off what's under it. */
+  private lid: SVGPathElement | null = null; private lidEdge: SVGPathElement | null = null;
+  private revealAt: number | undefined;
+  private photoAt: number | undefined;
   private grounded = true;
   private groundAt: number | undefined;
   /** A part being let in: the picture comes to rest, the part goes into the course, its things are held back. */
@@ -282,6 +291,8 @@ class ImportShow {
       const f = this.cam.from;
       this.camTo(f.az, f.polar, f.dist, f.tx, 0, f.tz);
       this.noCover = true; this.grounded = false; this.cover.style.display = "none";
+      // (called 3D from the start: the app's own change of that, part-way through the swoop, would hold a frame)
+      this.tipped = true; useEditor.getState().set({ view: "3d" } as any);
       this.T = { cover: 0.01, groundClick: BIG, swoop: [BIG, BIG + 3.5], rise: [BIG, BIG + 2], sunClick: BIG, sun: [BIG, BIG + 3.3], sunClose: BIG + 4, back: BIG + 5, end: BIG + 7 };
       this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Shaping the ground", val: "", click: BIG, from: BIG, to: BIG + 2 });
       this.live!.reveal?.(); shield.style.display = ""; skip.style.display = "";
@@ -332,10 +343,15 @@ class ImportShow {
     say("playing", { steps: this.steps.map(s => s.id), seconds: this.T.end });
     // --- played by the clock (a late frame only shows a later moment: nothing is skipped over)
     const t0 = performance.now();
+    // (with a graphics card, no frame moves the show on more than a twentieth of a second: after a
+    // slow one, a tree being made say, it carries on from where it was, and nothing is jumped over)
+    const even = !v.software;
+    let clock = 0, lastReal = t0;
     await new Promise<void>(done => {
       const tick = () => {
         const held = (window as any).__dgShowClock as (() => number) | undefined;
-        const t = held ? held() : ((performance.now() - t0) / 1000) * this.speed;
+        const nowReal = performance.now(); this.even = nowReal - lastReal < 40 ? this.even + 1 : 0; clock += Math.min(0.05, (nowReal - lastReal) / 1000) * this.speed; lastReal = nowReal;
+        const t = held ? held() : even ? clock : ((nowReal - t0) / 1000) * this.speed;
         if (this.stopped || v.disposed || this.live?.ended || t >= this.T.end) { done(); return; }
         this.tNow = t;
         if (this.live) this.liveTick(t);
@@ -526,17 +542,20 @@ class ImportShow {
 
   /** A site coming in: the next part let in once the step in hand is done, the picture at rest. */
   private liveTick(t: number) {
-    const L = this.live!, last = this.steps[this.steps.length - 1];
-    // (the photo: laid on the ground the moment it's here, whatever else is under way)
-    { const pi = L.queue.findIndex(q => q.kind === "photo"); if (pi >= 0) L.queue.splice(pi, 1)[0].apply(); }
+    const L = this.live!;
+    // (the import's own short pieces of work: let through while nothing is moving)
+    if (L.waiters.length && (this.grounded ? !this.pending && t >= this.steps[this.steps.length - 1].to + 0.1 : this.groundAt === undefined || this.even < 4)) { const w = L.waiters.shift()!; w(); }
+    // (the photo: laid on the ground the moment it's here, before anything moves; once the site
+    // is moving it waits its turn like any other part, for a moment the picture is at rest)
+    if (!this.grounded) { const pi = L.queue.findIndex(q => q.kind === "photo"); if (pi >= 0) { L.queue.splice(pi, 1)[0].apply(); if (this.revealAt === undefined) this.revealAt = t + 0.55; if (this.photoAt === undefined) this.photoAt = t + 0.2; } }
     if (!this.grounded) {
       // (before the ground: the photo laid down as soon as it's here, then the ground, which starts it all)
       const v = this.v;
       for (let i = L.queue.length - 1; i >= 0; i--) if (L.queue[i].kind === "sort") L.queue.splice(i, 1)[0].apply();
       const gi = this.groundAt === undefined ? L.queue.findIndex(q => q.kind === "ground") : -1;
-      if (gi >= 0) { L.queue.splice(gi, 1)[0].apply(); this.groundAt = t; }
+      if (gi >= 0) { L.queue.splice(gi, 1)[0].apply(); this.groundAt = t; if (this.revealAt === undefined) this.revealAt = t + 0.35; }
       const inNow = this.groundAt !== undefined && t >= this.groundAt + 0.4 && ((Object.keys(getDoc().terrainHeights).length > 0 && (v.slowQueue?.size ?? 0) === 0 && v.doc?.heights === v.heightsRef) || t >= this.groundAt + 2.8);
-      if (inNow || (this.groundAt === undefined && L.queue.some(q => q.kind === "final"))) {
+      if ((inNow && (this.even >= 8 || t >= this.groundAt! + 3.2)) || (this.groundAt === undefined && L.queue.some(q => q.kind === "final"))) {
         const hs = Object.values(getDoc().terrainHeights ?? {}) as number[];
         let lo = 0, hi = 0; for (const h of hs) { if (h < lo) lo = h; if (h > hi) hi = h; }
         this.T.groundClick = t + 0.2; this.T.swoop = [t + 0.3, t + 3.8]; this.T.rise = [t + 0.5, t + 2.5];
@@ -546,7 +565,20 @@ class ImportShow {
       }
       return;
     }
-    if (!this.absorbing && L.queue.length && t >= last.to + 0.3) this.absorbing = { part: L.queue.shift()!, at: t + (HAND ? 0.45 : 0.15), applied: false };
+    if (this.pending && (this.even >= 10 || t >= this.pending.at + 3)) {
+      const fin = this.pending.final; this.pending = null;
+      for (const id of ["trees", "water", "paths", "build"] as const) this.appendStep(id, t);
+      if (fin) {
+        const end = Math.max(t, this.steps[this.steps.length - 1].to);
+        this.T.sunClick = end + 0.3; this.T.sun = [end + BIG, end + 2 * BIG]; this.T.sunClose = end + 0.2; this.T.back = end + 0.2; this.T.end = end + 1.8;
+        const d = this.realDoc;
+        this.sunReal = { azimuth: d.sun?.azimuth ?? 225, altitude: d.sun?.altitude ?? 38, shadows: d.sun?.shadows ?? 0.65 };
+        this.photoReal = d.background?.url ? (d.background.opacity ?? 1) : 0;
+        L.finalDone = true;
+      }
+      say("playing", { steps: this.steps.map(s => s.id), seconds: this.T.end });
+    }
+    if (!this.absorbing && !this.pending && L.queue.length && t >= this.steps[this.steps.length - 1].to + 0.3) this.absorbing = { part: L.queue.shift()!, at: t + 0.5, applied: false };
     const a = this.absorbing;
     if (a && !a.applied && t >= a.at) {
       a.applied = true;
@@ -569,19 +601,15 @@ class ImportShow {
     if (kind === "photo") {
       const d = this.realDoc;
       this.photoReal = d.background?.url ? (d.background.opacity ?? 1) : 0;
+      if (this.photoAt === undefined) this.photoAt = t + 0.45;
     } else if (!HAND && kind !== "ground") {
       // (each part built on its own: what was built before stays whole)
+      // (held back at once; its steps begin a moment on, when the graphics card has what it needs
+      // and the frames come evenly: nothing stutters as it comes up)
       this.retire();
       this.gather();
-      for (const id of ["trees", "water", "paths", "build"] as const) this.appendStep(id, t);
-      if (kind === "final") {
-        const end = Math.max(t, this.steps[this.steps.length - 1].to);
-        this.T.sunClick = end + 0.3; this.T.sun = [end + BIG, end + 2 * BIG]; this.T.sunClose = end + 0.2; this.T.back = end + 0.2; this.T.end = end + 1.8;
-        const d = this.realDoc;
-        this.sunReal = { azimuth: d.sun?.azimuth ?? 225, altitude: d.sun?.altitude ?? 38, shadows: d.sun?.shadows ?? 0.65 };
-        this.photoReal = d.background?.url ? (d.background.opacity ?? 1) : 0;
-        this.live!.finalDone = true;
-      }
+      this.even = 0;
+      this.pending = { final: kind === "final", at: t };
     } else if (kind === "lidar") {
       this.gather({ trees: true, shapes: false });
       if (this.trees.length + this.inst.length) { this.appendStep("trees", t); this.treesPlayed = true; }
@@ -609,6 +637,14 @@ class ImportShow {
     this.ring = document.createElementNS(NS, "polygon");
     this.ring.setAttribute("style", "fill:rgba(255,255,255,.07);stroke:#fff;stroke-width:1.6;stroke-opacity:.85;opacity:0");
     svg.appendChild(this.ring);
+    if (this.noCover) {
+      const vb = this.v.container.getBoundingClientRect(), inView = document.createElementNS(NS, "svg");
+      for (const [k, val] of [["x", vb.left], ["y", vb.top], ["width", vb.width], ["height", vb.height]] as const) inView.setAttribute(k, String(val));
+      inView.setAttribute("viewBox", `${vb.left} ${vb.top} ${vb.width} ${vb.height}`);
+      svg.insertBefore(inView, this.ring);
+      this.lid = document.createElementNS(NS, "path"); this.lid.setAttribute("style", "fill:#0b100a;stroke:none"); inView.appendChild(this.lid);
+      this.lidEdge = document.createElementNS(NS, "path"); this.lidEdge.setAttribute("pathLength", "1"); this.lidEdge.setAttribute("style", "fill:rgba(162,207,106,.05);stroke:#a2cf6a;stroke-width:2;stroke-linejoin:round;filter:drop-shadow(0 0 10px rgba(162,207,106,.75))"); inView.appendChild(this.lidEdge);
+    }
     for (const b of this.built) if (b.pts) { const p = document.createElementNS(NS, "path"); p.setAttribute("style", "fill:rgba(255,255,255,.12);stroke:#fff;stroke-width:2;stroke-linejoin:round;opacity:0"); p.setAttribute("pathLength", "1"); svg.appendChild(p); b.out = p; }
     this.cur = this.el("div", "position:fixed;left:0;top:0;z-index:9998;pointer-events:none;width:28px;height:28px;transform-origin:4px 3px;filter:drop-shadow(0 3px 4px rgba(0,0,0,.5));opacity:0;will-change:transform");
     this.cur.innerHTML = this.phone
@@ -618,8 +654,10 @@ class ImportShow {
     this.curAt = { x: box.left + box.width * 0.56, y: box.top + box.height * 0.62 }; this.from = { ...this.curAt };
     this.card = this.el("div", `position:fixed;left:${box.left + 14}px;top:${box.top + 116}px;width:300px;z-index:9997;border-radius:22px;padding:16px 16px 14px;color:#f4f4f5;font:14px/1.35 system-ui,'Segoe UI',sans-serif;opacity:0;pointer-events:none`);
     if (this.phone) this.card.style.cssText += `;left:${box.left + 78}px;top:${box.top + 84}px;width:${Math.min(250, box.width - 78 - 62)}px;padding:10px 14px 11px;border-radius:18px`;
+    // (a computer, with no hand acting it out: the card where the look-over's will be, and like it, so one becomes the other)
+    else if (!HAND) this.card.style.cssText += `;left:16px;top:72px;width:344px;padding:16px;border-radius:22px;transition:transform .5s cubic-bezier(.2,.9,.3,1)`;
     this.card.className = "glass"; this.card.setAttribute("data-testid", "import-show-card"); this.card.setAttribute("role", "status");
-    this.card.innerHTML = `<div style="font-weight:650;font-size:15.5px" data-k="ttl"></div><div style="font-size:12.5px;color:#a1a1aa;margin-top:2px;min-height:17px" data-k="now"></div>
+    this.card.innerHTML = `${!HAND && !this.phone ? '<div style="font-size:10.5px;font-weight:700;letter-spacing:.08em;color:#a2cf6a;margin-bottom:8px">IMPORT</div>' : ""}<div style="font-weight:${!HAND && !this.phone ? "700;font-size:17px" : "650;font-size:15.5px"}" data-k="ttl"></div><div style="font-size:12.5px;color:#a1a1aa;margin-top:2px;min-height:17px" data-k="now"></div>
       <div style="height:5px;border-radius:5px;background:rgba(255,255,255,.1);margin:11px 0 8px;overflow:hidden" data-k="barbox"><i data-k="bar" style="display:block;height:100%;width:0;border-radius:5px;background:linear-gradient(90deg,#7fb24e,#a2cf6a)"></i></div>
       ${(this.live ? LIVE_ROWS : this.steps.map(s => [s.id, s.name])).map(([id, label]) => `<div data-row="${id}" style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13.5px;color:#71717a"><span data-dot style="width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:11px;font-weight:700;color:#0c1209;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.14)"></span><span>${label}</span><span data-v style="margin-left:auto;font-size:13px;font-variant-numeric:tabular-nums"></span></div>`).join("")}`;
     (this.card.querySelector('[data-k="ttl"]') as HTMLElement).dataset.name = name;
@@ -646,6 +684,15 @@ class ImportShow {
     this.frameN++;
     if (this.extras?.visible) this.extras.visible = false;
     let shade = false;
+    // the footprint: its edge drawn round, breathing while the first of the site is fetched; then it lifts
+    if (this.lid && this.lidEdge) {
+      const c = [[0, 0], [W, 0], [W, H], [0, H]].map(([x, y]) => this.screenOf(x, y, 0.5)), d = "M" + c.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join("L") + "Z";
+      const gone = this.revealAt === undefined ? 0 : io((t - this.revealAt) / 1.1), edge = this.revealAt === undefined ? 1 : 1 - io((t - this.revealAt - 0.5) / 1.4);
+      this.lid.setAttribute("d", d); this.lid.style.opacity = String(1 - gone);
+      this.lidEdge.setAttribute("d", d); if (this.lidFrom === undefined && (this.even >= 6 || t > 2.2)) this.lidFrom = t;
+      this.lidEdge.setAttribute("stroke-dasharray", `${this.lidFrom === undefined ? 0 : io((t - this.lidFrom) / 1.2)} 1`); this.lidEdge.style.opacity = String((0.72 + 0.28 * Math.sin(t * 2.6)) * edge);
+      if (edge <= 0.001) { this.lid.remove(); this.lidEdge.remove(); this.lid = this.lidEdge = null; }
+    }
     // the cover lifts off the photo, seen straight down
     const cv = this.noCover ? 0 : 1 - io(t / T.cover);
     this.cover.style.opacity = String(cv); this.cover.style.display = cv <= 0.001 ? "none" : "grid";
@@ -670,7 +717,7 @@ class ImportShow {
       v.placeSun();
       if (v.haze) { v.haze.density = 0.00021 * k * (1 - home); const hz = v.skyBox?.material?.uniforms?.uHaze?.value; if (hz) v.haze.color.copy(hz); }
       // the photo on the ground through the swoop, the course's own ground while it's built, the photo back at the end
-      const x = HAND ? Math.max((1 - io((t - T.rise[0] - 0.7) / (T.rise[1] - T.rise[0] - 0.2))) * this.photoReal, home * this.photoReal) : this.photoReal, g = v.ground, mat = g.mapPlane?.material;
+      const x = HAND ? Math.max((1 - io((t - T.rise[0] - 0.7) / (T.rise[1] - T.rise[0] - 0.2))) * this.photoReal, home * this.photoReal) : this.photoReal * (this.photoAt === undefined ? 1 : io((t - this.photoAt) / 0.9)), g = v.ground, mat = g.mapPlane?.material;
       if (Math.abs(x - this.photoNow) > 0.0005 || this.frameN === 1) { this.photoNow = x; g.bgOpacity = x; if (mat && g.photo && !g.painted) { mat.opacity = x; mat.visible = x > 0.001; } }
     }
     if (!this.tipped && k > 0.45) { this.tipped = true; useEditor.getState().set({ view: "3d" } as any); }
@@ -680,6 +727,8 @@ class ImportShow {
     // the trees, each as the hand reaches its stand: up out of the ground
     const ts = this.step("trees"), tp = ts ? (t - ts.from) / (ts.to - ts.from) : 2, span = 0.13;
     const growing = tp > -0.05 && tp < 1.05;
+    // (a rush of air as they come up)
+    if (!HAND && ts && ts !== this.rushFor && t >= ts.from && t < ts.to) { this.rushFor = ts; playTreesSound((ts.to - ts.from) / this.speed); }
     if (growing || this.frameN === 1 || this.treeKick || (tp >= 1.05 && this.trees[0]?.s !== 1 && this.trees.length)) {
       for (const tr of this.trees) { const s = out((tp - tr.at * (1 - span)) / span); if (s === tr.s) continue; tr.s = s; tr.o.visible = s > 0.001; tr.o.scale.set(0.35 + 0.65 * s, Math.max(0.0001, s), 0.35 + 0.65 * s); tr.o.updateMatrixWorld(true); }
     }
@@ -804,6 +853,12 @@ class ImportShow {
     v.dirty = true;
   }
   private instDone = false;
+  private rushFor: Step | null = null;
+  /** How many frames in a row came on time (the graphics card done with what it had to make ready). */
+  private even = 0;
+  /** A part taken in, its things held back: its steps begin once the frames come evenly. */
+  private pending: { final: boolean; at: number } | null = null;
+  private lidFrom: number | undefined;
   private lastCam = 0;
   private vel = { x: 0, y: 0 };
   private smooth = 0.3;

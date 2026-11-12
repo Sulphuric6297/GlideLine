@@ -22,6 +22,7 @@ import type { CourseDoc, CourseItem } from "../types";
 import { ImportReview3d, type ReviewGroup, type TreeLook3d } from "./ImportReview3d";
 import { HelpLink, Slider } from "./ui";
 import { playImportShow, startLiveImport } from "../viewport/importShow";
+import { startImportMusic, stopImportMusic } from "../lib/importSound";
 import { BEST_GUESS, UG_BLOCK, brushAcres, brushAreas, brushLevels, tapPatch, type BrushTune } from "../lib/undergrowth";
 import { useLayout, useTouch } from "./useLayout";
 import { BottomSheet, type Detent } from "./mobile/BottomSheet";
@@ -136,7 +137,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   const stopper = useRef<AbortController | null>(null);
   useEffect(() => {
     open.current = true;
-    return () => { open.current = false; stopper.current?.abort(); leave3d.current(); };
+    return () => { open.current = false; stopper.current?.abort(); leave3d.current(); stopImportMusic(900); };
   }, []);
   const [start] = useState(() => startFrom(near));
   // (a site in already: bringing it in again replaces what came last time)
@@ -410,6 +411,8 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     landed.current = null;
     setArrived(null);
     setStatus({ state: "loading", text: "Starting…" });
+    // (its music, softly, from this press till the site's brought in)
+    if (!prev) startImportMusic();
     if (!prev) { played.current = false; setLeft([]); setLook(null); setOffKinds([]); setLidarTune({}); }
     builtIn.current = false;
     const live = !onPreview || prev ? null : startLiveImport({ name: label.split(",")[0].trim() || "your site", hide: on => { liveHid.current = on; setLiveOn(on); if (!on && landed.current) setArrived({ ...landed.current }); } });
@@ -417,7 +420,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     // back to, and nothing else worked meanwhile)
     if (live) { keepBase(); played.current = true; useEditor.getState().set({ photo: true, reviewing: true, selectedId: null } as never); }
     try {
-      const site = await importSite(selectionFromBounds(turnedBox(selection, angle), label), { imagery, trees, surveyed: !!survey, osm, lidar, summerFill: fill, gov, photo: photoId, signal: stop.signal, beforeSort: live ? () => live.beforeSort() : undefined, onLayer: l => { onLayer(l); live?.layer(l); }, onProgress: p => {
+      const site = await importSite(selectionFromBounds(turnedBox(selection, angle), label), { imagery, trees, surveyed: !!survey, osm, lidar, summerFill: fill, gov, photo: photoId, signal: stop.signal, beforeSort: live ? () => live.beforeSort() : undefined, calm: live ? () => live.calm() : undefined, onLayer: l => { onLayer(l); live?.layer(l); }, onProgress: p => {
         live?.progress(p.fraction, p.text);
         (window as { __dgImportProgress?: unknown }).__dgImportProgress = p;
         if (!stop.signal.aborted) { setStatus({ state: "loading", text: p.text, progress: { fraction: p.fraction } }); setSources({ ...p.sources }); }
@@ -449,6 +452,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
       // (stopped: nothing to say; anything else, said, never left hanging)
       live?.abort();
       end3d();
+      stopImportMusic(1200);
       if (stop.signal.aborted) return;
       console.error(err);
       setStatus({ state: "error", text: err instanceof Error ? err.message : "Couldn't bring in the site." });
@@ -681,12 +685,14 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     if (!review || !shownSite) return;
     // (looked over in 3D: the course as it was, so it comes in as one step; the view stays as it is, in 3D with the photo)
     const b = base.current, was3d = !!b;
+    // (Design begins: the import's music fades away)
+    stopImportMusic(3200);
     if (b) { base.current = null; useCourse.setState({ doc: b.doc, past: b.past, future: b.future, gestureStart: null }); useEditor.getState().set({ reviewing: false, selectedId: null } as never); }
     onImported(shownSite, { ...bringOpts(), ...((was3d && ready3d) || played.current ? { shown: true } : {}) });
   };
   const reviewButtons = (
     <div className="flex gap-2">
-      <button className="h-12 px-4 rounded-[14px] bg-white/[0.08] hover:bg-white/[0.12] text-[14px] font-semibold text-zinc-200" onClick={() => { setReview(null); setArrived(null); }} data-testid="review-back">Back</button>
+      <button className="h-12 px-4 rounded-[14px] bg-white/[0.08] hover:bg-white/[0.12] text-[14px] font-semibold text-zinc-200" onClick={() => { stopImportMusic(1200); setReview(null); setArrived(null); }} data-testid="review-back">Back</button>
       <button className="flex-1 h-12 rounded-[14px] bg-[#a2cf6a] hover:bg-[#b3db80] active:bg-[#93c05c] text-zinc-950 text-[15px] font-bold" onClick={bring} data-testid="review-bring">{again ? "Bring it in again" : "Bring it in"}</button>
     </div>
   );
@@ -799,12 +805,15 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   ) : null;
   const review3d = in3d && ready3d && review && site0 && createPortal(
     <ImportReview3d phone={phone} again={again} site0={site0} left={left} onLeave={b => setLeft(l => [...l, b])} onUndo={() => setLeft(l => l.slice(0, -1))} look={look} onLook={setLook}
-      groups={groupEls} photoChoice={photoChoiceEl} brushRow={brushRowEl} notes={reviewNotes} failed={failedNames} onRetry={() => void run(review.photo, true)} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
+      groups={groupEls} photoChoice={photoChoiceEl} brushRow={brushRowEl} notes={reviewNotes} failed={failedNames} onRetry={() => void run(review.photo, true)} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { stopImportMusic(1200); end3d(); setReview(null); setArrived(null); }} />, document.body);
+  // (out of the way while the site is built or looked over in the 3D view: it fades into the view
+  // as the build begins, and is gone while the site is looked over)
+  const awayStyle: React.CSSProperties | undefined = in3d ? { display: "none" } : liveOn ? { opacity: 0, visibility: "hidden", pointerEvents: "none", transition: "opacity .6s ease, visibility 0s linear .6s" } : { transition: "opacity .3s ease" };
   const closeBtn = <button className="glass w-11 h-11 rounded-full grid place-items-center text-zinc-300 hover:text-zinc-50" onClick={close} aria-label="Close" title="Close"><X size={20} /></button>;
 
   if (phone) {
     return (
-      <div className="dg-compact fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={liveOn || in3d ? { display: "none" } : undefined}>{review3d}
+      <div className="dg-compact fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={awayStyle}>{review3d}
         <div className="absolute inset-0">{mapEl}</div>
         <div className="absolute left-3 right-3 top-[max(10px,env(safe-area-inset-top))] z-[1100] flex items-center gap-2">
           <div className="flex-1 min-w-0">{placeChip}</div>
@@ -834,7 +843,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={liveOn || in3d ? { display: "none" } : undefined}>{review3d}
+    <div className="fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={awayStyle}>{review3d}
       <div className="absolute inset-0">{mapEl}</div>
       <div className="absolute top-4 right-4 z-[1100]">{closeBtn}</div>
       {!framing && !loading && (

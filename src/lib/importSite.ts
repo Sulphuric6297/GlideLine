@@ -134,6 +134,9 @@ export type ImportOptions = {
   /** Waited for once every source is in, before they're sorted out against each other (the one
    * long piece of work on the page's own thread): whoever is drawing meanwhile says when. */
   beforeSort?: () => Promise<void>;
+  /** Waited for before a short piece of work on the page's own thread (a survey tile's points
+   * taken in): resolves when nothing on the screen is moving. */
+  calm?: () => Promise<void>;
   /** Stops it: every download, at once (the import then rejects with an AbortError). */
   signal?: AbortSignal;
   /** (older callers) What it is doing, and how far along all of it is (`fraction`). */
@@ -783,7 +786,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       // (the survey's ground checked against 3DEP's, when that's what the elevation is: awaited only
       // once the points are in, so both still download at once)
       const dem = elevationJob.then(e => (e && e.elev.source.startsWith("USGS") ? { values: e.elev.values, samplesX, samplesY } : null)).catch(() => null);
-      const got = cached("lidar", here, report => fetchLidar(ref, report, { dem, signal }), { signal, onProgress: f => progress.set("lidar", { fraction: f }) });
+      const got = cached("lidar", here, report => fetchLidar(ref, report, { dem, signal, calm: opts.calm }), { signal, onProgress: f => progress.set("lidar", { fraction: f }) });
       const lidar = await untilAborted(got.value, signal);
       if (!lidar) { progress.set("lidar", { state: "not-here", cached: got.hit }); return null; }
       const g = groundOnGrid(lidar.measured, width, height, grid);

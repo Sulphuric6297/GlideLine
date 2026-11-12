@@ -6,7 +6,8 @@
 // a thing is Design's work, after.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Vector3 } from "three";
-import { ArrowRight, BoxSelect, Undo2 } from "lucide-react";
+import { ArrowRight, BoxSelect, Undo2, Volume2, VolumeX } from "lucide-react";
+import { importSoundOn, setImportSound } from "../lib/importSound";
 import { SOURCES, GROUPS, sourceOf, type LeftOut, type SourceGroup } from "../lib/importReview";
 import { isImported, type ImportedSite } from "../lib/importSite";
 import { COLOR_PICKS } from "../lib/landscapes";
@@ -356,6 +357,8 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
     <div className="text-[12.5px] text-orange-300" data-testid="review-failed">{failed.join(", ")} didn't come.{onRetry && <> <button className="underline text-[#a2cf6a] font-semibold" onClick={onRetry} data-testid="review-retry">Try again</button></>}</div>
   );
   const areaEl = area && <AreaPick onBox={boxed} onCancel={() => setArea(false)} />;
+  const [sound, setSound] = useState(importSoundOn);
+  const flipSound = () => { setImportSound(!sound); setSound(!sound); };
   const treesGroup = groups.find(g => g.id === "trees"), others = groups.filter(g => g.id !== "trees");
   const brushAc = nowLv && brush?.on ? brushAcres(nowLv).slice(1).reduce((a, b) => a + b, 0) : 0;
   // (what comes in, in a line each: the last step's list)
@@ -418,6 +421,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
       <div className="flex flex-col">
         {steps.map((s, k) => <button key={s.id} className={`${row} ${k === at ? "!text-orange-300" : ""}`} onClick={() => go(k)} data-testid={`review-step-${s.id}`}><span className="w-5 text-zinc-400 tabular-nums">{k + 1}</span>{s.title}</button>)}
         <button className={row} onClick={onFlat} data-testid="review-flat">Look at it on the flat map</button>
+        <button className={row} onClick={flipSound} data-testid="review-sound">{sound ? <Volume2 size={18} /> : <VolumeX size={18} />}Sound: {sound ? "on" : "off"}</button>
         <button className={`${row} !text-orange-300`} onClick={onBack} data-testid="review-back">Back to the frame</button>
       </div>
     );
@@ -491,6 +495,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
         <div className="flex items-center gap-2">
           <span className="text-[10.5px] font-bold uppercase tracking-[0.08em] text-[#a2cf6a]">Import</span>
           <HelpLink topic="import-options" label="Import" />
+          <button type="button" className="w-6 h-6 rounded-full grid place-items-center text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.1]" aria-pressed={sound} aria-label={sound ? "Sound on" : "Sound off"} title={sound ? "Sound on" : "Sound off"} onClick={flipSound} data-testid="review-sound">{sound ? <Volume2 size={14} /> : <VolumeX size={14} />}</button>
           <span className="ml-auto text-[12px] text-zinc-400 tabular-nums" data-testid="review-step-count">Step {at + 1} of {steps.length}</span>
         </div>
         <div className="flex gap-[5px]" role="tablist" aria-label="Import steps">
