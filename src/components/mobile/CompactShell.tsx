@@ -323,6 +323,7 @@ const stepRowAt: Partial<Record<Step, number>> = {};
  * pill (`onPick` with where it was); `back`, the tool coming back down into its place from the
  * pill, its neighbours sliding back in. */
 function StepTools({ onPick, back }: { onPick: (from: DOMRect) => void; back: { tool: string; from: DOMRect } | null }) {
+  const reviewing = useEditor(s => s.reviewing);
   const step = useEditor(e => e.step);
   const main = STEP_TOOLS[step] ?? STEP_TOOLS.design;
   // (no Select: outside a tool, a tap picks; the step's own tools first, then the rest)
@@ -353,6 +354,8 @@ function StepTools({ onPick, back }: { onPick: (from: DOMRect) => void; back: { 
     count();
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
   const more = () => row.current?.scrollBy({ left: row.current.clientWidth * 0.8, behavior: "smooth" });
+  // (a site being looked over before it comes in: its own bar has the place)
+  if (reviewing) return null;
   return (
     <div className="absolute left-2.5 right-2.5 bottom-2 z-30 flex items-center gap-1 h-[64px] px-1.5 rounded-[26px] glass border border-white/10 shadow-2xl" data-testid="tool-strip">
       <div ref={row} onScroll={count} role="toolbar" aria-label="Tools" className={`flex-1 min-w-0 flex gap-1 overflow-x-auto dg-noscrollbar touch-pan-x ${past ? "dg-fade-r" : ""}`}>
@@ -685,6 +688,9 @@ function PhoneGroupBar({ group, faded, side, onHeight }: BarProps & { group: Cou
 function PhoneBar(props: BarProps) {
   const mode = useMode();
   const { hole, item, group } = useSelection();
+  // (a site being looked over before it comes in: its own bar has the place)
+  const reviewing = useEditor(s => s.reviewing);
+  if (reviewing) return null;
   if (mode === "tool") return <PhoneToolBar {...props} />;
   if (hole) return <PhoneHoleBar key={hole.id} hole={hole} {...props} />;
   if (item) return <PhoneItemBar key={item.id} item={item} {...props} />;

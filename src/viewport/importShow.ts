@@ -35,6 +35,9 @@ const LIVE_ROWS: [string, string][] = [["ground", "Ground"], ["trees", "Trees"],
 
 type Step = { id: "ground" | "trees" | "water" | "paths" | "build"; tool: string; name: string; doing: string; now: string; val: string; click: number; from: number; to: number };
 
+/** Whether a hand acts the build out with the app's tools (off: each part comes in on its own). */
+const HAND = typeof window !== "undefined" && (window as any).__dgShowHand === true;
+
 /** Plays the show on the course just brought in (a first site, on a device with a graphics card:
  * a computer, or a phone in its own layout; with motion reduced, nothing happens). Resolves when
  * it's over. */
@@ -168,7 +171,7 @@ class ImportShow {
   /** The paths the hand draws itself: where each begins and ends along its way. */
   private traced = new Map<object, [number, number]>();
   private steps: Step[] = [];
-  private T = { cover: 1.0, groundClick: 1.6, swoop: [1.9, 6.5], rise: [2.3, 6.1], sunClick: 0, sun: [0, 0], sunClose: 0, back: 0, end: 0 };
+  private T = HAND ? { cover: 1.0, groundClick: 1.6, swoop: [1.9, 6.5], rise: [2.3, 6.1], sunClick: 0, sun: [0, 0], sunClose: 0, back: 0, end: 0 } : { cover: 0.8, groundClick: 1.0, swoop: [1.1, 4.6], rise: [1.3, 3.3], sunClick: 0, sun: [0, 0], sunClose: 0, back: 0, end: 0 };
   private cam!: { from: any; to: any; orbit: number; lower: number };
   private sunSet: { azimuth: number; altitude: number; shadows: number } | null = null;
   private sunReal: { azimuth: number; altitude: number; shadows: number };
@@ -438,17 +441,18 @@ class ImportShow {
     const waters = this.shapes.filter(s => s.water).length, others = this.shapes.filter(s => !s.water && !s.struct).length;
     const structs = this.built.filter(b => b.pts).length;
     const want: [Step["id"], string, string, string, string, string, number, boolean][] = [
-      ["trees", "trees", "Trees", "planting", "Planting the trees", nTrees.toLocaleString(), this.phone ? 4.0 : 4.65, this.trees.length + this.inst.length > 0],
-      ["water", "water", "Water", "filling", "Filling the water", String(waters), 1.3, waters > 0],
-      ["paths", "paths", "Paths, roads and more", "drawing", "Drawing paths and roads", String(others), 3.0, others > 0],
-      ["build", "build", "Buildings and more", "placing", "Setting down the buildings", String(this.built.length), structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
+      ["trees", "trees", "Trees", "planting", "Planting the trees", nTrees.toLocaleString(), !HAND ? 2.4 : this.phone ? 4.0 : 4.65, this.trees.length + this.inst.length > 0],
+      ["water", "water", "Water", "filling", "Filling the water", String(waters), HAND ? 1.3 : 0.8, waters > 0],
+      ["paths", "paths", "Paths, roads and more", "drawing", "Drawing paths and roads", String(others), HAND ? 3.0 : 0.9, others > 0],
+      ["build", "build", "Buildings and more", "placing", "Setting down the buildings", String(this.built.length), !HAND ? Math.min(1.4, 0.6 + structs * 0.25) : structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
     ];
     this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Shaping the ground", val: `${Math.round(hi - lo)} ft of climb`, click: this.T.groundClick, from: this.T.rise[0], to: this.T.rise[1] });
-    let t = this.T.swoop[1];
+    let t = HAND ? this.T.swoop[1] : this.T.rise[1];
     for (const [id, tool, name, doing, now, val, len, has] of want) {
       if (!has) continue;
-      const click = t + (this.phone ? 2.5 : 0.6); this.steps.push({ id, tool, name, doing, now, val, click, from: click + 0.35, to: click + 0.35 + len }); t = click + 0.35 + len;
+      const click = t + (!HAND ? 0.1 : this.phone ? 2.5 : 0.6), lead = HAND ? 0.35 : 0.1; this.steps.push({ id, tool, name, doing, now, val, click, from: click + lead, to: click + lead + len }); t = click + lead + len;
     }
+    if (!HAND) { t = Math.max(t, this.T.swoop[1]); this.T.sunClick = t + 0.3; this.T.sun = [t + 1e6, t + 2e6]; this.T.sunClose = t + 0.2; this.T.back = t + 0.2; this.T.end = t + 1.8; return; }
     if (this.phone) t += 1.4;
     this.T.sunClick = t + 0.7; this.T.sun = [t + 1.4, t + 4.7]; this.T.sunClose = t + 5.3; this.T.back = t + 5.6; this.T.end = t + 7.6;
   }
@@ -461,9 +465,9 @@ class ImportShow {
     const nTrees = this.trees.length + (v.lidarState?.stand?.length ?? 0) || this.inst.reduce((n, q) => n + q.n, 0);
     const def: Record<string, [string, string, string, string, string, number, boolean]> = {
       trees: ["trees", "Trees", "planting", "Planting the trees", nTrees.toLocaleString(), 4.65, this.trees.length + this.inst.length > 0],
-      water: ["water", "Water", "filling", "Filling the water", String(waters), 1.3, waters > 0],
-      paths: ["paths", "Paths, roads and more", "drawing", "Drawing paths and roads", String(others), 3.0, others > 0],
-      build: ["build", "Buildings and more", "placing", "Setting down the buildings", String(this.built.length), structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
+      water: ["water", "Water", "filling", "Filling the water", String(waters), HAND ? 1.3 : 0.8, waters > 0],
+      paths: ["paths", "Paths, roads and more", "drawing", "Drawing paths and roads", String(others), HAND ? 3.0 : 0.9, others > 0],
+      build: ["build", "Buildings and more", "placing", "Setting down the buildings", String(this.built.length), !HAND ? Math.min(1.4, 0.6 + structs * 0.25) : structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
     };
     const [tool, name, doing, now, val, len, has] = def[id];
     if (!has) return;
@@ -582,7 +586,7 @@ class ImportShow {
       v.placeSun();
       if (v.haze) { v.haze.density = 0.00021 * k * (1 - home); const hz = v.skyBox?.material?.uniforms?.uHaze?.value; if (hz) v.haze.color.copy(hz); }
       // the photo on the ground through the swoop, the course's own ground while it's built, the photo back at the end
-      const x = Math.max((1 - io((t - T.rise[0] - 0.7) / (T.rise[1] - T.rise[0] - 0.2))) * this.photoReal, home * this.photoReal), g = v.ground, mat = g.mapPlane?.material;
+      const x = HAND ? Math.max((1 - io((t - T.rise[0] - 0.7) / (T.rise[1] - T.rise[0] - 0.2))) * this.photoReal, home * this.photoReal) : this.photoReal, g = v.ground, mat = g.mapPlane?.material;
       if (Math.abs(x - this.photoNow) > 0.0005 || this.frameN === 1) { this.photoNow = x; g.bgOpacity = x; if (mat && g.photo && !g.painted) { mat.opacity = x; mat.visible = x > 0.001; } }
     }
     if (!this.tipped && k > 0.45) { this.tipped = true; useEditor.getState().set({ view: "3d" } as any); }
@@ -625,12 +629,15 @@ class ImportShow {
     for (const s of this.built) {
       const w2 = wOf(s), q = (bp * (total + 0.5) - acc) / w2, line = s.pts ? cl(q / 0.5) : 1, e = out((q - (s.pts ? 0.5 : 0)) / 0.8); acc += w2;
       if (e !== s.e) { s.e = e; s.o.visible = e > 0.001; s.o.scale.set(1, Math.max(0.0001, e), 1); s.o.updateMatrixWorld(true); shade = true; }
-      if (s.out) { const on2 = q > 0 && e < 1; s.out.style.opacity = on2 ? String(1 - cl((e - 0.5) / 0.5)) : "0"; if (on2) { s.out.setAttribute("d", "M" + s.pts!.map(p => { const c = this.screenOf(p.x, p.y, 1.5); return `${c.x.toFixed(1)} ${c.y.toFixed(1)}`; }).join("L") + "Z"); s.out.setAttribute("stroke-dasharray", `${line} 1`); s.out.style.fillOpacity = line >= 1 ? "1" : "0"; } }
+      if (s.out) { const on2 = HAND && q > 0 && e < 1; s.out.style.opacity = on2 ? String(1 - cl((e - 0.5) / 0.5)) : "0"; if (on2) { s.out.setAttribute("d", "M" + s.pts!.map(p => { const c = this.screenOf(p.x, p.y, 1.5); return `${c.x.toFixed(1)} ${c.y.toFixed(1)}`; }).join("L") + "Z"); s.out.setAttribute("stroke-dasharray", `${line} 1`); s.out.style.fillOpacity = line >= 1 ? "1" : "0"; } }
       if (q > 0 && q < 1 && !drawing) drawing = { s, line };
     }
     for (const el of this.labels) { const at = bs ? bs.to - 0.5 : T.sunClick - 0.6; el.style.visibility = t >= at ? "" : "hidden"; el.style.opacity = String(io((t - at) / 0.6)); }
 
-    // the hand
+    const lastStep = this.steps[this.steps.length - 1];
+    // the hand (only where it's asked for: the parts come in on their own otherwise)
+    if (!HAND) { this.cur.style.opacity = "0"; this.ring.style.opacity = "0"; }
+    else {
     let to: P | null = null, press = 0, pick: string | null = null, ringAt: { x: number; y: number; r: number } | null = null, onTool = false, working = false;
     const goTo = (target: P | null, at: number, lead = 0.85, key = "") => { if (t < at - lead || t >= at + 0.3) return false; if (key) { const had = this.aims.get(key); if (had) target = had; else if (target) this.aims.set(key, { x: target.x, y: target.y }); } if (!target) return false; const u = io((t - (at - lead)) / lead); to = { x: lerp(this.from.x, target.x, u), y: lerp(this.from.y, target.y, u) }; if (t >= at) press = 1 - (t - at) / 0.3; return true; };
     if (this.phone) {
@@ -684,7 +691,7 @@ class ImportShow {
     this.cur.style.transform = `translate(${this.curAt.x - 4}px, ${this.curAt.y - 3}px) scale(${1 - (this.phone ? 0.28 : 0.14) * cl(press)})`;
     this.cur.style.opacity = t < T.cover * 0.6 || t > T.sunClose + 0.5 ? "0" : "1";
     if (pick) this.pick(pick);
-    const lastStep = this.steps[this.steps.length - 1];
+
     if (t > lastStep.to + 0.25 && !this.scene.open) this.pick("select");
     // (the ring eases to where the hand works, and fades when it lifts)
     this.ringO += ((ringAt ? 1 : 0) - this.ringO) * 0.25;
@@ -692,6 +699,7 @@ class ImportShow {
     if (ra) this.ringW = this.ringW ? { x: this.ringW.x + (ra.x - this.ringW.x) * 0.6, y: this.ringW.y + (ra.y - this.ringW.y) * 0.6, r: this.ringW.r + (ra.r - this.ringW.r) * 0.2 } : { ...ra };
     if (this.ringW && this.ringO > 0.02) { const pts: string[] = []; for (let i = 0; i < 32; i++) { const q = this.screenOf(this.ringW.x + this.ringW.r * Math.cos((i / 32) * 6.2832), this.ringW.y + this.ringW.r * Math.sin((i / 32) * 6.2832), 3); pts.push(`${q.x.toFixed(1)},${q.y.toFixed(1)}`); } this.ring.setAttribute("points", pts.join(" ")); }
     this.ring.style.opacity = this.ringO < 0.02 ? "0" : String(this.ringO);
+    }
 
     // the card
     const c = this.card, q = (k2: string) => c.querySelector(`[data-k="${k2}"]`) as HTMLElement, done = t >= lastStep.to && (!this.live || this.live.finalDone), name = q("ttl").dataset.name;
@@ -699,7 +707,7 @@ class ImportShow {
     c.style.display = this.scene.open && !this.scene.shut ? "none" : "";
     const curStep = this.steps.find(s => t < s.to);
     q("ttl").textContent = `Bringing in ${name}`;
-    q("now").textContent = done ? "The light through the day" : curStep && t >= curStep.from ? curStep.now : this.live && !curStep ? this.live.text || "Fetching the rest…" : "…";
+    q("now").textContent = done ? (HAND ? "The light through the day" : "Putting it together") : curStep && t >= curStep.from ? curStep.now : this.live && !curStep ? this.live.text || "Fetching the rest…" : "…";
     q("bar").style.width = `${(this.live && !this.live.finalDone ? cl(this.live.fraction) * 0.85 : cl((t - T.cover) / (lastStep.to - T.cover))) * 100}%`; q("barbox").style.display = done ? "none" : "";
     this.steps.forEach(s => { const row = c.querySelector(`[data-row="${s.id}"]`) as HTMLElement;
       if (!row) return;

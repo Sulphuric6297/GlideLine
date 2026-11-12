@@ -2,6 +2,7 @@
 // the park framed by its own outline, what this spot will bring (each a switch, with where it
 // comes from), then the map filling in as each part lands, with a checklist of how each went.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Check, Droplets, Flag, Image as ImageIcon, Loader2, MapPin, Mountain, Pencil, Route, Search, Target, TreeDeciduous, Trees, X } from "lucide-react";
 import { SitePickerMap, type Arrived } from "./SitePickerMap";
 import { fetchPlaceSuggestions, resolveSiteLocation, type PlaceSuggestion } from "../lib/geo/geocode";
@@ -12,13 +13,15 @@ import { lidarCoverage } from "../lib/geo/lidarFetch";
 import { inUS } from "../lib/geo/usgov";
 import { photoChoices, photoDateText, photoFeetPerPx, type PhotoChoice } from "../lib/geo/photoSources";
 import { importSite, type ImportedSite, type ImportLayer, type SourceId, type SourceStatus } from "../lib/importSite";
-import { GROUPS, SOURCES, reviewedSite, sharedBuildings, sourceCounts, sourceOf, startsOn, type SourceKey } from "../lib/importReview";
+import { GROUPS, SOURCES, reviewedSite, sharedBuildings, sourceCounts, sourceOf, startsOn, withoutLeft, type LeftOut, type SourceKey } from "../lib/importReview";
 import type { PhotoSourceId } from "../lib/geo/photoSources";
 import { fmtArea, fmtDist } from "../lib/units";
-import { getDoc } from "../state/course";
-import type { CourseItem } from "../types";
+import { getDoc, useCourse, useEditor } from "../state/course";
+import { getView } from "../state/view";
+import type { CourseDoc, CourseItem } from "../types";
+import { ImportReview3d, type ReviewGroup, type TreeLook3d } from "./ImportReview3d";
 import { HelpLink, Slider } from "./ui";
-import { startLiveImport } from "../viewport/importShow";
+import { playImportShow, startLiveImport } from "../viewport/importShow";
 import { BEST_GUESS, UG_BLOCK, brushAcres, brushAreas, brushLevels, tapPatch, type BrushTune } from "../lib/undergrowth";
 import { useLayout, useTouch } from "./useLayout";
 import { BottomSheet, type Detent } from "./mobile/BottomSheet";
@@ -121,7 +124,11 @@ const drawnAs = (i: CourseItem): { area?: string; line?: string; weight?: number
   return {};
 };
 
-export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBounds; onClose: () => void; onImported: (site: ImportedSite, opts: { trees: boolean; osm: boolean; course?: boolean; turn?: number; live?: boolean }) => void }) {
+type BringOpts = { trees: boolean; osm: boolean; course?: boolean; turn?: number; live?: boolean; shown?: boolean; look?: TreeLook3d };
+
+export function SiteImportDialog({ onClose, onImported, onPreview, near }: { near?: GeoBounds; onClose: () => void; onImported: (site: ImportedSite, opts: BringOpts) => void;
+  /** The site as it would come in, shown in the course (as it was: `d0`) while it's looked over in 3D. */
+  onPreview?: (d0: CourseDoc, site: ImportedSite, opts: BringOpts) => void }) {
   // (open again each time it mounts: React mounts it twice in development, and a flag only ever
   // set to closed left every import there unapplied, stuck short of the end)
   const open = useRef(true);
@@ -129,7 +136,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   const stopper = useRef<AbortController | null>(null);
   useEffect(() => {
     open.current = true;
-    return () => { open.current = false; stopper.current?.abort(); };
+    return () => { open.current = false; stopper.current?.abort(); leave3d.current(); };
   }, []);
   const [start] = useState(() => startFrom(near));
   // (a site in already: bringing it in again replaces what came last time)
@@ -156,6 +163,29 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   // What this spot has (looked up as the frame settles)
   // (looking before it comes in: what came, which sources are on, which wins where two overlap)
   const [review, setReview] = useState<{ site: ImportedSite; on: Partial<Record<SourceKey, boolean>>; keep: "osm" | "fema"; photo?: PhotoSourceId } | null>(null);
+  // Looked over in the 3D view: the course as it was (put back unless it's brought in), what was
+  // left out by hand, the tree colours picked, and whether the build has been shown
+  const [in3d, setIn3d] = useState(false);
+  const [ready3d, setReady3d] = useState(false);
+  const base = useRef<{ doc: CourseDoc; past: CourseDoc[]; future: CourseDoc[]; ed: Record<string, unknown> } | null>(null);
+  const [left, setLeft] = useState<LeftOut[]>([]);
+  const [look, setLook] = useState<TreeLook3d | null>(null);
+  /** The course put back as it was, and the screen as it was. */
+  const leave3d = useRef(() => {});
+  leave3d.current = () => {
+    const b = base.current;
+    if (!b) return;
+    base.current = null;
+    useCourse.setState({ doc: b.doc, past: b.past, future: b.future, gestureStart: null });
+    useEditor.getState().set({ ...b.ed, reviewing: false, selectedId: null } as never);
+  };
+  const end3d = () => { leave3d.current(); setIn3d(false); setReady3d(false); };
+  const begin3d = () => {
+    if (!onPreview || base.current) return;
+    const cs = useCourse.getState(), ed = useEditor.getState();
+    base.current = { doc: cs.doc, past: cs.past, future: cs.future, ed: { step: ed.step, view: ed.view, photo: ed.photo, tool: ed.tool } };
+    setLeft([]); setLook(null); setReady3d(false); setIn3d(true);
+  };
   // How much brush and how thick (as the course last had it), and the patches set by a tap
   const [tune, setTune] = useState<BrushTune>(() => ({ ...BEST_GUESS, ...(getDoc().site.brushTune ?? {}) }));
   const [tuneOpen, setTuneOpen] = useState(false);
@@ -344,6 +374,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
 
   const run = async (photoId?: PhotoSourceId) => {
     if (!selection || tooBig || running.current) return;
+    end3d();
     setReview(null);
     if (importing) { setStatus({ state: "error", text: "The site from before is still coming in. Try again in a moment." }); return; }
     importing = true;
@@ -370,6 +401,8 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
         // (built in front of you: brought in as it stands once the show reaches it; skipped, looked at first as ever)
         if (live && !live.dead() && (await live.final(() => onImported(reviewedSite(site, on, "osm", tune), { trees, osm, course: course && !!outline?.course?.holes, turn: angle, live: true })))) return;
         setReview({ site, on, keep: "osm", photo: photoId ?? (site.site.photo?.id as PhotoSourceId | undefined) });
+        // (looked over in the 3D view, where there is one that can keep up)
+        begin3d();
         setStatus({ state: "idle", text: "" });
       }
     } catch (err) {
@@ -388,6 +421,36 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
     stopper.current?.abort();
     onClose();
   };
+
+  // The site as switched (site0), and without what was left out by hand: shown in the course while it's looked over
+  const site0 = useMemo(() => (review ? reviewedSite(review.site, review.on, review.keep, tune) : null), [review, tune]);
+  const shownSite = useMemo(() => (site0 ? withoutLeft(site0, left) : null), [site0, left]);
+  useEffect(() => {
+    if (!in3d || !shownSite || !base.current || !onPreview) return;
+    onPreview(base.current.doc, shownSite, { trees, osm, course: course && !!outline?.course?.holes, turn: angle, ...(look ? { look } : {}) });
+  }, [in3d, shownSite, look]);
+  // Into the 3D view with the photo under it; built in front of you once, then looked over.
+  // (no graphics card, or no view: looked over on the flat map as before)
+  useEffect(() => {
+    if (!in3d) return;
+    let gone = false;
+    useEditor.getState().set({ step: "design", view: "3d", tool: "select", selectedId: null, photo: true, reviewing: true } as never);
+    void (async () => {
+      let v: any = null;
+      for (let n = 0; n < 100 && !gone; n++) {
+        await new Promise(r => setTimeout(r, 60));
+        v = getView();
+        if (v?.doc && v.doc.canvas.width === getDoc().canvas.width && v.size?.width > 1) break;
+      }
+      if (gone) return;
+      if (!v?.doc || v.software) { end3d(); return; }
+      await playImportShow();
+      if (gone) return;
+      if ((window as { __dgImportShow?: { state?: string } }).__dgImportShow?.state === "skipped") v.fitSite?.();
+      setReady3d(true);
+    })();
+    return () => { gone = true; };
+  }, [in3d]);
 
   const loading = status.state === "loading";
   const phone = layout === "phone";
@@ -566,20 +629,23 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   const shared = review ? sharedBuildings(review.site) : 0;
   const choices = (here?.photos ?? []).filter(c => c.id !== "esri" || (here?.photos ?? []).length < 3);
   const setOn = (k: SourceKey, v: boolean) => setReview(r => (r ? { ...r, on: { ...r.on, [k]: v } } : r));
-  const bring = () => { if (review) onImported(reviewedSite(review.site, review.on, review.keep, tune), { trees, osm, course: course && !!outline?.course?.holes, turn: angle }); };
+  const bringOpts = (): BringOpts => ({ trees, osm, course: course && !!outline?.course?.holes, turn: angle, ...(look ? { look } : {}) });
+  const bring = () => {
+    if (!review || !shownSite) return;
+    // (looked over in 3D: the course as it was, so it comes in as one step; the view stays as it is, in 3D with the photo)
+    const b = base.current, was3d = !!b;
+    if (b) { base.current = null; useCourse.setState({ doc: b.doc, past: b.past, future: b.future, gestureStart: null }); useEditor.getState().set({ reviewing: false, selectedId: null } as never); }
+    onImported(shownSite, { ...bringOpts(), ...(was3d && ready3d ? { shown: true } : {}) });
+  };
   const reviewButtons = (
     <div className="flex gap-2">
       <button className="h-12 px-4 rounded-[14px] bg-white/[0.08] hover:bg-white/[0.12] text-[14px] font-semibold text-zinc-200" onClick={() => { setReview(null); setArrived(null); }} data-testid="review-back">Back</button>
       <button className="flex-1 h-12 rounded-[14px] bg-[#a2cf6a] hover:bg-[#b3db80] active:bg-[#93c05c] text-zinc-950 text-[15px] font-bold" onClick={bring} data-testid="review-bring">{again ? "Bring it in again" : "Bring it in"}</button>
     </div>
   );
-  const reviewPanel = review && (
-    <div className="flex flex-col gap-2" data-testid="import-review">
-      <div className="rounded-xl px-3 py-2 bg-white/[0.07] text-[13px] text-zinc-200"><span className="font-semibold">Everything's in.</span> <span className="text-zinc-400">Switch off what you don't want, then bring it in.</span></div>
-      <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mt-1 flex justify-between"><span>What comes in</span><span className="font-normal normal-case tracking-normal">shown on the map</span></div>
-      {choices.length > 1 && (
+  const photoChoiceEl = review && choices.length > 1 && (
         <div className="rounded-[14px] bg-white/[0.045] p-1" data-testid="review-photo">
-          <div className="text-[13px] font-semibold px-2 pt-1 pb-1">Photo</div>
+          <div className="text-[13px] font-semibold px-2 pt-1 pb-1">Which photo</div>
           <div className="flex gap-0.5 p-[2px] rounded-[10px] bg-white/[0.06]">
             {choices.slice(0, 3).map(c => (
               <button key={c.id} className={`flex-1 min-w-0 truncate px-2 py-1.5 rounded-[8px] text-[11.5px] ${review.photo === c.id ? "bg-white/[0.14] text-zinc-50 font-semibold" : "text-zinc-400 hover:text-zinc-200"}`} onClick={() => { if (review.photo !== c.id) void run(c.id); }}>
@@ -588,14 +654,20 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
             ))}
           </div>
         </div>
-      )}
-      {GROUPS.map(g => {
+      );
+  const groupEls: ReviewGroup[] = !review ? [] : GROUPS.flatMap(g => {
         const keys = (Object.keys(SOURCES) as SourceKey[]).filter(k => SOURCES[k].group === g.id && (counts[k] ?? 0) > 0);
-        if (!keys.length) return null;
+        if (!keys.length) return [];
+        const anyOn = keys.some(k => review.on[k] !== false), allOn = keys.every(k => review.on[k] !== false);
         const total = keys.reduce((s, k) => s + (review.on[k] !== false && k !== "underbrush" ? counts[k] ?? 0 : 0), 0);
-        return (
+        const el = (
           <div key={g.id} className="rounded-[14px] bg-white/[0.045] p-1" data-testid={`review-${g.id}`}>
-            <div className="flex items-center text-[13px] font-semibold px-2 pt-1 pb-0.5">{g.label}<span className="ml-auto text-[12px] font-normal text-zinc-400 tabular-nums">{total.toLocaleString()}</span></div>
+            <div className="flex items-center text-[13px] font-semibold px-2 pt-1 pb-0.5">{g.label}<span className="ml-auto text-[12px] font-normal text-zinc-400 tabular-nums">{total.toLocaleString()}</span>
+              <button type="button" role="switch" aria-checked={allOn ? true : anyOn ? "mixed" : false} aria-label={`${g.label}: all of them`} data-testid={`review-all-${g.id}`}
+                onClick={() => setReview(r => (r ? { ...r, on: { ...r.on, ...Object.fromEntries(keys.map(k => [k, !anyOn])) } } : r))}
+                className={`relative ml-2 w-[30px] h-[17px] rounded-full shrink-0 ${allOn ? "bg-[#a2cf6a]" : anyOn ? "bg-[#5c7a40]" : "bg-white/[0.14]"}`}>
+                <span className={`absolute top-[2px] w-[13px] h-[13px] rounded-full ${allOn ? "right-[2px] bg-zinc-900" : anyOn ? "left-[8.5px] bg-zinc-900" : "left-[2px] bg-zinc-400"}`} />
+              </button></div>
             {keys.map(k => {
               const on = review.on[k] !== false, s = SOURCES[k];
               if (k === "underbrush" && brushU) return (
@@ -629,11 +701,19 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
             )}
           </div>
         );
-      })}
+        return [{ id: g.id, label: g.label, total, el }];
+      });
+  const reviewPanel = review && (
+    <div className="flex flex-col gap-2" data-testid="import-review">
+      <div className="rounded-xl px-3 py-2 bg-white/[0.07] text-[13px] text-zinc-200"><span className="font-semibold">Everything's in.</span> <span className="text-zinc-400">Switch off what you don't want, then bring it in.</span></div>
+      {onPreview && <button className="self-start text-[12.5px] font-semibold text-[#a2cf6a] hover:text-[#b3db80] px-1" onClick={begin3d} data-testid="review-3d">Look at it in 3D ›</button>}
+      <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mt-1 flex justify-between"><span>What comes in</span><span className="font-normal normal-case tracking-normal">shown on the map</span></div>
+      {photoChoiceEl}
+      {groupEls.map(g => g.el)}
       {!phone && reviewButtons}
     </div>
   );
-  const panel = loading ? <>{checklist}{stopEl}</> : review ? reviewPanel : framing ? (
+  const panel = loading ? <>{checklist}{stopEl}</> : review ? (in3d ? null : reviewPanel) : framing ? (
     <>
       {frameChoice}
       {drawBtn}
@@ -646,11 +726,14 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
       {!phone && goBtn}
     </>
   ) : null;
+  const review3d = in3d && ready3d && review && site0 && createPortal(
+    <ImportReview3d phone={phone} again={again} site0={site0} left={left} onLeave={b => setLeft(l => [...l, b])} onUndo={() => setLeft(l => l.slice(0, -1))} look={look} onLook={setLook}
+      groups={groupEls} photoChoice={photoChoiceEl} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
   const closeBtn = <button className="glass w-11 h-11 rounded-full grid place-items-center text-zinc-300 hover:text-zinc-50" onClick={close} aria-label="Close" title="Close"><X size={20} /></button>;
 
   if (phone) {
     return (
-      <div className="dg-compact fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={liveOn ? { display: "none" } : undefined}>
+      <div className="dg-compact fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={liveOn || in3d ? { display: "none" } : undefined}>{review3d}
         <div className="absolute inset-0">{mapEl}</div>
         <div className="absolute left-3 right-3 top-[max(10px,env(safe-area-inset-top))] z-[1100] flex items-center gap-2">
           <div className="flex-1 min-w-0">{placeChip}</div>
@@ -660,7 +743,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
           header={
             <div className="px-4 pb-3 flex flex-col gap-2">
               <div className="font-bold text-zinc-50 text-[17px]">{loading ? "Bringing it in" : review ? "What comes in" : framing ? "The site" : title}</div>
-              {review ? reviewButtons : framing && !loading ? goBtn : null}
+              {review ? (in3d ? null : reviewButtons) : framing && !loading ? goBtn : null}
             </div>
           }>
           <div className="px-4 pt-1 pb-[max(16px,env(safe-area-inset-bottom))] flex flex-col gap-2.5">
@@ -680,7 +763,7 @@ export function SiteImportDialog({ onClose, onImported, near }: { near?: GeoBoun
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={liveOn ? { display: "none" } : undefined}>
+    <div className="fixed inset-0 z-50 bg-zinc-950" role="dialog" aria-modal="true" aria-label={title} style={liveOn || in3d ? { display: "none" } : undefined}>{review3d}
       <div className="absolute inset-0">{mapEl}</div>
       <div className="absolute top-4 right-4 z-[1100]">{closeBtn}</div>
       {!framing && !loading && (

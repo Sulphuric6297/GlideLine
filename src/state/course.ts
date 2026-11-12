@@ -131,6 +131,9 @@ type EditorStore = {
   group: string[];
   /** A drag on the map draws a box to pick things with (instead of moving the map). */
   dragSelect: boolean;
+  /** A site just fetched is being looked over in 3D before it comes in: the tools, the panels and
+   * the keys stand aside (see SiteImportDialog). */
+  reviewing: boolean;
   /** Measure: from one spot (each click moves the far end; the default) or along a path (each click adds a turn). */
   measureMode?: "spot" | "path";
   /** The hole whose line is being plotted by hand, point by point. */
@@ -269,6 +272,7 @@ export const useEditor = create<EditorStore>()(set => ({
   selectedId: null,
   group: [],
   dragSelect: false,
+  reviewing: false,
   plotLine: null,
   obPick: null,
   pickCut: false,

@@ -123,6 +123,25 @@ export const reviewedSite = (site: ImportedSite, on: Partial<Record<SourceKey, b
   return { ...site, site: u ? { ...site.site, brushTune: { much: tune.much, thick: tune.thick }, ...(lv ? { brushFound: keepFound(lv, u.bx, u.by) } : {}) } : site.site, mapped, trees, lidar };
 };
 
+/** Things left out by hand while a site is looked over: items by their id, measured trees by
+ * their place in the survey's list (as `reviewedSite` gives it). One batch per step, for Undo. */
+export type LeftOut = { ids: string[]; trees: number[] };
+
+/** The site without what was left out by hand. */
+export const withoutLeft = (site: ImportedSite, left: LeftOut[]): ImportedSite => {
+  if (!left.length) return site;
+  const ids = new Set(left.flatMap(l => l.ids)), cut = new Set(left.flatMap(l => l.trees));
+  let lidar = site.lidar;
+  if (lidar && cut.size) {
+    // (the ones filled in from the summer photo are the list's last: their count kept right)
+    const n = lidar.trees.length, summer = lidar.fromPhoto ?? 0;
+    let gone = 0;
+    const trees = lidar.trees.filter((_, k) => { const out = cut.has(k); if (out && k >= n - summer) gone++; return !out; });
+    lidar = { ...lidar, trees, ...(summer ? { fromPhoto: summer - gone } : {}) };
+  }
+  return { ...site, mapped: ids.size ? site.mapped.filter(i => !ids.has(i.id)) : site.mapped, trees: ids.size ? site.trees.filter(i => !ids.has(i.id)) : site.trees, lidar };
+};
+
 /** How many FEMA buildings OpenStreetMap has too (the choice of which to keep matters only then). */
 export const sharedBuildings = (site: ImportedSite) => {
   const fema = (site.alternates?.fema ?? []).filter(isBuilding) as (CourseItem & { points: P[] })[];
