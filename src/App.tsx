@@ -496,7 +496,12 @@ export default function App() {
 
   const empty = useMemo(() => !doc.background && !doc.holes.length && !doc.items.length, [doc]);
   const showWelcome = ready && empty && ed.step === "site";
-  const onContextMenu = (i: { clientX: number; clientY: number; itemId: string | null; ground: P | null; under?: string | null }) => setMenu(i);
+  const onContextMenu = (i: { clientX: number; clientY: number; itemId: string | null; ground: P | null; under?: string | null }) => {
+    // (a site being looked over before it comes in: Design's menu isn't its own; the thing is picked,
+    // and the look-over offers to leave it out)
+    if (useEditor.getState().reviewing) { if (i.itemId) useEditor.getState().set({ selectedId: i.itemId }); return; }
+    setMenu(i);
+  };
   const welcome = (
     <div className="pointer-events-auto glass-solid rounded-2xl shadow-2xl ring-1 ring-white/10 p-6 w-[440px] max-w-full text-center" data-testid="welcome">
       <div className="w-12 h-12 rounded-xl bg-orange-500/15 text-orange-400 flex items-center justify-center mx-auto mb-3"><Route size={24} /></div>
