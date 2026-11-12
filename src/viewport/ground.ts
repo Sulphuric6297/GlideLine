@@ -555,6 +555,8 @@ export class Ground {
     geo.computeVertexNormals();
     const skirt = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: new THREE.Color(doc.groundColor).offsetHSL(0, -0.04, -0.03), side: THREE.DoubleSide }));
     skirt.name = "landscape";
+    skirt.userData.base = (skirt.material as THREE.MeshLambertMaterial).color.clone();
+    this.shadeLandscape(this.landShade);
     skirt.receiveShadow = true;
     skirt.visible = visible;
     noRaycast(skirt);
@@ -562,6 +564,14 @@ export class Ground {
     this.group.add(skirt);
   }
 
+  /** How much of its own colour the land round the site has (1: all of it, seen from the ground;
+   * 0: dark, as the app's own backdrop is, looked down on from above, where it's only a surround). */
+  private landShade = 1;
+  shadeLandscape(k: number) {
+    this.landShade = k;
+    const m = this.skirt?.material as THREE.MeshLambertMaterial | undefined, base = this.skirt?.userData.base as THREE.Color | undefined;
+    if (m && base) m.color.set(0x070a06).lerp(base, k);
+  }
   /** The tilted and tee views: land out to the horizon instead of the map's cut-away block. */
   landscape(on: boolean) {
     if (this.skirt) this.skirt.visible = on;

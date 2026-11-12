@@ -702,6 +702,10 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
           </div>
         </div>
       );
+  const brushRowEl = review && brushU ? (
+    <BrushRow key="underbrush" flat={!in3d} on={review.on.underbrush !== false} onSwitch={v => setOn("underbrush", v)} tune={tune} onTune={t => setTune(t)} open={tuneOpen} onOpen={setTuneOpen}
+      acres={brushLv ? brushAcres(brushLv) : [0, 0, 0, 0]} from={brushU.from} surveyYear={brushU.surveyYear} seenFrom={brushU.seenFrom} />
+  ) : null;
   const groupEls: ReviewGroup[] = !review ? [] : GROUPS.flatMap(g => {
         const keys = (Object.keys(SOURCES) as SourceKey[]).filter(k => SOURCES[k].group === g.id && (counts[k] ?? 0) > 0);
         if (!keys.length) return [];
@@ -717,10 +721,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
               </button></div>
             {keys.map(k => {
               const on = review.on[k] !== false, s = SOURCES[k];
-              if (k === "underbrush" && brushU) return (
-                <BrushRow key={k} flat={!in3d} on={on} onSwitch={v => setOn(k, v)} tune={tune} onTune={t => setTune(t)} open={tuneOpen} onOpen={setTuneOpen}
-                  acres={brushLv ? brushAcres(brushLv) : [0, 0, 0, 0]} from={brushU.from} surveyYear={brushU.surveyYear} seenFrom={brushU.seenFrom} />
-              );
+              if (k === "underbrush" && brushU) return in3d ? null : brushRowEl;
               return (
                 <div key={k}>
                   <div className={`flex items-center gap-2 px-2 py-1 rounded-[10px] text-[12.5px] ${on ? "text-zinc-100" : "text-zinc-500"}`}>
@@ -798,7 +799,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   ) : null;
   const review3d = in3d && ready3d && review && site0 && createPortal(
     <ImportReview3d phone={phone} again={again} site0={site0} left={left} onLeave={b => setLeft(l => [...l, b])} onUndo={() => setLeft(l => l.slice(0, -1))} look={look} onLook={setLook}
-      groups={groupEls} photoChoice={photoChoiceEl} notes={reviewNotes} failed={failedNames} onRetry={() => void run(review.photo, true)} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
+      groups={groupEls} photoChoice={photoChoiceEl} brushRow={brushRowEl} notes={reviewNotes} failed={failedNames} onRetry={() => void run(review.photo, true)} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
   const closeBtn = <button className="glass w-11 h-11 rounded-full grid place-items-center text-zinc-300 hover:text-zinc-50" onClick={close} aria-label="Close" title="Close"><X size={20} /></button>;
 
   if (phone) {

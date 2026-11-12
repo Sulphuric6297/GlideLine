@@ -2671,6 +2671,7 @@ export class CourseView {
     this.invalidate();
   }
 
+  private backdrop = new THREE.Color();
   private siteSpan() {
     return this.doc ? Math.max(this.doc.canvas.width, this.doc.canvas.height) : 1500;
   }
@@ -2699,6 +2700,10 @@ export class CourseView {
     this.lastSky = true;
     this.skyBox.updateMatrixWorld();
     this.ground.landscape(true);
+    // (looked down on, the land round the site is only a surround: dark, like the app's own
+    // backdrop; as the view comes down toward the horizon it turns to land, under its haze)
+    const pol = this.controls.polarAngle, low = eyeLevel || this.videoDetail ? 1 : clamp((pol - 1.24) / 0.26, 0, 1), land = low * low * (3 - 2 * low);
+    this.ground.shadeLandscape(land);
     const prevDensity = this.haze.density;
     const prevBg = this.scene.background;
     const haze = sm.uniforms.uHaze.value as THREE.Color;
@@ -2707,9 +2712,11 @@ export class CourseView {
     const thin = this.videoDetail ? 0.5 : 1;
     // (one haze, its density and color set each picture: a new one would have every material
     // worked out again, each frame)
-    this.haze.density = (eyeLevel ? 0.8 / (span * 2.4) : 0.7 / (span * 3.2)) * thin;
+    this.haze.density = (eyeLevel ? 0.8 / (span * 2.4) : 0.7 / (span * 3.2)) * thin * (0.12 + 0.88 * land);
     this.haze.color.copy(haze);
-    this.scene.background = haze;
+    // (no sky over a surround that's dark: the app's own backdrop behind it)
+    if (land <= 0.001) { this.skyBox.visible = false; if (this.photoSky) this.photoSky.visible = false; }
+    this.scene.background = land >= 0.999 ? haze : land <= 0.001 ? this.sky : this.backdrop.set(0x0e140d).lerp(haze, land);
     return () => {
       this.haze.density = prevDensity;
       this.scene.background = prevBg;

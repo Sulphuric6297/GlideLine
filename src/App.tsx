@@ -347,7 +347,8 @@ export default function App() {
     setTimeout(() => getView()?.fitSite(), 50);
     // (a first site, on a computer: built in front of you in 3D; see viewport/importShow)
     const outside = carried.outside ? ` ${carried.outside} ${carried.outside === 1 ? "thing you drew is" : "things you drew are"} now past the site's edges.` : "";
-    const name = getDoc().name.replace(/ Disc Golf Course$/, "");
+    // (a course not named yet: "Your site is in", not "New is in")
+    const name = getDoc().name === "New Disc Golf Course" ? "Your site" : getDoc().name.replace(/ Disc Golf Course$/, "");
     // (what came in is said once the show is over, or at once where it doesn't play)
     const ready = { name, facts: readyFacts(site, getDoc().units, mappedCourse?.holes.length ?? 0), said: `Site brought in${cameIn(site)}.${outside}` };
     // (looked over in 3D first: it was built in front of you then)
