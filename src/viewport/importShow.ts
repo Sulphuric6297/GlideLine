@@ -27,8 +27,9 @@ const say = (state: ShowState, extra: Record<string, unknown> = {}) => { (window
 
 type Step = { id: "ground" | "trees" | "water" | "paths" | "build"; tool: string; name: string; doing: string; now: string; val: string; click: number; from: number; to: number };
 
-/** Plays the show on the course just brought in (a first site, on a computer with a graphics card;
- * anywhere else, or with motion reduced, nothing happens). Resolves when it's over. */
+/** Plays the show on the course just brought in (a first site, on a device with a graphics card:
+ * a computer, or a phone in its own layout; with motion reduced, nothing happens). Resolves when
+ * it's over. */
 export async function playImportShow(opts: { force?: boolean } = {}): Promise<void> {
   const w = window as any, speed: number = w.__dgShowSpeed ?? 1;
   say("waiting");
@@ -42,7 +43,7 @@ export async function playImportShow(opts: { force?: boolean } = {}): Promise<vo
   }
   const doc = getDoc();
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const why = !v?.doc ? "no 3D view" : opts.force ? "" : v.software ? "no graphics card" : v.mobile ? "a phone" : reduced ? "reduced motion" : doc.holes.length > 0 ? "the course has holes" : "";
+  const why = !v?.doc ? "no 3D view" : opts.force ? "" : v.software ? "no graphics card" : reduced ? "reduced motion" : doc.holes.length > 0 ? "the course has holes" : "";
   if (why) { say("skipped", { why }); console.info(`Import show not played: ${why}`); return; }
   const show = new ImportShow(v, speed);
   try { await show.run(); } catch (err) { console.warn("Import show stopped", err); } finally { show.restore(); say("done"); }
@@ -62,6 +63,8 @@ class ImportShow {
   private shapes: { o: THREE.Object3D; x: number; y: number; pts: P[]; water: boolean; struct: boolean; at: number; way: P[]; rev: { line?: boolean; geo: any; max?: number; n?: number }[]; mats: { m: any; op: number; tr: boolean }[]; p: number }[] = [];
   private built: { o: THREE.Object3D; x: number; y: number; pts?: P[]; out?: SVGPathElement; e: number }[] = [];
   private treePath: P[] = []; private waterPath: P[] = []; private pathPath: P[] = [];
+  /** The paths the hand draws itself: where each begins and ends along its way. */
+  private traced = new Map<object, [number, number]>();
   private steps: Step[] = [];
   private T = { cover: 1.0, groundClick: 1.6, swoop: [1.9, 6.5], rise: [2.3, 6.1], sunClick: 0, sun: [0, 0], sunClose: 0, back: 0, end: 0 };
   private cam!: { from: any; to: any; orbit: number; lower: number };
@@ -73,6 +76,15 @@ class ImportShow {
   private scene: { open: boolean; shut: boolean; sl?: HTMLInputElement; twin?: HTMLElement; val?: string; hidden: { el: HTMLElement; d: string }[] } = { open: false, shut: false, hidden: [] };
   private labels: HTMLElement[] = [];
   private frameN = 0;
+  /** A phone: a fingertip for the hand, the tools' sliding row, a small pill for the card. */
+  private phone = false;
+  private slid = new Set<string>();
+  private put = new Set<string>();
+  /** Where the hand is headed, fixed once it sets off (nothing it's gliding to moves under it). */
+  private aims = new Map<string, P>();
+  private slides: { box: HTMLElement; from: number; to: number; t0: number }[] = [];
+  /** A phone's Done button for the tool in hand. */
+  private doneBtn() { const el = document.querySelector<HTMLElement>("button.bg-orange-300.rounded-full[aria-label]"); const r = el?.getBoundingClientRect(); return el && r && r.width ? { x: r.x + r.width / 2, y: r.y + r.height / 2, el } : null; }
 
   constructor(private v: any, private speed: number) {
     const d = v.doc;
@@ -80,6 +92,7 @@ class ImportShow {
     this.realDoc = d;
     this.sunReal = { azimuth: d.sun?.azimuth ?? 225, altitude: d.sun?.altitude ?? 38, shadows: d.sun?.shadows ?? 0.65 };
     this.photoReal = this.photoNow = d.background?.url ? (d.background.opacity ?? 1) : 0;
+    this.phone = !!v.mobile || (typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches && window.innerWidth < 700);
   }
 
   private screenOf(x: number, y: number, up = 2) {
@@ -94,7 +107,9 @@ class ImportShow {
     const el = document.querySelector<HTMLElement>(`[data-tool="${id}"]`);
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return r.width ? { x: r.x + r.width / 2, y: r.y + r.height / 2 - 3, el } : null;
+    // (not while it's off the side of a phone's sliding row)
+    const cx = r.x + r.width / 2;
+    return r.width && cx > 16 && cx < window.innerWidth - 16 ? { x: cx, y: r.y + r.height / 2 - 3, el } : null;
   }
   private camTo(az: number, polar: number, dist: number, tx: number, ty: number, tz: number) {
     void this.v.controls.setLookAt(tx + dist * Math.sin(polar) * Math.sin(az), ty + dist * Math.cos(polar), tz + dist * Math.sin(polar) * Math.cos(az), tx, ty, tz, false);
@@ -111,6 +126,7 @@ class ImportShow {
     const shield = this.el("div", "position:fixed;inset:0;z-index:9995;cursor:default");
     shield.setAttribute("data-testid", "import-show");
     const skip = this.el("button", "position:fixed;right:24px;bottom:24px;z-index:9999;height:36px;padding:0 16px;border-radius:999px;border:0;background:rgba(20,28,18,.72);color:#f4f4f5;font:650 13px system-ui,'Segoe UI',sans-serif;backdrop-filter:blur(14px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.16);cursor:pointer");
+    if (this.phone) skip.style.cssText += `;right:auto;left:12px;bottom:auto;top:${box.top + 88}px;height:34px;padding:0 13px`;
     skip.textContent = "Skip"; skip.setAttribute("data-testid", "import-show-skip");
     const stop = () => { this.stopped = true; };
     skip.onclick = stop;
@@ -127,7 +143,7 @@ class ImportShow {
     const span = this.span, cx = this.W / 2, cy = this.H / 2;
     const fov = ((v.camera.fov ?? 30) * Math.PI) / 180, aspect = box.width / box.height;
     const top = Math.max(this.H / 2 / Math.tan(fov / 2), this.W / 2 / (Math.tan(fov / 2) * aspect)) * 1.45;
-    this.cam = { from: { az: 0, polar: 0.0015, dist: top, tx: cx, tz: cy }, to: { az: -0.55, polar: 1.17, dist: span * 1.12, tx: cx - this.W * 0.03, tz: cy + this.H * 0.02 }, orbit: 0.85, lower: 0.1 };
+    this.cam = { from: { az: 0, polar: 0.0015, dist: top, tx: cx, tz: cy }, to: { az: -0.55, polar: this.phone ? 1.08 : 1.17, dist: span * 1.12 * (aspect < 1 ? Math.min(2.1, 1.05 / aspect + 0.35) : 1), tx: cx - this.W * 0.03, tz: cy + this.H * 0.02 }, orbit: 0.85, lower: 0.1 };
     // (from where it ends, so every tree is made as it will be seen; then the scene left to finish)
     this.camTo(this.cam.to.az + this.cam.orbit * 0.5, this.cam.to.polar, this.cam.to.dist, this.cam.to.tx, 30, this.cam.to.tz);
     v.dirty = true;
@@ -156,7 +172,8 @@ class ImportShow {
     const t0 = performance.now();
     await new Promise<void>(done => {
       const tick = () => {
-        const t = ((performance.now() - t0) / 1000) * this.speed;
+        const held = (window as any).__dgShowClock as (() => number) | undefined;
+        const t = held ? held() : ((performance.now() - t0) / 1000) * this.speed;
         if (this.stopped || v.disposed || t >= this.T.end) { done(); return; }
         this.frame(t);
         requestAnimationFrame(tick);
@@ -213,14 +230,32 @@ class ImportShow {
     }
     const mainWater = this.shapes.filter(s => s.water).sort((a, b) => b.pts.length - a.pts.length)[0];
     this.waterPath = mainWater?.way ?? [];
-    for (let k = 0; k <= 40; k++) { const u = k / 40; this.pathPath.push({ x: W * (0.9 - 0.8 * u), y: H * (0.3 + 0.36 * u + 0.16 * Math.sin(u * 9)) }); }
+    {
+      const len = (p: P[]) => { let n = 0; for (let i = 1; i < p.length; i++) n += Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y); return n; };
+      const lines = this.shapes.filter(q => !q.water && !q.struct && q.way.length >= 2 && len(q.way) > span * 0.05).sort((a, b) => len(b.way) - len(a.way)).slice(0, 3);
+      const total = lines.reduce((n, q) => n + len(q.way), 0);
+      let at: P = { x: W * 0.9, y: H * 0.3 };
+      const left = [...lines];
+      while (left.length) {
+        // (the nearest end of the nearest one next)
+        let bi = 0, bd = Infinity;
+        left.forEach((q, i) => { const a = q.way[0], da = Math.hypot(a.x - at.x, a.y - at.y); if (da < bd) { bd = da; bi = i; } });
+        const q = left.splice(bi, 1)[0];
+        if (this.pathPath.length) { const hop = Math.max(5, Math.round((44 * 0.7 * Math.hypot(q.way[0].x - at.x, q.way[0].y - at.y)) / (total || 1))); for (let k = 1; k < hop; k++) this.pathPath.push({ x: lerp(at.x, q.way[0].x, io(k / hop)), y: lerp(at.y, q.way[0].y, io(k / hop)) }); }
+        const i0 = this.pathPath.length, n = Math.max(8, Math.round((44 * len(q.way)) / (total || 1)));
+        for (let k = 0; k <= n; k++) this.pathPath.push(onPath(q.way, k / n));
+        this.traced.set(q, [i0, this.pathPath.length - 1]);
+        at = q.way[q.way.length - 1];
+      }
+      if (!this.pathPath.length) for (let k = 0; k <= 40; k++) { const u = k / 40; this.pathPath.push({ x: W * (0.9 - 0.8 * u), y: H * (0.3 + 0.36 * u + 0.16 * Math.sin(u * 9)) }); }
+    }
     // when the hand reaches each thing (no two trees up together)
     const reach = (path: P[], x: number, y: number, R: number) => { let best = 1, bd = Infinity; for (let i = 0; i < path.length; i++) { const dd = Math.hypot(path[i].x - x, path[i].y - y); if (dd < R) return i / Math.max(1, path.length - 1); if (dd < bd) { bd = dd; best = i / Math.max(1, path.length - 1); } } return best; };
     const rnd = (a: number, b: number) => { const q = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return q - Math.floor(q); };
     const R = span * 0.1;
     for (const t of this.trees) t.at = cl(reach(this.treePath, t.x, t.y, R) + (rnd(t.x, t.y) - 0.5) * 0.07);
     for (const q of this.inst) for (let i = 0; i < q.n; i++) { const x = q.base[i * 16 + 12], y = q.base[i * 16 + 14]; q.at[i] = cl(reach(this.treePath, x, y, R) + (rnd(x, y) - 0.5) * 0.07); }
-    for (const s of this.shapes) s.at = s.water ? 0 : reach(this.pathPath, s.x, s.y, span * 0.16);
+    for (const s of this.shapes) s.at = s.water ? 0 : reach(this.pathPath, s.x, s.y, span * 0.12);
     // drawn along their length: a line's pieces in order, a surface's triangles sorted along its way
     const along = (path: P[], x: number, y: number) => { let bi = 0, bd = Infinity; for (let i = 0; i < path.length; i++) { const dd = (path[i].x - x) ** 2 + (path[i].y - y) ** 2; if (dd < bd) { bd = dd; bi = i; } } return bi; };
     for (const s of this.shapes) {
@@ -260,17 +295,18 @@ class ImportShow {
     const waters = this.shapes.filter(s => s.water).length, others = this.shapes.filter(s => !s.water && !s.struct).length;
     const structs = this.built.filter(b => b.pts).length;
     const want: [Step["id"], string, string, string, string, string, number, boolean][] = [
-      ["trees", "trees", "Trees", "planting", "Planting the trees", nTrees.toLocaleString(), 4.65, this.trees.length + this.inst.length > 0],
+      ["trees", "trees", "Trees", "planting", "Planting the trees", nTrees.toLocaleString(), this.phone ? 4.0 : 4.65, this.trees.length + this.inst.length > 0],
       ["water", "water", "Water", "filling", "Filling the water", String(waters), 1.3, waters > 0],
-      ["paths", "paths", "Paths, roads and more", "drawing", "Drawing paths and roads", String(others), 1.4, others > 0],
+      ["paths", "paths", "Paths, roads and more", "drawing", "Drawing paths and roads", String(others), 3.0, others > 0],
       ["build", "build", "Buildings and more", "placing", "Setting down the buildings", String(this.built.length), structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
     ];
     this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Shaping the ground", val: `${Math.round(hi - lo)} ft of climb`, click: this.T.groundClick, from: this.T.rise[0], to: this.T.rise[1] });
     let t = this.T.swoop[1];
     for (const [id, tool, name, doing, now, val, len, has] of want) {
       if (!has) continue;
-      const click = t + 0.6; this.steps.push({ id, tool, name, doing, now, val, click, from: click + 0.35, to: click + 0.35 + len }); t = click + 0.35 + len;
+      const click = t + (this.phone ? 2.5 : 0.6); this.steps.push({ id, tool, name, doing, now, val, click, from: click + 0.35, to: click + 0.35 + len }); t = click + 0.35 + len;
     }
+    if (this.phone) t += 1.4;
     this.T.sunClick = t + 0.7; this.T.sun = [t + 1.4, t + 4.7]; this.T.sunClose = t + 5.3; this.T.back = t + 5.6; this.T.end = t + 7.6;
   }
   private step(id: Step["id"]) { return this.steps.find(s => s.id === id); }
@@ -285,15 +321,19 @@ class ImportShow {
     svg.appendChild(this.ring);
     for (const b of this.built) if (b.pts) { const p = document.createElementNS(NS, "path"); p.setAttribute("style", "fill:rgba(255,255,255,.12);stroke:#fff;stroke-width:2;stroke-linejoin:round;opacity:0"); p.setAttribute("pathLength", "1"); svg.appendChild(p); b.out = p; }
     this.cur = this.el("div", "position:fixed;left:0;top:0;z-index:9998;pointer-events:none;width:28px;height:28px;transform-origin:4px 3px;filter:drop-shadow(0 3px 4px rgba(0,0,0,.5));opacity:0;will-change:transform");
-    this.cur.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28"><path d="M4 2.5l15.5 8.2-6.6 1.9-2.6 6.6z" fill="#fff" stroke="#0b0f0a" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+    this.cur.innerHTML = this.phone
+      ? '<div style="width:38px;height:38px;margin:-15px 0 0 -15px;border-radius:50%;background:rgba(255,255,255,.34);box-shadow:inset 0 0 0 2px rgba(255,255,255,.9),0 2px 10px rgba(0,0,0,.35)"></div>'
+      : '<svg viewBox="0 0 24 24" width="28" height="28"><path d="M4 2.5l15.5 8.2-6.6 1.9-2.6 6.6z" fill="#fff" stroke="#0b0f0a" stroke-width="1.3" stroke-linejoin="round"/></svg>';
     const box = this.v.container.getBoundingClientRect();
     this.curAt = { x: box.left + box.width * 0.56, y: box.top + box.height * 0.62 }; this.from = { ...this.curAt };
     this.card = this.el("div", `position:fixed;left:${box.left + 14}px;top:${box.top + 116}px;width:300px;z-index:9997;border-radius:22px;padding:16px 16px 14px;color:#f4f4f5;font:14px/1.35 system-ui,'Segoe UI',sans-serif;opacity:0;pointer-events:none`);
+    if (this.phone) this.card.style.cssText += `;left:${box.left + 78}px;top:${box.top + 84}px;width:${Math.min(250, box.width - 78 - 62)}px;padding:10px 14px 11px;border-radius:18px`;
     this.card.className = "glass"; this.card.setAttribute("data-testid", "import-show-card"); this.card.setAttribute("role", "status");
     this.card.innerHTML = `<div style="font-weight:650;font-size:15.5px" data-k="ttl"></div><div style="font-size:12.5px;color:#a1a1aa;margin-top:2px;min-height:17px" data-k="now"></div>
       <div style="height:5px;border-radius:5px;background:rgba(255,255,255,.1);margin:11px 0 8px;overflow:hidden" data-k="barbox"><i data-k="bar" style="display:block;height:100%;width:0;border-radius:5px;background:linear-gradient(90deg,#7fb24e,#a2cf6a)"></i></div>
       ${this.steps.map((s, i) => `<div data-row="${i}" style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13.5px;color:#71717a"><span data-dot style="width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:11px;font-weight:700;color:#0c1209;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.14)"></span><span>${s.name}</span><span data-v style="margin-left:auto;font-size:13px;font-variant-numeric:tabular-nums"></span></div>`).join("")}`;
     (this.card.querySelector('[data-k="ttl"]') as HTMLElement).dataset.name = name;
+    if (this.phone) { for (const r of Array.from(this.card.querySelectorAll<HTMLElement>("[data-row]"))) r.style.display = "none"; const tt = this.card.querySelector('[data-k="ttl"]') as HTMLElement, nw = this.card.querySelector('[data-k="now"]') as HTMLElement, bb = this.card.querySelector('[data-k="barbox"]') as HTMLElement; tt.style.cssText = "font-size:11.5px;color:#a1a1aa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"; nw.style.cssText = "font-size:14px;font-weight:650;color:#f4f4f5;margin-top:1px"; bb.style.margin = "8px 0 0"; }
     // (the names and signs over the map: held back till what they name is there)
     const layer = this.v.container.querySelector(".dg-layer") as HTMLElement | null;
     if (layer) { this.labels = [layer]; const vis = layer.style.visibility, op = layer.style.opacity; this.undo.push(() => { layer.style.visibility = vis; layer.style.opacity = op; }); }
@@ -335,6 +375,7 @@ class ImportShow {
       const x = Math.max((1 - io((t - T.rise[0] - 0.7) / (T.rise[1] - T.rise[0] - 0.2))) * this.photoReal, home * this.photoReal), g = v.ground, mat = g.mapPlane?.material;
       if (Math.abs(x - this.photoNow) > 0.0005 || this.frameN === 1) { this.photoNow = x; g.bgOpacity = x; if (mat && g.photo && !g.painted) { mat.opacity = x; mat.visible = x > 0.001; } }
     }
+    if (!this.tipped && k > 0.45) { this.tipped = true; useEditor.getState().set({ view: "3d" } as any); }
     // the ground comes up
     const rise = 0.0001 + 0.9999 * io((t - T.rise[0]) / (T.rise[1] - T.rise[0]));
     if (v.ground.group.scale.y !== rise) { v.ground.group.scale.y = rise; v.ground.group.updateMatrixWorld(true); shade = true; }
@@ -359,7 +400,8 @@ class ImportShow {
     const wp = ws ? (t - ws.from) / (ws.to - ws.from) : 2, pp = ps ? (t - ps.from) / (ps.to - ps.from) : 2;
     for (const s of this.shapes) {
       if (s.struct) continue;
-      const p = s.water ? io(wp) : out((pp - s.at * 0.7) / 0.3);
+      const tr = this.traced.get(s), last = this.pathPath.length - 1;
+      const p = s.water ? io(wp) : tr ? cl((io(pp) * last - tr[0]) / Math.max(1, tr[1] - tr[0])) : out((io(pp) - s.at * 0.88) / 0.12);
       if (p === s.p) continue;
       s.p = p; s.o.visible = p > 0.002;
       for (const r of s.rev) { if (r.line) r.geo.instanceCount = Math.max(0, Math.round((r.max ?? 0) * p)); else r.geo.setDrawRange(0, 3 * Math.round((r.n ?? 0) * p)); }
@@ -378,20 +420,34 @@ class ImportShow {
     for (const el of this.labels) { const at = bs ? bs.to - 0.5 : T.sunClick - 0.6; el.style.visibility = t >= at ? "" : "hidden"; el.style.opacity = String(io((t - at) / 0.6)); }
 
     // the hand
-    let to: P | null = null, press = 0, pick: string | null = null, ringAt: { x: number; y: number; r: number } | null = null, onTool = false;
-    const goTo = (target: P | null, at: number, lead = 0.85) => { if (!target || t < at - lead || t >= at + 0.3) return false; const u = io((t - (at - lead)) / lead); to = { x: lerp(this.from.x, target.x, u), y: lerp(this.from.y, target.y, u) }; if (t >= at) press = 1 - (t - at) / 0.3; return true; };
-    for (const s of this.steps) if (goTo(this.tool(s.tool), s.click)) { onTool = true; if (t >= s.click) pick = s.tool; break; }
+    let to: P | null = null, press = 0, pick: string | null = null, ringAt: { x: number; y: number; r: number } | null = null, onTool = false, working = false;
+    const goTo = (target: P | null, at: number, lead = 0.85, key = "") => { if (t < at - lead || t >= at + 0.3) return false; if (key) { const had = this.aims.get(key); if (had) target = had; else if (target) this.aims.set(key, { x: target.x, y: target.y }); } if (!target) return false; const u = io((t - (at - lead)) / lead); to = { x: lerp(this.from.x, target.x, u), y: lerp(this.from.y, target.y, u) }; if (t >= at) press = 1 - (t - at) / 0.3; return true; };
+    if (this.phone) {
+      // (the tool in hand put down with Done, unhurried)
+      for (const s of this.steps) { const at = s.to + 0.85; if (!this.put.has(s.id) && goTo(this.doneBtn(), at, 0.8, `done:${s.id}`)) { onTool = true; if (t >= at) { this.put.add(s.id); this.picked = "select"; this.doneBtn()?.el.click(); } break; } }
+      // (the tools' row slid to the next one, by the show's own clock, before the hand sets off for it)
+      for (const s of this.steps) if (t >= s.click - 1.55 && !this.slid.has(s.tool)) {
+        const el = document.querySelector<HTMLElement>(`[data-tool="${s.tool}"]`);
+        if (!el) continue;
+        this.slid.add(s.tool);
+        let box: HTMLElement | null = el.parentElement;
+        while (box && box.scrollWidth <= box.clientWidth + 2) box = box.parentElement;
+        if (box) { const a2 = el.getBoundingClientRect(), b2 = box.getBoundingClientRect(); this.slides.push({ box, from: box.scrollLeft, to: Math.max(0, Math.min(box.scrollWidth - box.clientWidth, box.scrollLeft + (a2.left + a2.width / 2) - (b2.left + b2.width / 2))), t0: t }); }
+      }
+      for (const sl of this.slides) { const u = (t - sl.t0) / 0.6; if (u <= 1.1 && sl.box.isConnected) sl.box.scrollLeft = lerp(sl.from, sl.to, io(u)); }
+    }
+    if (!onTool) for (const s of this.steps) if (goTo(this.tool(s.tool), s.click, 0.85, `tool:${s.id}`)) { onTool = true; if (t >= s.click) pick = s.tool; break; }
     const sb = document.querySelector<HTMLElement>('[data-testid="scene-button"]');
     if (!onTool && sb && !this.scene.open) { const r = sb.getBoundingClientRect(); if (goTo({ x: r.x + r.width / 2, y: r.y + r.height / 2 }, T.sunClick)) { onTool = true; if (t >= T.sunClick) { this.scene.open = true; this.pick("select"); sb.click(); } } }
     if (this.scene.open && !this.scene.sl && !this.scene.shut) this.findSun();
     if (!onTool && sb && this.scene.open && !this.scene.shut) { const r = sb.getBoundingClientRect(); if (goTo({ x: r.x + r.width / 2, y: r.y + r.height / 2 }, T.sunClose, 0.6)) { onTool = true; if (t >= T.sunClose) this.shutScene(); } }
     if (!onTool) {
       const gs = this.steps[0];
-      if (ts && t >= ts.from - 0.3 && t < ts.to) { const p = onPath(this.treePath, tp + 0.012); to = this.screenOf(p.x, p.y, 70); if (t >= ts.from) ringAt = { x: p.x, y: p.y, r: this.span * 0.07 }; }
-      else if (ws && this.waterPath.length && t >= ws.from - 0.2 && t < ws.to) { const p = onPath(this.waterPath, io(wp)); to = this.screenOf(p.x, p.y); if (t >= ws.from) ringAt = { x: p.x, y: p.y, r: 38 }; }
-      else if (ps && t >= ps.from - 0.2 && t < ps.to) { const p = onPath(this.pathPath, pp); to = this.screenOf(p.x, p.y); }
-      else if (bs && t >= bs.from - 0.2 && t < bs.to && this.built.length) { const d2: { s: ImportShow["built"][number]; line: number } = drawing ?? { s: this.built[t < bs.from ? 0 : this.built.length - 1], line: 0 }; if (d2.s.pts && d2.line < 1) { const p = onPath([...d2.s.pts, d2.s.pts[0]], d2.line); to = this.screenOf(p.x, p.y, 2); press = 0.6; } else { to = this.screenOf(d2.s.x, d2.s.y, 2); press = d2.s.pts ? 0 : 0.6; } }
-      else if (t >= T.cover && t < (this.steps[1]?.click ?? T.sunClick) - 0.85) { const u = cl((t - gs.from) / (gs.to - gs.from)), a2 = u * 7.2, gx = W * (0.5 + 0.27 * Math.sin(a2) * (0.4 + 0.6 * u)), gy = H * (0.52 + 0.22 * Math.cos(a2 * 0.5) * (0.4 + 0.6 * u)); to = this.screenOf(gx, gy, 4); if (t >= gs.from && t < gs.to) ringAt = { x: gx, y: gy, r: this.span * 0.085 }; }
+      if (ts && t >= ts.from - 0.3 && t < ts.to) { const p = onPath(this.treePath, tp + 0.012); to = this.screenOf(p.x, p.y, 70); working = t >= ts.from; if (t >= ts.from) ringAt = { x: p.x, y: p.y, r: this.span * 0.07 }; }
+      else if (ws && this.waterPath.length && t >= ws.from - 0.2 && t < ws.to) { const p = onPath(this.waterPath, io(wp)); to = this.screenOf(p.x, p.y); working = t >= ws.from; if (t >= ws.from) ringAt = { x: p.x, y: p.y, r: 38 }; }
+      else if (ps && t >= ps.from - 0.2 && t < ps.to) { const p = onPath(this.pathPath, io(pp)); to = this.screenOf(p.x, p.y); working = t >= ps.from; }
+      else if (bs && t >= bs.from - 0.2 && t < bs.to && this.built.length) { const d2: { s: ImportShow["built"][number]; line: number } = drawing ?? { s: this.built[t < bs.from ? 0 : this.built.length - 1], line: 0 }; if (d2.s.pts && d2.line < 1) { const p = onPath([...d2.s.pts, d2.s.pts[0]], d2.line); to = this.screenOf(p.x, p.y, 2); press = 0.6; working = true; } else { to = this.screenOf(d2.s.x, d2.s.y, 2); press = d2.s.pts ? 0 : 0.6; } }
+      else if (t >= T.cover && t < gs.to + 0.1) { const u = cl((t - gs.from) / (gs.to - gs.from)), a2 = u * 7.2, gx = W * (0.5 + 0.27 * Math.sin(a2) * (0.4 + 0.6 * u)), gy = H * (0.52 + 0.22 * Math.cos(a2 * 0.5) * (0.4 + 0.6 * u)); to = this.screenOf(gx, gy, 4); if (t >= gs.from && t < gs.to) ringAt = { x: gx, y: gy, r: this.span * 0.085 }; }
       else if (this.scene.sl && t >= T.sunClick + 0.3 && t < T.sunClose - 0.6) {
         // (dragging the Sun slider across: the slider itself moved, as someone would)
         const sl = this.scene.sl, r = sl.getBoundingClientRect(), u = io((t - T.sun[0]) / (T.sun[1] - T.sun[0])), f = 0.08 + 0.84 * u;
@@ -400,9 +456,21 @@ class ImportShow {
         this.onThumb = t >= T.sun[0];
       }
     }
-    if (to) { const e = onTool || (this.onThumb && t < T.sun[1] + 0.2) ? 1 : 0.2; this.curAt.x += ((to as P).x - this.curAt.x) * e; this.curAt.y += ((to as P).y - this.curAt.y) * e; }
+    const dt = cl(t - this.lastT, 0, 0.1); this.lastT = t;
+    if (to) {
+      const goal = to as P;
+      if (onTool || (this.onThumb && t < T.sun[1] + 0.2 && Math.hypot(goal.x - this.curAt.x, goal.y - this.curAt.y) < 10)) { this.curAt = { x: goal.x, y: goal.y }; this.vel = { x: 0, y: 0 }; }
+      else {
+        // (working: close on its heels; between: an easy glide)
+        const near = working && Math.hypot(goal.x - this.curAt.x, goal.y - this.curAt.y) < 60;
+        this.smooth += ((near ? 0.07 : this.phone ? 0.3 : 0.26) - this.smooth) * (near ? 0.2 : 1);
+        const st = this.smooth, om = 2 / st, x = om * dt, ex = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+        for (const ax of ["x", "y"] as const) { const ch = this.curAt[ax] - goal[ax], tmp = (this.vel[ax] + om * ch) * dt; this.vel[ax] = (this.vel[ax] - om * tmp) * ex; this.curAt[ax] = goal[ax] + (ch + tmp) * ex; }
+      }
+      if (working) { const w2 = window as any, lag = Math.hypot(goal.x - this.curAt.x, goal.y - this.curAt.y); if (this.smooth > 0.1) this.lagFrom = undefined; else if (this.lagFrom === undefined) this.lagFrom = t; if (this.lagFrom !== undefined && t > this.lagFrom + 0.3) w2.__dgImportShow.lag = Math.max(w2.__dgImportShow.lag ?? 0, lag); } else this.lagFrom = undefined;
+    } else this.vel = { x: 0, y: 0 };
     if (!onTool) this.from = { ...this.curAt };
-    this.cur.style.transform = `translate(${this.curAt.x - 4}px, ${this.curAt.y - 3}px) scale(${1 - 0.14 * cl(press)})`;
+    this.cur.style.transform = `translate(${this.curAt.x - 4}px, ${this.curAt.y - 3}px) scale(${1 - (this.phone ? 0.28 : 0.14) * cl(press)})`;
     this.cur.style.opacity = t < T.cover * 0.6 || t > T.sunClose + 0.5 ? "0" : "1";
     if (pick) this.pick(pick);
     const lastStep = this.steps[this.steps.length - 1];
@@ -425,13 +493,24 @@ class ImportShow {
     this.steps.forEach((s, i) => { const row = c.querySelector(`[data-row="${i}"]`) as HTMLElement, on2 = t >= s.from && t < s.to, dn = t >= s.to, dot = row.querySelector("[data-dot]") as HTMLElement, vv = row.querySelector("[data-v]") as HTMLElement;
       row.style.color = on2 ? "#fafafa" : dn ? "#e4e4e7" : "#71717a"; dot.textContent = dn ? "✓" : ""; dot.style.background = dn ? "#a2cf6a" : "none"; dot.style.boxShadow = dn ? "none" : on2 ? "inset 0 0 0 2px #a2cf6a" : "inset 0 0 0 1.5px rgba(255,255,255,.14)";
       vv.textContent = on2 ? s.doing : dn ? s.val : ""; vv.style.color = on2 ? "#a2cf6a" : "#a1a1aa"; vv.style.fontWeight = on2 ? "600" : "400"; });
-    if (shade) v.shadowsDirty = true;
+    if (shade && (!this.phone || this.frameN % 3 === 0)) v.shadowsDirty = true;
     v.dirty = true;
   }
   private instDone = false;
+  private vel = { x: 0, y: 0 };
+  private smooth = 0.3;
+  private lagFrom: number | undefined;
+  private lastT = 0;
+  private tipped = false;
   private onThumb = false;
 
-  private pick(id: string) { if (this.picked === id) return; this.picked = id; this.tool(id)?.el.click(); }
+  private pick(id: string) {
+    if (this.picked === id) return;
+    this.picked = id;
+    const t = this.tool(id);
+    if (t) t.el.click();
+    else if (id === "select") { const d = this.doneBtn(); if (d) d.el.click(); else useEditor.getState().set({ tool: "select" } as any); }
+  }
   /** View's "Sun from the" slider, the rest of the panel out of the way while it's dragged. */
   private findSun() {
     const box = document.querySelector<HTMLElement>('[data-testid="view-light"]');
