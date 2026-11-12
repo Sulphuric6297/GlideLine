@@ -87,7 +87,7 @@ const Switch = ({ on, onClick, label, testid }: { on: boolean; onClick: () => vo
   </button>
 );
 
-export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, look, onLook, groups, photoChoice, brush, onBack, onBring, onFlat }: {
+export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, look, onLook, groups, photoChoice, brush, notes = [], failed = [], onBack, onBring, onFlat }: {
   phone: boolean; again: boolean;
   /** The site with what's switched on (before anything was left out by hand). */
   site0: ImportedSite;
@@ -95,6 +95,8 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
   look: TreeLook3d | null; onLook: (l: TreeLook3d | null) => void;
   groups: ReviewGroup[]; photoChoice: ReactNode;
   brush?: ReviewBrush;
+  /** What the import said about what it found, and the sources that didn't come. */
+  notes?: string[]; failed?: string[];
   onBack: () => void; onBring: () => void; onFlat: () => void;
 }) {
   const photo = useEditor(s => s.photo), selectedId = useEditor(s => s.selectedId);
@@ -168,7 +170,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
     hist.current.push({ tune: brush.tune, on: brush.on });
     if (whole) {
       if (level === 0) { brush.onSwitch(false); said.current = "Underbrush off"; }
-      else { const put: Record<number, number> = {}; found.forEach((l, q) => { if (l) put[q] = level; }); if (!brush.on) brush.onSwitch(true); brush.onTune({ ...brush.tune, set: undefined, put }); said.current = `All underbrush ${LEVELS[level].toLowerCase()}`; }
+      else { if (!brush.on) brush.onSwitch(true); brush.onTune({ ...brush.tune, set: undefined, put: undefined, all: level }); said.current = `All underbrush ${LEVELS[level].toLowerCase()}`; }
     } else {
       const pts = patch!.points, put = { ...(brush.tune.put ?? {}) };
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -211,6 +213,12 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
       {hist.current.length > 0 && <button className="ml-auto shrink-0 inline-flex items-center gap-1 text-[#a2cf6a] font-semibold" onClick={undo} data-testid="review-undo"><Undo2 size={13} />Undo</button>}
     </div>
   );
+  const notesEl = notes.length > 0 && (
+    <details className="text-[12px] text-zinc-400" data-testid="review-notes">
+      <summary className="cursor-pointer text-zinc-300 hover:text-zinc-100 py-0.5">What the import found ({notes.length})</summary>
+      <ul className="mt-1 flex flex-col gap-1 list-disc pl-4 leading-snug">{notes.map((n, k) => <li key={k}>{n}</li>)}</ul>
+    </details>
+  );
   const areaEl = area && <AreaPick onBox={boxed} onCancel={() => setArea(false)} />;
 
   if (phone) {
@@ -230,6 +238,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
     const row = "w-full flex items-center gap-3 text-left rounded-[18px] px-3 min-h-[46px] py-2 text-zinc-100 active:bg-white/[0.1] text-[15px] font-semibold";
     const menu = (
       <div className="flex flex-col">
+        {(failed.length > 0 || notes.length > 0) && <div className="px-3 pb-1 max-h-[26dvh] overflow-y-auto">{failed.length > 0 && <div className="text-[13px] text-orange-300 pb-1">{failed.join(", ")} didn't come.</div>}{notesEl}</div>}
         {photoChoice}
         <button className={row} onClick={onFlat} data-testid="review-flat">Look at it on the flat map</button>
         <button className={`${row} !text-orange-300`} onClick={onBack} data-testid="review-back">Back to the frame</button>
@@ -252,7 +261,8 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
       <div className="fixed left-4 top-[72px] z-[60] w-[336px] max-h-[calc(100%-96px)] overflow-y-auto glass rounded-[22px] p-4 flex flex-col gap-2 text-zinc-100" data-testid="import-review">
         <div>
           <div className="font-bold text-[15.5px] flex items-center gap-1.5">What comes in <HelpLink topic="import-options" label="What comes in" /></div>
-          <div className="text-[12.5px] text-zinc-400">Everything's in. Switch off what you don't want, then bring it in.</div>
+          <div className="text-[12.5px] text-zinc-400">{failed.length ? <><span className="text-orange-300">{failed.join(", ")} didn't come.</span> The rest is in.</> : "Everything's in."} Switch off what you don't want, then bring it in.</div>
+          {notesEl}
         </div>
         <div className="flex items-center gap-2 text-[12.5px] font-semibold">
           <span>Photo</span>

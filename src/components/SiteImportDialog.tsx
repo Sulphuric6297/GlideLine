@@ -69,7 +69,7 @@ const frameAround = (b: GeoBounds): GeoBounds => {
 };
 
 const ROW_NAMES: Record<SourceId, string> = { photo: "Photo", elevation: "Ground", lidar: "Measured trees", osm: "Paths, roads and more", buildings: "Buildings from the air", photoTrees: "Trees from the photo", gov: "Creeks, wetlands and buildings", seasons: "Seasons from space" };
-const ORDER: SourceId[] = ["photo", "elevation", "lidar", "osm", "buildings", "photoTrees", "seasons"];
+const ORDER: SourceId[] = ["photo", "elevation", "lidar", "osm", "buildings", "photoTrees", "gov", "seasons"];
 
 /** The brush's levels on the map: light, medium, heavy. */
 const BRUSH_COLOR = ["", "#fde68a", "#f59e0b", "#b45309"];
@@ -78,7 +78,7 @@ const MUCH = ["Only the surest", "Fewer", "Best guess", "More", "Every hint"];
 /** Underbrush, looked at before it comes in: how much and (under Fine-tune) how thick, the acres
  * as tuned, and how sure it is, in words. A tap on a patch on the map steps it heavy, medium,
  * light, off. */
-function BrushRow({ on, onSwitch, tune, onTune, open, onOpen, acres, from, surveyYear, seenFrom }: { on: boolean; onSwitch: (v: boolean) => void; tune: BrushTune; onTune: (t: BrushTune) => void; open: boolean; onOpen: (v: boolean) => void; acres: number[]; from: "both" | "survey" | "satellite"; surveyYear?: number; seenFrom?: string }) {
+function BrushRow({ on, onSwitch, tune, onTune, open, onOpen, acres, from, surveyYear, seenFrom, flat = true }: { flat?: boolean; on: boolean; onSwitch: (v: boolean) => void; tune: BrushTune; onTune: (t: BrushTune) => void; open: boolean; onOpen: (v: boolean) => void; acres: number[]; from: "both" | "survey" | "satellite"; surveyYear?: number; seenFrom?: string }) {
   const total = acres[1] + acres[2] + acres[3];
   const fromWords = from === "both" ? `the ${surveyYear ?? ""} aerial survey and satellite passes from ${seenFrom}` : from === "survey" ? `the ${surveyYear ?? ""} aerial survey` : `satellite passes from ${seenFrom}`;
   return (
@@ -103,8 +103,8 @@ function BrushRow({ on, onSwitch, tune, onTune, open, onOpen, acres, from, surve
           {open && (
             <div className="mt-1">
               <Slider label="How thick" min={-1} max={1} step={0.25} value={tune.thick} onChange={v => onTune({ ...tune, thick: v })} format={v => (v <= -0.75 ? "Much thinner" : v < 0 ? "Thinner" : v === 0 ? "As found" : v < 0.75 ? "Thicker" : "Much thicker")} />
-              <p className="text-[11.5px] text-zinc-400 leading-snug">Tap a patch on the map to make it lighter, a step at a time, then gone. Tap again to bring it back.</p>
-              {(tune.much !== BEST_GUESS.much || tune.thick !== BEST_GUESS.thick || Object.keys(tune.set ?? {}).length > 0 || Object.keys(tune.put ?? {}).length > 0) && (
+              {flat && <p className="text-[11.5px] text-zinc-400 leading-snug">Tap a patch on the map to make it lighter, a step at a time, then gone. Tap again to bring it back.</p>}
+              {(tune.much !== BEST_GUESS.much || tune.thick !== BEST_GUESS.thick || Object.keys(tune.set ?? {}).length > 0 || Object.keys(tune.put ?? {}).length > 0 || !!tune.all) && (
                 <button className="text-[12px] text-orange-300 hover:text-orange-200 py-1" onClick={() => onTune({ ...BEST_GUESS })} data-testid="review-underbrush-reset">Back to the best guess</button>
               )}
             </div>
@@ -189,7 +189,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   const begin3d = () => {
     if (!onPreview || in3d) return;
     keepBase();
-    setLeft([]); setLook(null); setReady3d(false); setIn3d(true);
+    setReady3d(false); setIn3d(true);
   };
   /** The build has been shown for the site in hand (or skipped): it's never played a second time. */
   const played = useRef(false);
@@ -354,7 +354,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   // Looked at before it comes in: what's on, each source in its own color, where it came from on hover
   useEffect(() => {
     if (!review || !landed.current) return;
-    const s = reviewedSite(review.site, { ...review.on, underbrush: false }, review.keep);
+    const s = withoutLeft(reviewedSite(review.site, { ...review.on, underbrush: false }, review.keep), left);
     const a: Arrived = { ...landed.current, areas: [], lines: [], trees: [] };
     for (const i of [...s.mapped, ...s.trees]) {
       const k = sourceOf(i), c = k ? SOURCES[k].color : "#e5e7eb", tip = k ? `${SOURCES[k].label}${SOURCES[k].who ? ` · ${SOURCES[k].who}` : ""}` : undefined;
@@ -365,7 +365,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     const lt = s.lidar?.trees ?? [], fromSummer = lt.length - (s.lidar?.fromPhoto ?? 0), step = Math.max(1, Math.ceil(lt.length / 4000));
     for (let k = 0; k < lt.length; k += step) a.trees.push({ x: lt[k][0], y: lt[k][1], r: lt[k][3], color: k >= fromSummer ? SOURCES.summerTrees.color : SOURCES.lidarTrees.color });
     setArrived(a);
-  }, [review]);
+  }, [review, left]);
 
   // The brush as tuned: each block's level, the areas (on a layer of their own, drawn again while
   // How much or How thick moves), and a tap on a patch stepping it lighter, then off, then back
@@ -396,7 +396,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     landed.current = null;
     setArrived(null);
     setStatus({ state: "loading", text: "Starting…" });
-    played.current = false; builtIn.current = false;
+    played.current = false; builtIn.current = false; setLeft([]); setLook(null);
     const live = !onPreview ? null : startLiveImport({ name: label.split(",")[0].trim() || "your site", hide: on => { liveHid.current = on; setLiveOn(on); if (!on && landed.current) setArrived({ ...landed.current }); } });
     // (built in the 3D view from this moment, the photo under it: the course as it was kept to go
     // back to, and nothing else worked meanwhile)
@@ -696,7 +696,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
             {keys.map(k => {
               const on = review.on[k] !== false, s = SOURCES[k];
               if (k === "underbrush" && brushU) return (
-                <BrushRow key={k} on={on} onSwitch={v => setOn(k, v)} tune={tune} onTune={t => setTune(t)} open={tuneOpen} onOpen={setTuneOpen}
+                <BrushRow key={k} flat={!in3d} on={on} onSwitch={v => setOn(k, v)} tune={tune} onTune={t => setTune(t)} open={tuneOpen} onOpen={setTuneOpen}
                   acres={brushLv ? brushAcres(brushLv) : [0, 0, 0, 0]} from={brushU.from} surveyYear={brushU.surveyYear} seenFrom={brushU.seenFrom} />
               );
               return (
@@ -728,9 +728,12 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
         );
         return [{ id: g.id, label: g.label, total, el }];
       });
+  const failedNames = ORDER.filter(id => sources[id]?.state === "failed").map(id => ROW_NAMES[id]);
+  const reviewNotes = review?.site.notes ?? [];
   const reviewPanel = review && (
     <div className="flex flex-col gap-2" data-testid="import-review">
-      <div className="rounded-xl px-3 py-2 bg-white/[0.07] text-[13px] text-zinc-200"><span className="font-semibold">Everything's in.</span> <span className="text-zinc-400">Switch off what you don't want, then bring it in.</span></div>
+      <div className="rounded-xl px-3 py-2 bg-white/[0.07] text-[13px] text-zinc-200"><span className="font-semibold">{failedNames.length ? <><span className="text-orange-300">{failedNames.join(", ")} didn't come.</span> The rest is in.</> : "Everything's in."}</span> <span className="text-zinc-400">Switch off what you don't want, then bring it in.</span>
+        {reviewNotes.length > 0 && <details className="text-[12px] text-zinc-400 mt-1" data-testid="review-notes"><summary className="cursor-pointer text-zinc-300">What the import found ({reviewNotes.length})</summary><ul className="mt-1 flex flex-col gap-1 list-disc pl-4 leading-snug">{reviewNotes.map((n, k) => <li key={k}>{n}</li>)}</ul></details>}</div>
       {onPreview && <button className="self-start text-[12.5px] font-semibold text-[#a2cf6a] hover:text-[#b3db80] px-1" onClick={begin3d} data-testid="review-3d">Look at it in 3D ›</button>}
       <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mt-1 flex justify-between"><span>What comes in</span><span className="font-normal normal-case tracking-normal">shown on the map</span></div>
       {photoChoiceEl}
@@ -753,7 +756,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   ) : null;
   const review3d = in3d && ready3d && review && site0 && createPortal(
     <ImportReview3d phone={phone} again={again} site0={site0} left={left} onLeave={b => setLeft(l => [...l, b])} onUndo={() => setLeft(l => l.slice(0, -1))} look={look} onLook={setLook}
-      groups={groupEls} photoChoice={photoChoiceEl} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
+      groups={groupEls} photoChoice={photoChoiceEl} notes={reviewNotes} failed={failedNames} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { end3d(); setReview(null); setArrived(null); }} />, document.body);
   const closeBtn = <button className="glass w-11 h-11 rounded-full grid place-items-center text-zinc-300 hover:text-zinc-50" onClick={close} aria-label="Close" title="Close"><X size={20} /></button>;
 
   if (phone) {

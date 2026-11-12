@@ -233,7 +233,8 @@ const offLimits = (bx: number, by: number, never: (p: P) => boolean, roofs?: { n
 /** How much brush (0 only the surest .. 4 every hint; 2 the best guess) and how thick (-1 thinner
  * .. 1 thicker), and patches made lighter by hand (by a block in them: how many steps lighter). */
 /** `put`: blocks given a level by hand (0 none to 3 heavy), whatever was found there. */
-export type BrushTune = { much: number; thick: number; set?: Record<number, number>; put?: Record<number, number> };
+/** `all`: every patch at this one level (1 light to 3 heavy), where How much finds brush. */
+export type BrushTune = { much: number; thick: number; set?: Record<number, number>; put?: Record<number, number>; all?: number };
 export const BEST_GUESS: BrushTune = { much: 2, thick: 0 };
 
 // (the chance a block needs for brush at each step of How much; and over it, how much more for
@@ -250,7 +251,7 @@ export const brushLevels = (u: Underbrush, t: BrushTune) => {
   for (let q = 0; q < out.length; q++) {
     const p = u.chance[q];
     if (!(p >= at)) continue;
-    out[q] = p >= hvy ? 3 : p >= med ? 2 : 1;
+    out[q] = t.all ? Math.max(1, Math.min(3, t.all)) : p >= hvy ? 3 : p >= med ? 2 : 1;
   }
   // (patches made lighter by hand: every block of the patch the tap fell in, as it was found)
   if (t.set) {

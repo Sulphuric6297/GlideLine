@@ -719,7 +719,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     ...(opts.osm ? ["osm" as const, "buildings" as const] : []),
     ...(wantsPhotoTrees ? ["photoTrees" as const] : []),
     ...(wantsGov ? ["gov" as const] : []),
-    ...(opts.trees ? ["seasons" as const] : [])
+    ...(opts.trees || opts.lidar ? ["seasons" as const] : [])
   ];
   const progress = new Progress(opts, ids, satellite ? "satellite photo" : "map");
   const layer = (l: ImportLayer) => { if (!signal?.aborted) opts.onLayer?.(l); };
@@ -851,7 +851,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     // (the rest given 45 s at most: one that stalls doesn't hold OpenStreetMap up)
     // The satellite's seasons, for the brush (Sentinel-2: how green each spot is in winter, spring
     // and summer)
-    const seasonsJob = !opts.trees ? Promise.resolve(null) : soft("seasons", async () => {
+    const seasonsJob = !(opts.trees || opts.lidar) ? Promise.resolve(null) : soft("seasons", async () => {
       progress.set("seasons", { state: "coming" });
       const got = cached("seasons", here, () => seasonsFromSpace(bounds, signal), { signal });
       const s = await untilAborted(got.value, signal);
