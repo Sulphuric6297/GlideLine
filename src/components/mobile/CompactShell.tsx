@@ -1,3 +1,4 @@
+import { AmenityItem } from "../../types";
 // The app on a phone (and a phone turned on its side). The map is the screen; everything else
 // is within reach of a thumb:
 // - upright: a floating top bar (name, 2D/3D, menu), map controls on the right, a bottom
@@ -16,7 +17,7 @@ import { EXAMPLE_ID } from "../../lib/example";
 import { courseIssues, courseStats, courseTotals, holeStats, openIssues, playsOf } from "../../lib/holeStats";
 import { fmtArea, fmtDist, fmtElev } from "../../lib/units";
 import { deleteSelection, duplicateSelection, select } from "../../state/actions";
-import { getDoc, useCourse, useEditor, type Step } from "../../state/course";
+import { getDoc, useCourse, useEditor, type Step, changeDoc } from "../../state/course";
 import { deleteRecent, newCourse, openCourseFile, openRecent, recentCourses, saveCourseFile } from "../../state/files";
 import type { PlanMeta } from "../../lib/storage";
 import type { CourseItem, Hole, P } from "../../types";
@@ -48,7 +49,7 @@ import { useExportJob } from "../../state/exportJob";
 import { ViewToggle } from "../ViewToggle";
 import { groupActions, groundActions, itemActions, type ItemAction } from "../itemActions";
 import { treeActions, treesAt, treeTitle, underAction } from "../treeActions";
-import { HelpLink, askHelp } from "../ui";
+import { HelpLink, askHelp, PickRow } from "../ui";
 import { ago } from "../../auth/Home";
 import { goDemoHome } from "../DemoHome";
 import { startTour } from "../Tour";
@@ -681,6 +682,16 @@ function PhoneGroupBar({ group, faded, side, onHeight }: BarProps & { group: Cou
   const doc = useCourse(s => s.doc);
   const parts = groupSummary(doc, group);
   const settings: BarSetting[] = groupActions().map((a, i) => ({ id: `g${i}`, name: `All ${group.length}`, value: a.label.replace(/ \d+$/, ""), icon: a.icon ? <a.icon size={16} /> : undefined, run: a.run, testid: a.testid }));
+  // (all of them amenities: their mark set for all at once)
+  if (group.every(i => i.type === "amenity")) {
+    const modes = new Set((group as AmenityItem[]).map(a => (a.mark === true ? "always" : a.mark === false ? "never" : "auto")));
+    const now = modes.size === 1 ? [...modes][0] : "mixed";
+    const setMark = (m: string) => { const ids = new Set(group.map(i => i.id)), mark = m === "always" ? true : m === "never" ? false : undefined; changeDoc(d => ({ items: d.items.map(i => (ids.has(i.id) && i.type === "amenity" ? ({ ...i, mark } as CourseItem) : i)) })); };
+    settings.unshift({ id: "mark", name: "Mark on the map", value: now === "auto" ? "Auto" : now === "always" ? "Always" : now === "never" ? "Never" : "Mixed", testid: "group-mark", control: (
+      <div className="flex flex-col" role="radiogroup" aria-label="Mark on the map">
+        {(["auto", "always", "never"] as const).map(m => <PickRow key={m} on={m === now} onClick={() => setMark(m)} label={m === "auto" ? "Auto" : m === "always" ? "Always" : "Never"} testid={`group-mark-${m}`} />)}
+      </div>) });
+  }
   return <GlassBar remember="group" pill={{ name: `${group.length} selected`, small: parts.slice(0, 2).join(" · "), testid: "selection-header" }} settings={settings} onDone={() => select(null)} doneLabel="Done: put them down" faded={faded} side={side} onHeight={onHeight} testid="group-strip" />;
 }
 

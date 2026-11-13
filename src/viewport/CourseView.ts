@@ -4735,7 +4735,7 @@ export class CourseView {
           }
           return el;
         }, at(b, 2), 0);
-      } else if (item.type === "amenity" && !sel && !amenityMarked(item as AmenityItem)) {
+      } else if (item.type === "amenity" && !sel && !amenityMarked(item as AmenityItem, course.style.amenityMarks)) {
         // (its mark not shown: the thing itself is there in 3D, and picked there)
         continue;
       } else if (item.type === "mando" || item.type === "dropzone" || item.type === "amenity") {

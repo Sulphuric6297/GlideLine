@@ -1,5 +1,5 @@
 // Making course documents and items, and finding a hole's parts.
-import { CIRCLE_ONE_FT, DEFAULT_CANVAS, DEFAULT_FAIRWAY_FT, DEFAULT_PAD, LINE_KINDS, PIN_POSITIONS, STRUCTURE_KINDS, TEE_ORDER, TREE_COLORS, generateId } from "../constants";
+import { CIRCLE_ONE_FT, DEFAULT_CANVAS, DEFAULT_FAIRWAY_FT, DEFAULT_PAD, LINE_KINDS, PIN_POSITIONS, STRUCTURE_KINDS, TEE_ORDER, TREE_COLORS, generateId, AMENITY_KINDS } from "../constants";
 import type {
   AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseDoc, CourseItem, CourseRules, DropZoneItem, Hole, LabelItem,
   Layout, LineItem, LineKind, MandoItem, MapStyle, P, PinPosition, StructureItem, StructureKind, TeeItem, TeeLevel, TreeItem
@@ -463,8 +463,21 @@ export const createDropZone = (at: P, holeId?: string): DropZoneItem => ({ id: g
 export const createTree = (at: P, over: Partial<TreeItem> = {}): TreeItem => ({
   id: generateId(), type: "tree", x: at.x, y: at.y, rotation: 0, radius: 14, height: 40, treeType: "deciduous", color: TREE_COLORS[0], ...over
 });
-/** Whether an amenity's mark shows on the map and over it in 3D (unless switched off, it does). */
-export const amenityMarked = (a: { kind: AmenityKind; mark?: boolean }) => a.mark ?? true;
+/** What an amenity is to a player: 0, an essential they go looking for; 1, a comfort, worth a sign
+ * near the play; 2, part of the landscape (a pole, a light, a gate), drawn as what it is, never a sign. */
+export const AMENITY_ROLE: Record<AmenityKind, 0 | 1 | 2> = {
+  parking: 0, restroom: 0, water: 0, kiosk: 0, here: 0, firstaid: 0, practice: 0,
+  bench: 1, picnic: 1, trash: 1, grill: 1, fountain: 1, bikerack: 1, fitness: 1, sign: 1, shelter: 1, bridge: 1,
+  pole: 2, light: 2, flagpole: 2, gate: 2
+};
+export type AmenityMarks = "essentials" | "comforts" | "all";
+/** Whether an amenity can have a sign, as its own setting, its kind and the map's say (where there's
+ * room, and for a comfort near enough the play, is the map's to decide). */
+export const amenityMarked = (a: { kind: AmenityKind; mark?: boolean }, level: AmenityMarks = "comforts") =>
+  a.mark ?? (AMENITY_ROLE[a.kind] === 0 || (AMENITY_ROLE[a.kind] === 1 && level !== "essentials") || level === "all");
+/** The plural of an amenity kind, as "Select all 12 utility poles" says it. */
+export const amenityPlural = (k: AmenityKind) =>
+  ({ water: "drinking water spots", kiosk: "course kiosks", here: "\"You are here\" marks", firstaid: "first aid stations", parking: "parking signs", sign: "tee signs", trash: "trash cans", practice: "practice baskets", picnic: "picnic tables", fitness: "fitness stations", bikerack: "bike racks", light: "light poles", pole: "utility poles", benches: "benches" } as Record<string, string>)[k] ?? (k === "bench" ? "benches" : `${AMENITY_KINDS[k].label.toLowerCase()}s`);
 export const createAmenity = (at: P, kind: AmenityKind): AmenityItem => ({ id: generateId(), type: "amenity", kind, x: at.x, y: at.y, rotation: 0 });
 export const createLabel = (at: P, text = "Label"): LabelItem => ({ id: generateId(), type: "label", text, fontSize: 14, color: "#ffffff", x: at.x, y: at.y, rotation: 0 });
 export const createArea = (kind: AreaKind, points: P[], holeId?: string): AreaItem => {

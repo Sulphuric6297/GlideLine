@@ -8,7 +8,7 @@ import { useRef, type ReactNode } from "react";
 import { Brush, Navigation, Plus, RotateCw, Scissors, Video } from "lucide-react";
 import { editFlyover } from "../FlyoverSettings";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint } from "../../constants";
-import { holeBaskets, holeLabel, holeTees, teeAim, amenityMarked } from "../../lib/course";
+import { holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
 import { holeStats } from "../../lib/holeStats";
 import { MARKED_FIELDS, fieldKindOf, isBallField } from "../../lib/fields";
 import { structureHeight, structureWidth } from "../../lib/structures";
@@ -17,7 +17,7 @@ import { fmtDist } from "../../lib/units";
 import { addHoleOb, nextHomeCorner, obChoiceOf, pinsFull, select, setFieldKind, setFieldPlay, setLineKind, setPinPosition, setTeeLevel, shareBasket, startAnotherPin, startAnotherTee, startHoleToBasket, teesFull } from "../../state/actions";
 import { updateHole, updateItem, useCourse, useEditor } from "../../state/course";
 import type { AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseItem, FieldKind, Hole, LabelItem, LineItem, LineKind, MandoItem, PathSurface, StructureItem, StructureKind, TeeItem, TeeSurface, TreeItem } from "../../types";
-import { BRUSH_LEVELS, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions } from "../Inspector";
+import { BRUSH_LEVELS, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
 import { HoleChips } from "../ApplyToHoles";
 import { OnSiteButton } from "../OnSite";
 import { useTouch } from "../useLayout";
@@ -219,8 +219,12 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
       const kinds = AMENITY_KINDS[a.kind].retired ? [...AMENITY_ORDER, a.kind] : AMENITY_ORDER;
       const name = (k: AmenityKind) => AMENITY_KINDS[k].pick ?? AMENITY_KINDS[k].label;
       out.push({ id: "kind", name: "Kind", value: name(a.kind), wide: true, control: <KindTiles label="Amenity kind" value={a.kind} onChange={v => set({ kind: v })} options={kinds.map(k => ({ value: k, label: name(k), picture: bigIcon(amenityIcon(k)) }))} /> });
-      const marked = amenityMarked(a);
-      out.push({ id: "mark", name: "Mark on the map", on: marked, value: marked ? "On" : "Off", run: () => set({ mark: !marked }) });
+      const mode = a.mark === true ? "always" : a.mark === false ? "never" : "auto";
+      out.push({ id: "mark", name: "Mark on the map", value: mode === "auto" ? "Auto" : mode === "always" ? "Always" : "Never", testid: "item-mark", control: (
+        <div className="flex flex-col" role="radiogroup" aria-label="Mark on the map">
+          {(["auto", "always", "never"] as const).map(m => <PickRow key={m} on={m === mode} onClick={() => set({ mark: m === "always" ? true : m === "never" ? false : undefined })} label={m === "auto" ? "Auto" : m === "always" ? "Always" : "Never"} testid={`item-mark-${m}`} />)}
+          <p className="px-3 pt-1 pb-2 text-[12.5px] text-zinc-400 leading-snug">{markNote(a, doc.style.amenityMarks)}</p>
+        </div>) });
       if (a.kind === "gate") dial("width", "Width", `${a.width ?? 6} ft`, { label: "Width", value: a.width ?? 6, min: 4, max: 60, step: 1, format: v => `${v} ft`, onChange: v => live({ width: v }), onDone: done });
     }
     if (item.type === "mando") out.push({ id: "side", name: "Pass", value: `${cap((item as MandoItem).side)} of it`, control: <Segmented label="Mando side" value={(item as MandoItem).side} onChange={v => set({ side: v })} options={[{ value: "left", label: "Left of it" }, { value: "right", label: "Right of it" }]} /> });

@@ -11,7 +11,7 @@ import { GOV_CREDITS } from "./geo/usgov";
 import { latitudeOf, sunFromOf } from "./mapLook";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, FIELD_KINDS, FT_PER_M, LINE_KINDS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER } from "../constants";
 import type { AmenityItem, AreaItem, BasketItem, CourseDoc, DropZoneItem, LabelItem, LineItem, MandoItem, MapStyle, MapTheme, P, PageElementId, PageElementStyle, PaperSize, StructureItem, StructureKind, TeeItem, TreeItem } from "../types";
-import { activeLayout, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, taglineOf, titleFontOf, amenityMarked } from "./course";
+import { activeLayout, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, taglineOf, titleFontOf, amenityMarked, AMENITY_ROLE } from "./course";
 import { boundsOf, dist, offsetPath, pathLength, pointAlong, pointInPolygon, polygonArea, rectCorners, rotatePoint, smoothPath, subPath } from "./geom";
 import { courseTotals, holeStats, isOb, isOutOfPlay, playsOf, type HoleStats } from "./holeStats";
 import { forestCanvas, forestCanvasAsync, paintedFrom, paintedLine, paintsAgain, paintsFromPhoto, treesOverOf, type CanopyGrid } from "./forest";
@@ -671,8 +671,55 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
   }
   for (const dz of items.filter(i => i.type === "dropzone") as DropZoneItem[]) sym.push(`<g opacity="${dim(dz.holeId)}">${dropZoneSymbol(toScreen(dz), 1.15 * ts)}</g>`);
 
-  // Amenities
-  for (const am of items.filter(i => i.type === "amenity") as AmenityItem[]) if (amenityMarked(am)) sym.push(amenitySymbol(am.kind, toScreen(am), 0.85 * ts));
+  // Amenities, by what each is to a player: essentials always marked, comforts near the play and
+  // where there's room, the landscape's things (poles, lights, a gate) drawn as what they are
+  {
+    const ROLE = AMENITY_ROLE, level = s.amenityMarks ?? "comforts";
+    const play: P[] = [];
+    for (const st of layers.stats) for (let k = 0; k <= 12; k++) play.push(pointAlong(st.line, (pathLength(st.line) * k) / 12).point);
+    for (const i of items) if (i.type === "tee" || i.type === "basket") play.push(i);
+    const near = (p: P) => play.reduce((m, q) => Math.min(m, Math.hypot(q.x - p.x, q.y - p.y)), Infinity);
+    const ams = items.filter(i => i.type === "amenity") as AmenityItem[];
+    // (what's taken: tees, baskets, and the marks already placed)
+    const taken: { p: P; r: number }[] = items.filter(i => i.type === "tee" || i.type === "basket").map(i => ({ p: toScreen(i), r: 7 * ts }));
+    const wants = ams.map(a => {
+      const role = ROLE[a.kind] ?? 1, forced = a.mark === true, never = a.mark === false;
+      const show = !never && (forced || role === 0 || (role === 1 && level !== "essentials" && (level === "all" || near(a) <= 150)) || (role === 2 && level === "all"));
+      return { a, role, show, rank: forced ? -1 : role * 1000 + near(a) / 10 };
+    }).sort((x, y) => x.rank - y.rank);
+    const placed: { a: AmenityItem; p: P; n: number }[] = [];
+    for (const w of wants) {
+      const p = toScreen(w.a);
+      if (!w.show) {
+        // (landscape things: a small drawing of what they are, never a sign)
+        if (w.role === 2 && w.a.mark !== false) {
+          if (w.a.kind === "gate") {
+            const half = ((w.a.width ?? 6) / 2) * k, ang = ((w.a.rotation + 90 - view.rotation) * Math.PI) / 180, dx = Math.cos(ang) * half, dy = Math.sin(ang) * half;
+            sym.push(`<g data-symbol="gate-line"><line x1="${n(p.x - dx)}" y1="${n(p.y - dy)}" x2="${n(p.x + dx)}" y2="${n(p.y + dy)}" stroke="#ffffff" stroke-width="${n(3.2 * ts)}" stroke-linecap="round"/><line x1="${n(p.x - dx)}" y1="${n(p.y - dy)}" x2="${n(p.x + dx)}" y2="${n(p.y + dy)}" stroke="#3f4549" stroke-width="${n(1.6 * ts)}" stroke-linecap="round"/><circle cx="${n(p.x - dx)}" cy="${n(p.y - dy)}" r="${n(1.5 * ts)}" fill="#3f4549" stroke="#fff" stroke-width="${n(0.5 * ts)}"/><circle cx="${n(p.x + dx)}" cy="${n(p.y + dy)}" r="${n(1.5 * ts)}" fill="#3f4549" stroke="#fff" stroke-width="${n(0.5 * ts)}"/></g>`);
+          } else {
+            const c = w.a.kind === "light" ? "#f5d061" : "#4b4f52";
+            sym.push(`<g data-symbol="${w.a.kind}-dot"><circle cx="${n(p.x)}" cy="${n(p.y)}" r="${n(1.9 * ts)}" fill="${c}" stroke="#ffffff" stroke-width="${n(0.7 * ts)}"/></g>`);
+          }
+        }
+        continue;
+      }
+      // (several of a kind close together: one mark, with how many)
+      const same = placed.find(q => q.a.kind === w.a.kind && Math.hypot(q.p.x - p.x, q.p.y - p.y) < 22 * ts);
+      if (same) { same.n++; continue; }
+      // (no room on its spot, by a tee, a basket or a mark placed before it: moved a little aside,
+      // the nearest clear place round it; left off only where there's none close by)
+      const free = (q: P) => taken.every(t => Math.hypot(t.p.x - q.x, t.p.y - q.y) >= t.r + 6.2 * ts);
+      let at: P | null = free(p) ? p : null;
+      for (let ring = 1; !at && ring <= 3; ring++) for (let k2 = 0; k2 < 12 && !at; k2++) { const ang = (k2 / 12) * Math.PI * 2, d = ring * 6.5 * ts, q = { x: p.x + Math.cos(ang) * d, y: p.y + Math.sin(ang) * d }; if (free(q)) at = q; }
+      if (!at) { if (w.rank >= 0) continue; at = p; }
+      placed.push({ a: w.a, p: at, n: 1 });
+      taken.push({ p: at, r: 6.5 * ts });
+    }
+    for (const q of placed) {
+      sym.push(amenitySymbol(q.a.kind, q.p, 0.85 * ts));
+      if (q.n > 1) sym.push(`<g data-symbol="count"><circle cx="${n(q.p.x + 6.2 * ts)}" cy="${n(q.p.y - 6.2 * ts)}" r="${n(3.6 * ts)}" fill="#1b1d1a" stroke="#ffffff" stroke-width="${n(0.6 * ts)}"/><text x="${n(q.p.x + 6.2 * ts)}" y="${n(q.p.y - 6.2 * ts + 1.6 * ts)}" text-anchor="middle" font-size="${n(4.6 * ts)}" font-weight="800" fill="#ffffff" font-family="system-ui,sans-serif">${q.n}</text></g>`);
+    }
+  }
 
   // Tees and baskets, then hole numbers
   const mainTees = new Set(layers.stats.map(st => st.teeId));
@@ -1673,7 +1720,7 @@ const legend = (doc: CourseDoc, x: number, y: number, w: number, ts: number, pal
     entries.push({ sym: `<g transform="translate(0 ${n((sh - h) / 2)})">${structureLegend(kd, sw, h, ts * 0.55, structureInk(s.theme), `lg-${kd}`)}</g>`, text: STRUCTURE_KINDS[kd].label });
   }
   if (s.contours) entries.push({ sym: `<path d="M0 ${n(sh * 0.7)}Q${n(sw / 2)} ${n(-sh * 0.2)} ${n(sw)} ${n(sh * 0.7)}" fill="none" stroke="${pal.contourMajor === "rgba(255,255,255,.6)" ? "#666" : pal.contourMajor}" stroke-width="${n(1 * ts)}"/>`, text: "Contour line" });
-  const kinds = new Set(doc.items.filter(i => i.type === "amenity" && amenityMarked(i as AmenityItem)).map(i => (i as AmenityItem).kind));
+  const kinds = new Set(doc.items.filter(i => i.type === "amenity" && amenityMarked(i as AmenityItem, s.amenityMarks)).map(i => (i as AmenityItem).kind));
   kinds.forEach(kd => {
     entries.push({ sym: amenitySymbol(kd, { x: sw / 2, y: sh / 2 }, kd === "here" ? sh / 19 : (sh * 1.15) / 13.2), text: kd === "here" ? "You are here" : AMENITY_KINDS[kd].label });
   });

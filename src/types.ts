@@ -106,7 +106,8 @@ export interface AmenityItem extends BaseItem {
   label?: string;
   /** Brought in from OpenStreetMap (replaced on re-import). */
   importSource?: "osm";
-  /** Its mark shown on the map and in 3D (unset: shown). */
+  /** Its mark on the map and over it in 3D: unset, as its kind and the map's Amenity marks say
+   * (Auto); true always; false never. */
   mark?: boolean;
   /** How far it spans, ft (a gate: across the road or path it closes). */
   width?: number;
@@ -644,6 +645,9 @@ export interface MapStyle {
   /** Putting circle (10 m) around each basket. */
   circle: boolean;
   legend: boolean;
+  /** Which amenities get a sign on the map: the essentials only, with the comforts near the play
+   * (unset), or every one. Poles, lights, flagpoles and gates are drawn as what they are. */
+  amenityMarks?: "essentials" | "comforts" | "all";
   holeTable: boolean;
   north: boolean;
   scale: boolean;

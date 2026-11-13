@@ -1,3 +1,5 @@
+import type { AmenityMarks } from "../lib/course";
+import { AmenityItem } from "../types";
 // The panel for what is selected: a hole (par, fairway, OB, tees and baskets, profile, notes,
 // flyover) or one item.
 import { PlaceByGps } from "./PlaceByGps";
@@ -5,7 +7,7 @@ import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES } from "../constants";
-import { areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries, amenityMarked } from "../lib/course";
+import { areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries, AMENITY_ROLE } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
 import { BUILDING_LOOKS, boxOutline, gazeboOutline, structureHeight, structurePath, structureRoof, structureWidth, turnShape } from "../lib/structures";
 import { amenitySymbol, STRUCTURE_INK, structureLegend, symbolSvg } from "../lib/symbols";
@@ -965,7 +967,11 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
             <ChipPick label="Amenity kind" value={item.kind} onChange={v => set({ kind: v as AmenityKind })} options={kinds.map(k => ({ value: k, label: AMENITY_KINDS[k].pick ?? AMENITY_KINDS[k].label, icon: amenityIcon(k) }))} />
           </Field>
           <Field label="Name (optional)"><TextInput label="Amenity name" value={item.label ?? ""} onChange={v => set({ label: v || undefined }, false)} onDone={commit} /></Field>
-          <Toggle label="Mark on the map" checked={amenityMarked(item)} onChange={v => set({ mark: v })} />
+          <Field label="Mark on the map">
+            <Segmented label="Mark on the map" value={item.mark === true ? "always" : item.mark === false ? "never" : "auto"} onChange={v => set({ mark: v === "always" ? true : v === "never" ? false : undefined })}
+              options={[{ value: "auto", label: "Auto" }, { value: "always", label: "Always" }, { value: "never", label: "Never" }]} />
+            <p className="text-[11.5px] text-zinc-400 mt-1.5 leading-snug" data-testid="mark-note">{markNote(item, doc.style.amenityMarks)}</p>
+          </Field>
           {item.kind === "gate" && <Slider label="Width" min={4} max={60} step={1} value={item.width ?? 6} format={v => fmtDist(v, doc.units)} onChange={v => set({ width: v }, false)} onDone={commit} />}
           <TurnButtons item={item} />
         </>
@@ -1045,16 +1051,37 @@ export function groupSummary(doc: CourseDoc, items: CourseItem[]) {
   ];
 }
 
+/** What Auto does for an amenity, in a few words. */
+export const markNote = (a: AmenityItem, level?: AmenityMarks) => {
+  const role = AMENITY_ROLE[a.kind];
+  if (a.mark === true) return "A sign on the map, always.";
+  if (a.mark === false) return role === 2 ? "Drawn as what it is, with no sign." : "No sign on the map.";
+  return role === 2 ? "Auto: drawn as what it is, with no sign." : role === 0 ? "Auto: a sign, always (it's one players look for)." : level === "essentials" ? "Auto: no sign while the map shows essentials only." : "Auto: a sign when it's near the holes and there's room.";
+};
+
 /** Things picked together. */
 function GroupInspector({ items }: { items: CourseItem[] }) {
   const doc = useCourse(s => s.doc);
   const parts = useMemo(() => groupSummary(doc, items), [doc, items]);
+  // (all of them amenities: their mark set for all at once)
+  const ams = items.every(i => i.type === "amenity") ? (items as AmenityItem[]) : null;
+  const modes = ams ? new Set(ams.map(a => (a.mark === true ? "always" : a.mark === false ? "never" : "auto"))) : null;
+  const setMark = (v: string) => { const ids = new Set(items.map(i => i.id)), mark = v === "always" ? true : v === "never" ? false : undefined; changeDoc(d => ({ items: d.items.map(i => (ids.has(i.id) && i.type === "amenity" ? ({ ...i, mark } as CourseItem) : i)) })); };
   return (
     <Section>
       <div className="text-sm font-bold text-zinc-50 mb-2" data-testid="inspector-title">{items.length} selected</div>
       <div className="flex flex-wrap gap-1.5" data-testid="group-kinds">
         {parts.map(p => <span key={p} className="px-2 py-0.5 rounded-full bg-white/[0.07] border border-white/[0.12] text-xs text-zinc-200">{p}</span>)}
       </div>
+      {ams && modes && (
+        <div className="mt-3" data-testid="group-mark">
+          <Field label="Mark on the map">
+            <Segmented label="Mark on the map" value={modes.size === 1 ? [...modes][0] : ""} onChange={setMark}
+              options={[{ value: "auto", label: "Auto" }, { value: "always", label: "Always" }, { value: "never", label: "Never" }]} />
+            {modes.size > 1 && <p className="text-[11.5px] text-zinc-400 mt-1.5">Mixed: pick one to set all {items.length}.</p>}
+          </Field>
+        </div>
+      )}
     </Section>
   );
 }

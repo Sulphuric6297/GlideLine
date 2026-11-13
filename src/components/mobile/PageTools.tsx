@@ -4,7 +4,7 @@
 // the 3D map's sheet does: every change shows on the page as it's made. With a piece picked, the
 // piece's own tools take the row's place (PieceToolbar).
 import { SHOW_EVENT } from "../showSetting";
-import { FileText, Flag, Handshake, ListTree, Palette, PenLine, Plus, Signpost, Table2, Type, BookOpen, type LucideIcon } from "lucide-react";
+import { FileText, Flag, Handshake, ListTree, Palette, PenLine, Plus, Signpost, Table2, Type, BookOpen, type LucideIcon, MapPin } from "lucide-react";
 import { useEffect, useState } from "react";
 import { changeDoc, useCourse, useEditor } from "../../state/course";
 import { PAPER } from "../../lib/mapSvg";
@@ -28,7 +28,7 @@ const LAYERS: Tool = { id: "print-layers", label: "Layers", icon: ListTree };
  * computer's panel names them. */
 const TOOLS: Record<Tab, Tool[]> = {
   general: [{ id: "card-style", label: "Lettering and colors", icon: Palette }, { id: "markings", label: "Marks", icon: Flag }, { id: "print-sponsors", label: "Sponsors", icon: Handshake }],
-  map: [{ id: "map-style", label: "Style", icon: Palette }, { id: "drawn-on-map", label: "Lines", icon: PenLine }, { id: "fold-title", label: "Lettering", icon: Type }, { id: "fold-paper", label: "Paper", icon: FileText }, ADD, LAYERS],
+  map: [{ id: "map-style", label: "Style", icon: Palette }, { id: "drawn-on-map", label: "Lines", icon: PenLine }, { id: "amenity-marks", label: "Marks", icon: MapPin }, { id: "fold-title", label: "Lettering", icon: Type }, { id: "fold-paper", label: "Paper", icon: FileText }, ADD, LAYERS],
   sign: [{ id: "sign-settings", label: "Sign", icon: Signpost }, ADD, LAYERS],
   page: [{ id: "page-settings", label: "Page", icon: BookOpen }, ADD, LAYERS],
   scorecard: [{ id: "card-settings", label: "Card", icon: Table2 }, ADD, LAYERS]

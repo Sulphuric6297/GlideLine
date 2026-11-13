@@ -5,7 +5,7 @@ import { SERVER } from "../auth/api";
 import { startComment } from "../auth/Comments";
 import { useServerCourse } from "../auth/courses";
 import { AREA_KINDS, LINE_KINDS, STRUCTURE_KINDS } from "../constants";
-import { holeLabel } from "../lib/course";
+import { holeLabel, amenityPlural } from "../lib/course";
 import { holeStats } from "../lib/holeStats";
 import { bendHoleAt, canPaste, copySelection, deleteSelection, duplicateSelection, markObBeyond, pasteClipboard, pickGroup, placeAt, select, setFieldPlay, setObChoice } from "../state/actions";
 import { GROUPS, SOURCES, sourceOf } from "../lib/importReview";
@@ -71,7 +71,12 @@ export const itemActions = (itemId: string, ground: P | null, named = false): It
   if (readOnly) return a;
   // (a thing the import brought in: all that came from the same source picked together, to
   // copy, lock or delete as one)
-  const src = item ? sourceOf(item) : null;
+  // (an amenity: every one of its kind, to set them all at once)
+  if (item?.type === "amenity") {
+    const same = doc.items.filter(i => i.type === "amenity" && i.kind === item.kind && !i.locked);
+    if (same.length > 1) a.push({ label: `Select all ${same.length} ${amenityPlural(item.kind)}`, icon: ListChecks, run: () => pickGroup(same.map(i => i.id)), testid: "menu-select-kind" });
+  }
+  const src = item && item.type !== "amenity" ? sourceOf(item) : null;
   if (src) {
     const same = doc.items.filter(i => !i.locked && sourceOf(i) === src);
     if (same.length > 1) a.push({ label: `Select all ${same.length.toLocaleString()} from this source`, icon: ListChecks, run: () => { pickGroup(same.map(i => i.id)); toast(`${GROUPS.find(g => g.id === SOURCES[src].group)?.label ?? "Things"}: ${SOURCES[src].label}. ${same.length.toLocaleString()} selected.`, "info"); }, testid: "menu-select-source" });
