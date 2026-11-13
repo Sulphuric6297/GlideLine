@@ -438,7 +438,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
       </div>
     );
     const prompt = (
-      <div className="glass rounded-[18px] px-3.5 pt-2.5 pb-3 border border-white/10 shadow-xl" data-testid="review-prompt">
+      <div className="glass rounded-[18px] px-3.5 pt-2.5 pb-3 border border-white/10 shadow-xl mr-[62px]" data-testid="review-prompt">
         <div className="flex gap-[5px] mb-2" aria-hidden="true">{steps.map((s, k) => <span key={s.id} className="flex-1 h-[4px] rounded-full bg-white/[0.2] overflow-hidden"><span className="block h-full rounded-full bg-orange-300 dg-step-fill" style={{ transform: `scaleX(${k <= at ? 1 : 0})` }} /></span>)}</div>
         <div key={step.id} className={`text-[14.5px] leading-snug ${dir > 0 ? "dg-step-next" : "dg-step-prev"}`}>
           {failedEl}

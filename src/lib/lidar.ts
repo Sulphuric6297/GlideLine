@@ -620,6 +620,22 @@ class Heap {
 
 /** The lowest a tree's top stands (ft): lower is a bush. */
 const MIN_TREE = 15;
+/** Whether what stands at a measured tree's spot came back the way a lamp's head, a sign or a
+ * pole's top does: hit here and there, each pulse coming back once. (A small bare tree does too,
+ * so in a survey flown bare this alone doesn't say which it is: see the import's `postsAmong`.) */
+export const lampLike = (m: { nx: number; ny: number; cell: number; canopy: Float32Array; nUp?: Uint8Array; nMulti?: Uint8Array }, t: LidarTree) => {
+  if (!m.nUp || !m.nMulti || t[3] >= 9) return false;
+  const ci = t[0] / m.cell, cj = t[1] / m.cell, rr = Math.max(1, t[3] / m.cell), edge = Math.max(6, 0.4 * t[2]);
+  let cells = 0, up = 0, multi = 0;
+  for (let b = Math.max(0, Math.floor(cj - rr)); b <= Math.min(m.ny - 1, Math.ceil(cj + rr)); b++) for (let a = Math.max(0, Math.floor(ci - rr)); a <= Math.min(m.nx - 1, Math.ceil(ci + rr)); a++) {
+    if ((a + 0.5 - ci) ** 2 + (b + 0.5 - cj) ** 2 > rr * rr) continue;
+    const c = b * m.nx + a;
+    if (m.canopy[c] < edge) continue;
+    cells++; up += m.nUp[c]; multi += m.nMulti[c];
+  }
+  return cells > 0 && (multi < up * 0.3 || up < cells * 0.35);
+};
+
 /** How a treetop is told from the canopy round it: how far the canopy is smoothed first (ft), how
  * far a top has to be the highest (ft, and more for each foot of its height), how low the canopy
  * has to dip between two tops for them to be two trees (as a share of the lower top), and the

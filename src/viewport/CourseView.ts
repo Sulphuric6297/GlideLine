@@ -3880,29 +3880,18 @@ export class CourseView {
             const i = Math.floor(x / cell) * cell, j = Math.floor(y / cell) * cell;
             return Math.max(this.h(i, j), this.h(i + cell, j), this.h(i, j + cell), this.h(i + cell, j + cell));
           };
-          const surface = (x: number, y: number) => Math.max(bankLevel(x, y) + 0.2, cellTop(x, y) + 0.3);
+          // (land inside its outline, an island or a shore drawn too wide: where the ground stands
+          // well clear of the water's level the water lies at its own level under it, so the
+          // ground's own slope is the shore, and it doesn't climb over the land)
+          const surface = (x: number, y: number) => {
+            const level = bankLevel(x, y) + 0.2, top = cellTop(x, y) + 0.3, over = top - level;
+            return over <= 1.5 ? Math.max(level, top) : over >= 3.5 ? level : level + (top - level) * (1 - (over - 1.5) / 2);
+          };
           // (its depth: shelving from the bank, a foot every 2 ft out, to 9 ft; the survey
           // can't see under water, so the ground there is only the water's own level)
           const geo = drapedPolygon(a.points, surface, cell / 2, 0), pa = geo.attributes.position, depth = new Float32Array(pa.count);
           for (let i = 0; i < pa.count; i++) depth[i] = Math.min(9, distanceToPolygon({ x: pa.getX(i), y: pa.getZ(i) }, a.points) * 0.5);
           geo.setAttribute("aDepth", new THREE.BufferAttribute(depth, 1));
-          // (land inside its outline: an island the map leaves out of a lake's outline, a shore
-          // drawn too wide. Where the ground stands well clear of the water's level there's no
-          // water: it doesn't climb over the land)
-          {
-            const dry = new Uint8Array(pa.count);
-            let any = false;
-            for (let i = 0; i < pa.count; i++) {
-              if (pa.getY(i) <= lowest + 3) continue;
-              const x = pa.getX(i), y = pa.getZ(i);
-              if (cellTop(x, y) > bankLevel(x, y) + 3) { dry[i] = 1; any = true; }
-            }
-            if (any) {
-              const idx = geo.index ? Array.from(geo.index.array as ArrayLike<number>) : Array.from({ length: pa.count }, (_, i) => i), wet: number[] = [];
-              for (let t = 0; t + 2 < idx.length; t += 3) if (dry[idx[t]] + dry[idx[t + 1]] + dry[idx[t + 2]] < 2) wet.push(idx[t], idx[t + 1], idx[t + 2]);
-              geo.setIndex(wet);
-            }
-          }
           const shore = this.waterShore(a.points), bottom = `#${new THREE.Color(c).multiplyScalar(0.8).lerp(new THREE.Color(doc.groundColor), 0.2).getHexString()}`;
           const pond = new THREE.Mesh(geo, waterMaterial(c, ...shore, { bottom }));
           pond.userData.water = true;

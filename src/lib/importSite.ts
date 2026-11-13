@@ -25,6 +25,7 @@ import { createAmenity, createArea, createBasket, createLine, createStructure, c
 import { courtCount, createField, fieldKindOf, fieldWord } from "./fields";
 import { fieldOf } from "./geo/parkKinds";
 import { centroid, clipPathToRect, clipPolygonToRect, nearestOnSegment, pointInPolygon, polygonArea, simplify } from "./geom";
+import { lampLike } from "./lidar";
 import { fetchStructures, fetchWater, fetchWetlands, inUS } from "./geo/usgov";
 import { courtsFromPhoto } from "./geo/courtsFound";
 import { fittedToPhoto } from "./geo/photoFit";
@@ -170,6 +171,31 @@ export const heightsFromSamples = (values: Float32Array, samplesX: number, sampl
  * trees) and open water (as water areas), found in a worker (geo/photoNature.ts). */
 export { natureFromPhoto };
 
+/**
+ * The measured "trees" that are lamp posts or power poles. Where a lamp or a pole is mapped at the
+ * spot, that settles it. Otherwise, in a survey flown bare (where a small bare tree comes back to
+ * the laser just as a lamp's head does), a small thing that came back that way is a post where
+ * posts stand: by a road's edge, in or round a parking lot, under a power line. Out in the park
+ * it's a small tree, and stays. (In a survey flown in leaf the survey itself tells them apart:
+ * lib/lidar's findTrees.)
+ */
+export const postsAmong = (trees: LidarTree[], m: { nx: number; ny: number; cell: number; canopy: Float32Array; nUp?: Uint8Array; nMulti?: Uint8Array; leafOn?: boolean | null }, items: CourseItem[]) => {
+  const out = new Set<number>();
+  const REACH = 14;
+  const marks = items.filter(i => i.type === "amenity" && ((i.kind as string) === "light" || (i.kind as string) === "pole")) as { x: number; y: number }[];
+  const lines = items.filter((i): i is LineItem => i.type === "line" && (i.kind === "road" || i.kind === "power")).map(l => ({ pts: l.points, reach: l.kind === "power" ? 12 : (l.width ?? LINE_KINDS.road.width) / 2 + REACH }));
+  const lots = items.filter((i): i is AreaItem => i.type === "area" && i.kind === "parking");
+  const toLine = (p: P, pts: P[]) => { let best = Infinity; for (let k = 1; k < pts.length; k++) best = Math.min(best, nearestOnSegment(p, pts[k - 1], pts[k]).distance); return best; };
+  trees.forEach((t, k) => {
+    if (t[3] >= 9) return;
+    const p = { x: t[0], y: t[1] };
+    if (marks.some(a => Math.hypot(a.x - p.x, a.y - p.y) <= 10)) { out.add(k); return; }
+    if (m.leafOn !== false || !lampLike(m, t)) return;
+    if (lines.some(l => toLine(p, l.pts) <= l.reach) || lots.some(a => pointInPolygon(p, a.points) || toLine(p, [...a.points, a.points[0]]) <= REACH)) out.add(k);
+  });
+  return out;
+};
+
 /** What a thing brought in is like (all of it but its id and this), as a short code: kept with it
  * when it comes in, so one changed since (a road made OB, a building renamed) can be told apart. */
 export const signOf = (i: CourseItem) => {
@@ -207,13 +233,17 @@ export const freshOnly = (kept: CourseItem[], incoming: CourseItem[]) => {
 export const govFresh = (gov: { water: CourseItem[]; wet: CourseItem[]; built: CourseItem[] }, mapped: CourseItem[]) => {
   const out: CourseItem[] = [];
   const near = (p: P, line: P[]) => line.some((q, k) => k > 0 && nearestOnSegment(p, line[k - 1], q).distance < 30);
-  const covers = (a: P[], b: P[]) => pointInPolygon(centroid(b), a) || pointInPolygon(centroid(a), b);
+  // (covered: one's middle in the other; or, for water, nearly all of the one lying in or along
+  // the other's outline: the US maps' piece of a lake that fills an island OpenStreetMap leaves
+  // out of it sits wholly along that island's shore, and is no water the map hasn't got)
+  const along = (a: P[], b: P[]) => b.filter(p => pointInPolygon(p, a) || near(p, [...a, a[0]])).length >= b.length * 0.8;
+  const covers = (a: P[], b: P[], water = false) => pointInPolygon(centroid(b), a) || pointInPolygon(centroid(a), b) || (water && along(a, b));
   const has = (i: CourseItem, pool: CourseItem[]) => {
     if (i.type === "line") {
       const streams = pool.filter((m): m is LineItem => m.type === "line" && m.kind === "stream");
       return i.points.filter(p => streams.some(s => near(p, s.points))).length >= i.points.length * 0.5;
     }
-    if (i.type === "area") return pool.some(m => m.type === "area" && (m.kind === i.kind || m.kind === "water" || (i.kind === "rough" && m.kind === "woods")) && covers(m.points, i.points));
+    if (i.type === "area") return pool.some(m => m.type === "area" && (m.kind === i.kind || m.kind === "water" || (i.kind === "rough" && m.kind === "woods")) && covers(m.points, i.points, i.kind === "water" && m.kind === "water"));
     if (i.type === "structure") return pool.some(m => (m.type === "structure" || (m.type === "area" && m.kind === "building")) && covers(m.points, i.points));
     return true;
   };
@@ -988,6 +1018,14 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       const set = withoutSlabs(all, measured.lidar.measured);
       all = withMeasuredHeights(set.items, measured.lidar.measured, signed);
       if (set.dropped) notes.push(`${set.dropped} ${set.dropped === 1 ? "building" : "buildings"} on the maps left out: the survey shows flat ground there (a slab, a deck or a pool).`);
+      // (lamp posts and power poles among them, left out: see postsAmong)
+      {
+        const posts = postsAmong(lidar.trees, measured.lidar.measured, all);
+        if (posts.size) {
+          lidar = { ...lidar, trees: lidar.trees.filter((_, k) => !posts.has(k)) };
+          notes.push(`${posts.size} lamp ${posts.size === 1 ? "post or pole" : "posts or poles"} beside the roads and parking left out of the trees.`);
+        }
+      }
       // (the trees a bare survey couldn't pick out, from the summer photo's canopy: after the
       // measured ones, so the list of those stays as it was)
       const summer = "leaf" in found && found.leaf ? treesFromSummer(lidar.trees, measured.lidar.measured, found.leaf, width, height, treeFree(all)) : [];

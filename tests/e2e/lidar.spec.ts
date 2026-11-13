@@ -7,7 +7,8 @@ import { getGeoBounds } from "../../src/lib/geo/core";
 import { claim, flownOn, gather, gatherer, grownTree, grownTrees, leafOnAt, roofHeights, saplings, fairwayTrees, findTrees, groundOnGrid, measureSite, readTile, siteBox, standingTrees, surveyYear, tilesFor, tilesOver, depthFor, withoutWires, type LazReader, type TilePoints } from "../../src/lib/lidar";
 import { canopyStands } from "../../src/lib/canopy";
 import { summerFills, treesFromSummer } from "../../src/lib/summerTrees";
-import type { LidarTree } from "../../src/types";
+import type { CourseItem, LidarTree } from "../../src/types";
+import { postsAmong } from "../../src/lib/importSite";
 import { treeStands } from "../../src/lib/geo/detect";
 import { pointInPolygon } from "../../src/lib/geom";
 
@@ -589,6 +590,25 @@ plain("a light pole is no tree: a lamp head the laser came back from once, hit h
   const trees = findTrees({ nx, ny, cell, canopy, nUp, nMulti, nGround, leafOn: true });
   plainExpect(trees.length).toBe(1);
   plainExpect(trees[0][0]).toBeGreaterThan(45);
+});
+
+plain("a lamp post by a road is no tree in a survey flown bare; the same thing out in the park is a small tree and stays; a pole the map has is none either way (pure logic)", () => {
+  const nx = 100, ny = 50, cell = 2, n = nx * ny;
+  const canopy = new Float32Array(n), nUp = new Uint8Array(n), nMulti = new Uint8Array(n);
+  const spots: [number, number][] = [[20, 20], [150, 40], [60, 80]];
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const c = j * nx + i, x = (i + 0.5) * cell, y = (j + 0.5) * cell;
+    // (each 25 ft up, 8 ft across, hit here and there, every pulse coming back once)
+    if (spots.some(([sx, sy]) => Math.hypot(x - sx, y - sy) <= 4)) { canopy[c] = 25; nUp[c] = (i + j) % 2; nMulti[c] = 0; }
+  }
+  const trees: LidarTree[] = spots.map(([x, y]) => [x, y, 25, 4, 0]);
+  const items = [
+    { id: "r", type: "line", kind: "road", points: [{ x: 0, y: 34 }, { x: 60, y: 34 }] },
+    { id: "p", type: "amenity", kind: "pole", x: 61, y: 79 }
+  ] as unknown as CourseItem[];
+  plainExpect([...postsAmong(trees, { nx, ny, cell, canopy, nUp, nMulti, leafOn: false }, items)].sort()).toEqual([0, 2]);
+  // (flown in leaf, the survey tells a lamp from a tree itself: only the mapped pole here)
+  plainExpect([...postsAmong(trees, { nx, ny, cell, canopy, nUp, nMulti, leafOn: true }, items)]).toEqual([2]);
 });
 
 plain("a power line is no row of trees: small crowns in a dead straight row, as high, thinly hit, left out; a row of trees along a road, hit all over, kept (pure logic)", () => {
