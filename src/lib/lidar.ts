@@ -620,6 +620,12 @@ class Heap {
 
 /** The lowest a tree's top stands (ft): lower is a bush. */
 const MIN_TREE = 15;
+/** How a treetop is told from the canopy round it: how far the canopy is smoothed first (ft), how
+ * far a top has to be the highest (ft, and more for each foot of its height), how low the canopy
+ * has to dip between two tops for them to be two trees (as a share of the lower top), and the
+ * shortest thing that counts as a tree (ft). */
+export type TreeTune = { blur?: number; win?: number; winPerFt?: number; dip?: number; min?: number; lamp?: "always" | "notBare" | "never"; pole?: number };
+const TREE_TUNE = { blur: 2, win: 2, winPerFt: 0.1, dip: 0.9, min: MIN_TREE, lamp: "notBare" as "always" | "notBare" | "never", pole: 3.5 };
 
 /** How wide a crown spreads at most, for its height. */
 const CROWN_MAX = 0.6;
@@ -632,15 +638,16 @@ const CROWN_MAX = 0.6;
  * the circle as big as its crown. A conifer only where it shows: narrow and pointed in a survey
  * flown in leaf, and in one flown bare, a crown that keeps the laser off the ground as a leafy
  * one couldn't then; with no telling, only a very narrow, pointed crown. */
-export const findTrees = (m: { nx: number; ny: number; cell: number; canopy: Float32Array; nUp?: Uint8Array; nMulti?: Uint8Array; nGround?: Uint8Array; leafOn?: boolean | null; sorted?: boolean }): LidarTree[] => {
+export const findTrees = (m: { nx: number; ny: number; cell: number; canopy: Float32Array; nUp?: Uint8Array; nMulti?: Uint8Array; nGround?: Uint8Array; leafOn?: boolean | null; sorted?: boolean }, tune: TreeTune = {}): LidarTree[] => {
   const { nx, ny, cell, canopy } = m, n = nx * ny;
+  const T = { ...TREE_TUNE, ...tune };
   // (smoothed a little: one leafy bump isn't a tree)
-  const s = blur(canopy, nx, ny, Math.max(1, Math.round(2 / cell)));
+  const s = blur(canopy, nx, ny, Math.max(1, Math.round(T.blur / cell)));
   const tops: number[] = [];
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
     const c = j * nx + i, h = s[c];
-    if (h <= MIN_TREE) continue;
-    const rr = Math.max(1, Math.round((0.1 * h + 2) / cell)), r2 = rr * rr;
+    if (h <= T.min) continue;
+    const rr = Math.max(1, Math.round((T.winPerFt * h + T.win) / cell)), r2 = rr * rr;
     let top = true;
     for (let b = Math.max(0, j - rr); b <= Math.min(ny - 1, j + rr) && top; b++) for (let a = Math.max(0, i - rr); a <= Math.min(nx - 1, i + rr); a++) {
       if ((a - i) ** 2 + (b - j) ** 2 > r2) continue;
@@ -683,7 +690,7 @@ export const findTrees = (m: { nx: number; ny: number; cell: number; canopy: Flo
     if (A === B) continue;
     const [hi, lo] = topH[A] >= topH[B] ? [A, B] : [B, A];
     const d2 = (ti[hi] - ti[lo]) ** 2 + (tj[hi] - tj[lo]) ** 2;
-    if (v >= 0.9 * topH[lo] && d2 <= cap2[hi]) root[lo] = hi;
+    if (v >= T.dip * topH[lo] && d2 <= cap2[hi]) root[lo] = hi;
   }
   // Each tree: its crown's cells, how many points stood there and reached the ground, its top
   const cells = new Float64Array(tops.length), up = new Float64Array(tops.length), multi = new Float64Array(tops.length), down = new Float64Array(tops.length), high = new Float32Array(tops.length);
@@ -712,11 +719,14 @@ export const findTrees = (m: { nx: number; ny: number; cell: number; canopy: Flo
     // Not trees: a power pole (a crown hardly wider than the pole, standing tall: a real tree that
     // tall spreads 8 ft or more) and a wire (its crown a long thin streak, its width under 10 ft
     // and a third of its length or less), wherever the survey didn't sort them out
-    if (r <= 3.5 && h > 12) return;
+    if (r <= T.pole && h > 12) return;
     // (a light pole's lamp head or a sign spreads wider: but it's solid, so the laser came back from
     // it once, and few points stood over its spot; a tree that small, leaves or bare, lets part of
     // each pulse on through and is hit all over)
-    if (r < 9 && m.nUp && m.nMulti && (multi[k] < up[k] * 0.3 || up[k] < cells[k] * 0.35)) return;
+    // (not in a survey flown bare: a small bare tree is hit as little as a lamp is, and against
+    // a course whose trees were all checked by hand this took out every tree under 18 ft across,
+    // some 140 real ones for 13 that weren't)
+    if (r < 9 && m.nUp && m.nMulti && (T.lamp === "always" || (T.lamp === "notBare" && m.leafOn !== false)) && (multi[k] < up[k] * 0.3 || up[k] < cells[k] * 0.35)) return;
     {
       const N = cells[k], ax = mx[k] / N, ay = my[k] / N;
       const vxx = mxx[k] / N - ax * ax, vyy = myy[k] / N - ay * ay, vxy = mxy[k] / N - ax * ay;

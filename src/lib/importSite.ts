@@ -814,7 +814,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       // under a bare photo, the best one of the site's taken in leaf, only to find them on)
       const bare = !!measured?.lidar.trees.length && measured.lidar.measured.leafOn !== true;
       const leafToo = bare && opts.summerFill !== false && summerFills(measured.lidar.measured.leafOn, map.photo?.season);
-      const inLeaf = bare && !leafToo ? map.choices?.find(c => c.season === "leaf-on" && c.nir) ?? map.choices?.find(c => c.season === "leaf-on") : undefined;
+      const inLeaf = bare && !leafToo && opts.summerFill !== false ? map.choices?.find(c => c.season === "leaf-on" && c.nir) ?? map.choices?.find(c => c.season === "leaf-on") : undefined;
       return soft("photoTrees", async () => {
         progress.set("photoTrees", { state: "coming", fraction: 0 });
         const got = cached("nature", `${map.sourceLabel}|${here}|${waterOnly ? (leafToo ? "water+leaf" : "water") : "all"}`, report => natureFromPhoto(map.url, width, height, (text, f) => { progress.step = text; report(f); }, { signal, waterOnly, canopy: leafToo, nir: map.nir, date: map.photo?.date, lat: location.lat }), { signal, onProgress: f => progress.set("photoTrees", { fraction: f }) });
