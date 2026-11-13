@@ -1,5 +1,6 @@
 // The map view (2D and 3D are one view): the CourseView engine, fed from the course store.
 import { useOnSite } from "../state/onSite";
+import { usePageShown } from "../state/exportPick";
 import { latitudeOf, paintLight, sunFromOf } from "../lib/mapLook";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BoxSelect, Compass, Maximize2, Minus, PersonStanding, Plus, RotateCcw, RotateCw } from "lucide-react";
@@ -258,7 +259,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   useEffect(() => { if (ed.tool !== "add-tee" && ed.holeToBasket) useEditor.getState().set({ holeToBasket: null }); }, [ed.tool, ed.holeToBasket]);
   useEffect(() => { view?.setGrass(ed.grass, ed.wind); }, [view, ed.grass, ed.wind]);
   // Covered by the page on the Map and Export steps: the map view rests (a video records on its own)
-  useEffect(() => { view?.setPaused((ed.step === "map" || ed.step === "export") && !ed.teeView); }, [view, ed.step, ed.teeView]);
+  const covered = usePageShown(ed.step, ed.teeView);
+  useEffect(() => { view?.setPaused(covered); }, [view, covered]);
   // (tee view, editing: picking and dragging there, the map from above in a corner)
   const readOnlyView = useCourse(s => s.readOnly);
   // (standing in 3D: editors pick as they walk; anyone walks; the map from above in a corner)

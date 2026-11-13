@@ -2532,6 +2532,8 @@ export class CourseView {
   private setVideoDetail(on: boolean) {
     if (on === this.videoDetail) return;
     this.videoDetail = on;
+    // (the editors' marks that live in the scene, the flight's path, out of it while it's filmed)
+    if (this.doc) this.syncShapes();
     if (!on) {
       // (back to what this device draws on screen)
       this.setTier(this.tier);
@@ -4055,7 +4057,8 @@ export class CourseView {
     // A hand-made flyover of the selected hole: its path over the ground, and where each keyframe looks
     // (for its editors: a course's public page never shows it)
     const flyHole = this.hole(this.selectedId);
-    if (flyHole?.flyKeys && flyHole.flyKeys.length >= 2 && !this.povHole && !this.readOnly) {
+    // (and never in a picture or a video made of the course: it's a tool, not part of the place)
+    if (flyHole?.flyKeys && flyHole.flyKeys.length >= 2 && !this.povHole && !this.readOnly && !this.videoDetail) {
       const keys = flyHole.flyKeys;
       put(`flykeys:${flyHole.id}`, JSON.stringify([keys, hv, course.flyover, flyHole.flyover]), () => {
         const g = new THREE.Group();

@@ -285,6 +285,28 @@ test.describe("phone", () => {
         await expect(sheet(page)).toHaveCount(0);
         await expect(page.getByTestId("tool-strip")).toBeVisible();
         await expect(page.getByTestId("tool-select")).toHaveCount(0);
+      } else if (label === "Export") {
+        // (the preview has the screen, the thing made in the glass bar: its name, its choices, Download)
+        await expect(sheet(page)).toHaveCount(0);
+        await expect(page.getByTestId("export-pill")).toContainText("Course map");
+        await expect(page.getByTestId("export-map-pdf")).toHaveText("Download");
+        await page.getByTestId("export-pill").tap();
+        await expect(page.getByTestId("export-menu")).toContainText("Save course file");
+        await page.getByTestId("export-pick-signs").tap();
+        await expect(page.getByTestId("export-pill")).toContainText("Tee signs");
+        await expect.poll(async () => (await editorState(page)).designTab).toBe("sign");
+        await page.getByTestId("export-set-size").tap();
+        await expect(page.getByTestId("bar-menu").getByRole("radio", { name: /12 × 18/ })).toBeVisible();
+        await page.getByTestId("bar-menu").getByRole("radio", { name: /12 × 18/ }).tap();
+        await expect(page.getByTestId("export-set-size")).toContainText("12 × 18");
+        // (a video: the 3D view in the page's place, and Make)
+        await page.getByTestId("export-pill").tap();
+        await page.getByTestId("export-pick-video").tap();
+        await expect(page.getByTestId("map-designer")).toHaveCount(0);
+        await expect(page.getByTestId("video-record")).toHaveText("Make");
+        await page.getByTestId("export-pill").tap();
+        await page.getByTestId("export-pick-map").tap();
+        await expect(page.getByTestId("map-designer")).toBeVisible();
       } else await expect(page.getByTestId("sheet-title")).toHaveText(title);
       await expect(nav(page).getByRole("button", { name: new RegExp(label) })).toHaveAttribute("aria-current", "step");
     }

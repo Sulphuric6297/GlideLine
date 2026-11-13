@@ -120,16 +120,15 @@ test("course design and export", async ({ page }) => {
   await page.getByRole("button", { name: "6 Export" }).click();
   await page.waitForTimeout(800);
   await shot(page, "12-export");
-  await page.getByTestId("hole-exports").scrollIntoViewIfNeeded();
-  await page.getByTestId("hole-exports").evaluate(el => el.scrollIntoView({ block: "start" }));
-  await page.waitForTimeout(300);
+  await page.getByTestId("export-thing-video").getByRole("button").first().click();
+  await page.waitForTimeout(1500);
   await shot(page, "12-export-holes-video");
   // Recording (small, so it is quick), seen from another step and from the Export step
   await page.evaluate(() => (window as any).__dgVideo().set({ size: { width: 320, height: 180 } }));
   await page.getByTestId("video-record").click();
   await expect(page.getByTestId("video-progress")).toBeVisible();
   await page.waitForTimeout(1500);
-  await page.getByTestId("video-export").screenshot({ path: "look/12-export-recording.png" });
+  await page.getByTestId("export-thing-video").screenshot({ path: "look/12-export-recording.png" });
   await page.getByRole("button", { name: "4 Review" }).click();
   await page.waitForTimeout(800);
   await shot(page, "12-recording-elsewhere");
