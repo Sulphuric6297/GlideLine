@@ -526,14 +526,14 @@ export default function App() {
     </>
   );
 
+  // (the page over the 3D view: the Map step's, Export's but for a picture or a video; asked for
+  // on every render, before the phone's layout returns, as hooks must be)
+  const pageShown = usePageShown(ed.step, ed.teeView);
   if (layout !== "desktop") {
     return (
       <>
         <CompactShell
           layout={layout}
-  // (the page over the 3D view: the Map step's, Export's but for a picture or a video; asked for
-  // on every render, before the phone's layout returns, as hooks must be)
-  const pageShown = usePageShown(ed.step, ed.teeView);
           onFindSite={() => setFindSite(true)}
           onHelp={() => setHelp({})}
           onGoTo={() => setGoTo(true)}
