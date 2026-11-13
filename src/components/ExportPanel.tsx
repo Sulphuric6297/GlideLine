@@ -1,11 +1,12 @@
-// The Export step: printable maps, tee signs, scorecards and hole sheets, hole-by-hole pages and
-// GPS files, flyover videos, GPS and data files, and the parts list.
-import { useEffect, useState, type ReactNode } from "react";
-import { Box, ChevronRight, Clapperboard, Crop, FileDown, FileJson, Image as ImageIcon, Link2, Map as MapIcon, Plane, Signpost, Table2, Users, Video } from "lucide-react";
-import { editFlyover } from "./FlyoverSettings";
-import { LockedRow } from "./DemoNote";
+// The Export step, as an export dialog is: what can be made, in one list; the one picked shows only
+// its own choices and one button that makes it. The preview beside it (a page, or the 3D view for a
+// picture or a video) is the thing picked. A computer has the list in the side panel (ExportPanel),
+// a phone the thing in the glass bar's pill, its choices along the bar and Download at its end
+// (ExportBar). The course file and sharing are first, on both.
+import { useContext, useEffect, type ReactNode } from "react";
+import { BookOpen, Calculator, ChevronRight, Clapperboard, Download, FileDown, Image as ImageIcon, Map as MapIcon, MapPin, Share2, Signpost, Table2, type LucideIcon } from "lucide-react";
+import { showLocked } from "./DemoNote";
 import { SERVER, useAuth } from "../auth/api";
-import { useServerCourse } from "../auth/courses";
 import JSZip from "jszip";
 import { PAPER, paintedForPrint, renderPoster } from "../lib/mapSvg";
 import { SIGN_SIZES, renderScorecard, renderTeeSign, type SignSize } from "../lib/teeSign";
@@ -20,6 +21,7 @@ import { changeDoc, getDoc, useCourse, useEditor } from "../state/course";
 import { download, fileName, saveCourseFile } from "../state/files";
 import { runExport, useExportJob, type JobControl } from "../state/exportJob";
 import { recordVideo, useVideoSettings } from "../state/video";
+import { IN_3D, useExportPick, type DataFormat, type ExportThing, type MapFormat, type SheetFormat } from "../state/exportPick";
 import { toast } from "../state/toast";
 import type { CourseDoc, PaperSize } from "../types";
 import { getView } from "../state/view";
@@ -28,15 +30,11 @@ import { reliefOf } from "./useRelief";
 import { canopyFor } from "../lib/forest";
 import { setStyle } from "./DesignPanel";
 import { ExportBanner } from "./ExportProgress";
-import { Button, Field, HelpLink, NumberInput, Section, Segmented } from "./ui";
+import { ChipPick, Field, HelpLink, MenuRows, NumberInput, Section, Segmented } from "./ui";
+import { ActRow, GlassBar, type BarSetting } from "./mobile/GlassBar";
 
 const svgBlob = (svg: string) => new Blob([svg], { type: "image/svg+xml" });
 const two = (i: number) => String(i).padStart(2, "0");
-// (16 px and a finger's height on touch screens: a phone zooms into smaller text)
-const selectCls = "bg-white/[0.07] rounded-lg px-2 py-1.5 touch:py-2.5 text-sm touch:text-base";
-/** A row in a rounded list (the Share section's). */
-const listRow = "w-full flex items-center gap-3 px-3 py-2.5 touch:py-3.5 text-left";
-const rowIcon = "w-7 h-7 rounded-[8px] bg-white/[0.1] flex items-center justify-center text-zinc-200";
 
 /** Hands the file to the browser, and says so (a download can go by unnoticed). */
 const save = (blob: Blob, name: string) => {
@@ -73,56 +71,107 @@ const videoSeconds = (d: CourseDoc, ids: string[]) =>
   }, 0);
 const minSec = (s: number) => (s >= 60 ? `${Math.floor(s / 60)} min ${Math.round(s % 60)} s` : `${Math.round(s)} s`);
 
-/** The page the preview beside the panel shows (the Map step's tab). */
-type Preview = "map" | "sign" | "page" | "scorecard";
-const showPage = (tab: Preview) => { if (useEditor.getState().designTab !== tab) useEditor.getState().set({ designTab: tab }); };
+// (sizes by their short names: the full one is the chip's tooltip and the menu row's line)
+const PAPER_SHORT: Record<PaperSize, string> = { letter: "Letter", tabloid: "Tabloid", "18x24": "18 × 24", "24x36": "24 × 36", "36x48": "36 × 48", a4: "A4", a3: "A3" };
+const SIGN_SHORT: Record<SignSize, string> = { "18x12": "18 × 12", "12x18": "12 × 18", "18x24": "18 × 24", letter: "Letter", a4: "A4" };
+const PAGE_SHORT: Record<HolePageSize, string> = { letter: "Letter", a4: "A4", card: "4 × 6 card", square: "Square" };
+const VIDEO_SHORT: Record<VideoResolution, string> = { "720p": "720p", "1080p": "1080p", "1440p": "1440p", "4k": "4K" };
+const sizes = <K extends string>(all: Record<K, { label: string }>, short: Record<K, string>) => (Object.keys(all) as K[]).map(k => ({ value: k, label: short[k], title: all[k].label }));
 
-/** One kind of file: a size or hole to pick on its own line, the formats in a row under it, and a
- * line about it. Using any of it turns the preview to its page (`tab`). */
-function Row({ icon, title, help, pick, hint, tab, children }: { icon: ReactNode; title: string; help?: string; pick?: ReactNode; hint?: string; tab?: Preview; children: ReactNode }) {
-  const show = tab ? () => showPage(tab) : undefined;
+/** The page each thing shows beside the list (the 3D view for a picture or a video). */
+const PAGE_OF: Record<ExportThing, "map" | "sign" | "page" | "scorecard"> = { map: "map", signs: "sign", pages: "page", scorecard: "scorecard", picture: "map", video: "map", data: "map", parts: "map" };
+
+/** Picks the thing to make, its page turned to in the preview. */
+export const pickThing = (t: ExportThing) => {
+  useExportPick.getState().set({ thing: t });
+  const ed = useEditor.getState();
+  if (ed.designTab !== PAGE_OF[t]) ed.set({ designTab: PAGE_OF[t] });
+  // (a picture or a video of the 3D view: shown in 3D, as it's made)
+  if (IN_3D.has(t) && ed.view !== "3d") ed.set({ view: "3d" });
+};
+
+/** Every hole, or one: chips on a computer (the hole's number), the menu's rows on a phone. */
+function HolePick({ value, onChange, label, testid }: { value: string; onChange: (v: string) => void; label: string; testid: string }) {
+  const doc = useCourse(s => s.doc);
+  const holes = playable(doc);
+  const menu = useContext(MenuRows);
+  const options = [{ value: "all", label: menu ? `All ${holes.length} holes` : `All ${holes.length}` }, ...holes.map(h => ({ value: h.id, label: menu ? `Hole ${holeLabel(doc, h.id)}` : holeLabel(doc, h.id), title: h.name || undefined }))];
+  return <ChipPick label={label} testid={testid} value={holes.some(h => h.id === value) ? value : "all"} options={options} onChange={onChange} />;
+}
+
+/** The parts and what they cost, and the prices to change. */
+function PartsTable() {
+  const doc = useCourse(s => s.doc);
+  const parts = partsList(doc);
+  // (live while typed; one undo step when the field is left, not one a keystroke)
+  const setPrice = (key: PriceKey, v: number) => changeDoc(d => ({ rules: { ...d.rules, prices: { ...d.rules.prices, [key]: v } } }), false);
+  const pricesDone = () => useCourse.getState().commit();
+  if (!parts.lines.length) return <p className="text-xs text-zinc-400">No holes yet.</p>;
   return (
-    <div className="mb-3" onPointerDownCapture={show} onFocusCapture={show}>
-      <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100 mb-1.5">{icon}{title}{help && <HelpLink topic={help} label={title} />}</div>
-      {pick && <div className="mb-1.5">{pick}</div>}
-      <div className="flex flex-wrap gap-1.5">{children}</div>
-      {hint && <p className="text-[11px] text-zinc-500 mt-1.5">{hint}</p>}
+    <div data-testid="parts">
+      <table className="w-full text-xs text-zinc-300 tabular-nums">
+        <tbody>
+          {parts.lines.map(l => (
+            <tr key={l.item}>
+              <td className="py-0.5">{l.item}</td>
+              <td className="text-right">{l.qty}</td>
+              <td className="text-right text-zinc-400 whitespace-nowrap pl-1">× ${l.unitPrice}</td>
+              <td className="text-right font-semibold text-zinc-100">${l.total.toLocaleString()}</td>
+            </tr>
+          ))}
+          <tr className="border-t border-white/[0.12]"><td className="pt-1 font-bold text-zinc-100" colSpan={3}>Estimate</td><td className="text-right pt-1 font-bold text-zinc-50" data-testid="parts-total">${parts.total.toLocaleString()}</td></tr>
+        </tbody>
+      </table>
+      <details className="mt-2">
+        <summary className="text-xs text-orange-300 cursor-pointer">Change prices</summary>
+        <div className="grid grid-cols-2 gap-x-2 mt-2">
+          {PRICE_LABELS.map(([k, name]) => (
+            <Field key={k} label={name}>
+              <div onBlur={pricesDone}><NumberInput label={`${name} price`} min={0} value={priceOf(doc, k)} onChange={v => setPrice(k, v)} /></div>
+            </Field>
+          ))}
+        </div>
+      </details>
     </div>
   );
 }
 
-export function ExportPanel() {
+/** One of the thing's choices: a computer's field, a phone's bar setting. */
+type Choice = { id: string; name: string; value: string; control: ReactNode; wide?: boolean };
+type Thing = {
+  id: ExportThing;
+  name: string;
+  icon: LucideIcon;
+  /** Its choices in a line, under its name in the list and the pill. */
+  summary: string;
+  choices: Choice[];
+  /** What it makes, on its button (`short`: the phone bar's). */
+  go: { label: string; short: string; run: () => void; testid: string; off?: string };
+  note?: string;
+  help?: string;
+};
+
+/** Every thing the step makes, with its choices and how it's made. */
+function useThings(): Thing[] {
   const doc = useCourse(s => s.doc);
-  const job = useExportJob(s => s.job);
-  const busy = !!job;
-  // (the course's sizes: the ones the Map step shows)
-  const signSize: SignSize = doc.style.signSize ?? "18x12";
-  const setSignSize = (v: SignSize) => setStyle({ signSize: v });
-  const [pagePick, setPagePick] = useState<string>("all");
-  const pageSize: HolePageSize = doc.style.holePageSize ?? "letter";
-  const setPageSize = (v: HolePageSize) => setStyle({ holePageSize: v });
-  const [videoPick, setVideoPick] = useState<string>("all");
-  const [signPick, setSignPick] = useState<string>("all");
+  const busy = useExportJob(s => !!s.job);
+  const pick = useExportPick();
   const video = useVideoSettings();
   const flyGround = useEditor(e => e.flyGround);
-  const readOnly = useCourse(s => s.readOnly);
   const geo = !!doc.site.bounds;
   const complete = playable(doc);
-  const pageHole = complete.find(h => h.id === pagePick) ?? null;
-  const signHole = complete.find(h => h.id === signPick) ?? null;
-  const videoHoles = videoPick === "all" ? complete.map(h => h.id) : complete.some(h => h.id === videoPick) ? [videoPick] : complete.map(h => h.id);
-  // (the 3D view's picture, small: taken again each time the step opens)
-  const [thumb, setThumb] = useState<string | null>(null);
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => { try { setThumb(getView()?.capture(480, 270) ?? null); } catch { setThumb(null); } });
-    return () => cancelAnimationFrame(raf);
-  }, []);
-  /** The hole's flyover, or the Flyover editor on it. */
-  const fromTee = (edit: boolean) => {
-    const id = videoHoles[0];
-    if (id && edit) editFlyover(id);
-    else if (id) useEditor.getState().set({ teeView: id, teeViewTee: null, flyCam: false, flyover: true });
-  };
+  const nothing = !complete.length;
+  const n = complete.length;
+  const signSize: SignSize = doc.style.signSize ?? "18x12";
+  const pageSize: HolePageSize = doc.style.holePageSize ?? "letter";
+  const one = (id: string) => complete.find(h => h.id === id) ?? null;
+  const signHole = one(pick.signHoles), pageHole = one(pick.pageHoles);
+  const videoHoles = one(pick.videoHoles) ? [pick.videoHoles] : complete.map(h => h.id);
+  const holesShown = (h: { id: string } | null) => (h ? `Hole ${holeLabel(doc, h.id)}` : `All ${n}`);
+  // (a sheet's formats: every hole in a PDF or a ZIP of pictures; one hole's page as a picture or drawing too)
+  const sheetFormats = (single: boolean, withGeo = false): { value: SheetFormat; label: string }[] =>
+    single ? [{ value: "pdf", label: "PDF" }, { value: "png", label: "PNG" }, { value: "svg", label: "SVG" }, ...(withGeo ? [{ value: "geojson" as const, label: "GeoJSON" }] : [])] : [{ value: "pdf", label: "PDF" }, { value: "zip", label: "Pictures (ZIP)" }];
+  const formatOf = (f: SheetFormat, ok: { value: SheetFormat }[]) => (ok.some(o => o.value === f) ? f : "pdf");
 
   // (a QR code on what's printed with no link yet: said, the export goes ahead)
   const warnQr = (label: string) => {
@@ -135,34 +184,36 @@ export function ExportPanel() {
   // (page after page: Cancel stops it between them)
   const runLong = (label: string, fn: (job: JobControl) => Promise<void> | void) => () => { warnQr(label); void runExport(label, fn, { cancellable: true }); };
 
-  // Prints at print resolution: 300 dpi, less on big posters (see printDpi), the map painted to match
+  // --- The course map: at print resolution, 300 dpi, less on big posters (see printDpi), painted to match
   const poster = async (d: CourseDoc, job: JobControl) => {
     const a = await art(d);
     job.progress(null, "Painting the map");
     const p = await paintedForPrint(page => printDpi(page.width, page.height), () => renderPoster(d, a));
     return { p, dpi: printDpi(p.width, p.height) };
   };
-  const mapPdf = run("Course map PDF", async job => {
-    const d = getDoc();
-    const { p, dpi } = await poster(d, job);
-    job.progress(null, "Making the PDF");
-    save(await pdfFromPages([await pdfPage(await svgToCanvas(p.svg, p.width, p.height, dpi), p.width, p.height)]), fileName(d, "-map.pdf"));
-  });
-  const mapPng = run("Course map PNG", async job => {
-    const d = getDoc();
-    const { p, dpi } = await poster(d, job);
-    job.progress(null, "Making the picture");
-    save(await canvasBlob(await svgToCanvas(p.svg, p.width, p.height, dpi)), fileName(d, "-map.png"));
-  });
-  const mapSvg = run("Course map SVG", async job => {
-    const d = getDoc();
-    save(svgBlob((await poster(d, job)).p.svg), fileName(d, "-map.svg"));
-  });
-  /** The holes picked for the tee signs (every hole, or one), as they are now. */
-  const pickedSigns = (d: CourseDoc) => (signHole ? d.holes.filter(h => h.id === signHole.id) : d.holes);
+  const map: Record<MapFormat, () => void> = {
+    pdf: run("Course map PDF", async job => {
+      const d = getDoc();
+      const { p, dpi } = await poster(d, job);
+      job.progress(null, "Making the PDF");
+      save(await pdfFromPages([await pdfPage(await svgToCanvas(p.svg, p.width, p.height, dpi), p.width, p.height)]), fileName(d, "-map.pdf"));
+    }),
+    png: run("Course map PNG", async job => {
+      const d = getDoc();
+      const { p, dpi } = await poster(d, job);
+      job.progress(null, "Making the picture");
+      save(await canvasBlob(await svgToCanvas(p.svg, p.width, p.height, dpi)), fileName(d, "-map.png"));
+    }),
+    svg: run("Course map SVG", async job => {
+      const d = getDoc();
+      save(svgBlob((await poster(d, job)).p.svg), fileName(d, "-map.svg"));
+    })
+  };
+
+  // --- Tee signs
   const signsPdf = runLong(signHole ? "Tee sign PDF" : "Tee signs PDF", async job => {
     const d = getDoc();
-    const holes = pickedSigns(d);
+    const holes = signHole ? d.holes.filter(h => h.id === signHole.id) : d.holes;
     if (!holes.length) throw new Error("No hole to export yet.");
     const relief = await art(d);
     const pages = [];
@@ -186,310 +237,311 @@ export function ExportPanel() {
     if (!s) throw new Error("That hole has no tee sign yet.");
     return s;
   };
-  const signPng = run("Tee sign PNG", async () => {
-    const d = getDoc();
-    const s = await oneSign(d);
-    save(await pngUnder(s.svg, s.width, s.height, 4.8 * 1024 * 1024, 150), fileName(d, `-tee-sign-${holeNumber(d, signHole!.id)}.png`));
-  });
-  const signSvg = run("Tee sign SVG", async () => {
-    const d = getDoc();
-    save(svgBlob((await oneSign(d)).svg), fileName(d, `-tee-sign-${holeNumber(d, signHole!.id)}.svg`));
-  });
-  // (a hole picked: the preview shows its sign)
-  const pickSign = (id: string) => {
-    setSignPick(id);
-    useEditor.getState().set({ designTab: "sign", ...(id !== "all" ? { designHole: id } : {}) });
+  const signs: Record<SheetFormat, () => void> = {
+    pdf: signsPdf,
+    zip: runLong("Tee sign pictures", async job => {
+      const d = getDoc();
+      const relief = await art(d);
+      const zip = new JSZip();
+      for (let i = 0; i < d.holes.length; i++) {
+        stopIfCancelled(job);
+        job.progress(i / d.holes.length, `Tee sign ${i + 1} of ${d.holes.length}`);
+        const s = await paintedForPrint(150, () => renderTeeSign(d, d.holes[i].id, signSize, relief));
+        if (!s) continue;
+        // UDisc takes tee sign pictures up to 5 MB
+        const no = two(holeNumber(d, d.holes[i].id));
+        zip.file(`hole-${no}.png`, await pngUnder(s.svg, s.width, s.height, 4.8 * 1024 * 1024, 150));
+        zip.file(`hole-${no}.svg`, s.svg);
+      }
+      stopIfCancelled(job);
+      job.progress(null, "Making the ZIP");
+      save(await zip.generateAsync({ type: "blob" }), fileName(d, "-tee-signs.zip"));
+    }),
+    png: run("Tee sign PNG", async () => {
+      const d = getDoc();
+      const s = await oneSign(d);
+      save(await pngUnder(s.svg, s.width, s.height, 4.8 * 1024 * 1024, 150), fileName(d, `-tee-sign-${holeNumber(d, signHole!.id)}.png`));
+    }),
+    svg: run("Tee sign SVG", async () => {
+      const d = getDoc();
+      save(svgBlob((await oneSign(d)).svg), fileName(d, `-tee-sign-${holeNumber(d, signHole!.id)}.svg`));
+    }),
+    geojson: signsPdf
   };
-  const signsZip = runLong("Tee sign pictures", async job => {
-    const d = getDoc();
-    const relief = await art(d);
-    const zip = new JSZip();
-    for (let i = 0; i < d.holes.length; i++) {
-      stopIfCancelled(job);
-      job.progress(i / d.holes.length, `Tee sign ${i + 1} of ${d.holes.length}`);
-      const s = await paintedForPrint(150, () => renderTeeSign(d, d.holes[i].id, signSize, relief));
-      if (!s) continue;
-      // UDisc takes tee sign pictures up to 5 MB
-      const no = two(holeNumber(d, d.holes[i].id));
-      zip.file(`hole-${no}.png`, await pngUnder(s.svg, s.width, s.height, 4.8 * 1024 * 1024, 150));
-      zip.file(`hole-${no}.svg`, s.svg);
-    }
-    stopIfCancelled(job);
-    job.progress(null, "Making the ZIP");
-    save(await zip.generateAsync({ type: "blob" }), fileName(d, "-tee-signs.zip"));
-  });
-  const scorecardPdf = run("Scorecard PDF", async () => {
-    const d = getDoc();
-    const s = renderScorecard(d);
-    save(await pdfFromPages([await pdfPage(await svgToCanvas(s.svg, s.width, s.height, 300), s.width, s.height)]), fileName(d, "-scorecard.pdf"));
-  });
-  // (the 3D view as it was left on the Design step, nothing picked)
-  const snapshot = run("Picture of the 3D view", async () => {
-    select(null);
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-    const url = getView()?.capture(1920, 1080);
-    if (!url) {
-      toast("The 3D view isn't ready yet. Open the Design step once, then try again.", "info");
-      return;
-    }
-    save(await (await fetch(url)).blob(), fileName(getDoc(), "-3d.png"));
-  });
-  const text = (label: string, content: () => string, suffix: string, type: string) => run(label, () => save(new Blob([content()], { type }), fileName(getDoc(), suffix)));
 
-  // --- Hole by hole
-
-  /** The holes picked for the hole pages (all of them, or one), as they are now. */
-  const pickedPages = (d: CourseDoc) => (pagePick === "all" ? playable(d) : playable(d).filter(h => h.id === pagePick));
+  // --- Hole pages
+  const pickedPages = (d: CourseDoc) => (pageHole ? playable(d).filter(h => h.id === pageHole.id) : playable(d));
   const holeSuffix = (d: CourseDoc, id: string) => `-hole-${holeNumber(d, id)}`;
-  const pagesPdf = runLong("Hole pages PDF", async job => {
-    const d = getDoc();
-    const holes = pickedPages(d);
-    if (!holes.length) throw new Error("No hole to export yet.");
-    const relief = await art(d);
-    const pages = [];
-    for (const [i, h] of holes.entries()) {
-      stopIfCancelled(job);
-      job.progress(i / holes.length, `Hole page ${i + 1} of ${holes.length}`);
-      const dpi = HOLE_PAGES[pageSize].dpi;
-      const p = (await paintedForPrint(dpi, () => renderHolePage(d, h.id, pageSize, relief)))!;
-      pages.push(await pdfPage(await svgToCanvas(p.svg, p.width, p.height, dpi), p.width, p.height));
-    }
-    stopIfCancelled(job);
-    job.progress(null, "Making the PDF");
-    save(await pdfFromPages(pages), fileName(d, holes.length === 1 ? `${holeSuffix(d, holes[0].id)}.pdf` : "-hole-pages.pdf"));
-  });
-  const pagesZip = runLong("Hole pictures", async job => {
-    const d = getDoc();
-    const holes = pickedPages(d);
-    if (!holes.length) throw new Error("No hole to export yet.");
-    const relief = await art(d);
-    const zip = new JSZip();
-    for (const [i, h] of holes.entries()) {
-      stopIfCancelled(job);
-      job.progress(i / holes.length, `Hole picture ${i + 1} of ${holes.length}`);
-      const p = (await paintedForPrint(HOLE_PAGES[pageSize].dpi, () => renderHolePage(d, h.id, pageSize, relief)))!;
-      zip.file(`hole-${two(holeNumber(d, h.id))}.png`, await canvasBlob(await svgToCanvas(p.svg, p.width, p.height, HOLE_PAGES[pageSize].dpi)));
-    }
-    stopIfCancelled(job);
-    job.progress(null, "Making the ZIP");
-    save(await zip.generateAsync({ type: "blob" }), fileName(d, "-hole-pages.zip"));
-  });
   const onePage = async (d: CourseDoc) => {
     if (!pageHole) throw new Error("Pick a hole first.");
     const relief = await art(d);
     return (await paintedForPrint(HOLE_PAGES[pageSize].dpi, () => renderHolePage(d, pageHole.id, pageSize, relief)))!;
   };
-  const pagePng = run("Hole picture", async () => {
-    const d = getDoc();
-    const p = await onePage(d);
-    save(await canvasBlob(await svgToCanvas(p.svg, p.width, p.height, HOLE_PAGES[pageSize].dpi)), fileName(d, `${holeSuffix(d, pageHole!.id)}.png`));
-  });
-  const pageSvg = run("Hole SVG", async () => {
-    const d = getDoc();
-    save(svgBlob((await onePage(d)).svg), fileName(d, `${holeSuffix(d, pageHole!.id)}.svg`));
-  });
-  const pageGeo = run("Hole GeoJSON", () => {
-    const d = getDoc();
-    if (!pageHole) throw new Error("Pick a hole first.");
-    save(new Blob([holeGeoJSON(d, pageHole.id)], { type: "application/geo+json" }), fileName(d, `${holeSuffix(d, pageHole.id)}.geojson`));
-  });
-  // (a hole picked: the preview shows its page)
-  const pickPage = (id: string) => {
-    setPagePick(id);
-    useEditor.getState().set({ designTab: "page", ...(id !== "all" ? { designHole: id } : {}) });
+  const pages: Record<SheetFormat, () => void> = {
+    pdf: runLong("Hole pages PDF", async job => {
+      const d = getDoc();
+      const holes = pickedPages(d);
+      if (!holes.length) throw new Error("No hole to export yet.");
+      const relief = await art(d);
+      const out = [];
+      for (const [i, h] of holes.entries()) {
+        stopIfCancelled(job);
+        job.progress(i / holes.length, `Hole page ${i + 1} of ${holes.length}`);
+        const dpi = HOLE_PAGES[pageSize].dpi;
+        const p = (await paintedForPrint(dpi, () => renderHolePage(d, h.id, pageSize, relief)))!;
+        out.push(await pdfPage(await svgToCanvas(p.svg, p.width, p.height, dpi), p.width, p.height));
+      }
+      stopIfCancelled(job);
+      job.progress(null, "Making the PDF");
+      save(await pdfFromPages(out), fileName(d, holes.length === 1 ? `${holeSuffix(d, holes[0].id)}.pdf` : "-hole-pages.pdf"));
+    }),
+    zip: runLong("Hole pictures", async job => {
+      const d = getDoc();
+      const holes = pickedPages(d);
+      if (!holes.length) throw new Error("No hole to export yet.");
+      const relief = await art(d);
+      const zip = new JSZip();
+      for (const [i, h] of holes.entries()) {
+        stopIfCancelled(job);
+        job.progress(i / holes.length, `Hole picture ${i + 1} of ${holes.length}`);
+        const p = (await paintedForPrint(HOLE_PAGES[pageSize].dpi, () => renderHolePage(d, h.id, pageSize, relief)))!;
+        zip.file(`hole-${two(holeNumber(d, h.id))}.png`, await canvasBlob(await svgToCanvas(p.svg, p.width, p.height, HOLE_PAGES[pageSize].dpi)));
+      }
+      stopIfCancelled(job);
+      job.progress(null, "Making the ZIP");
+      save(await zip.generateAsync({ type: "blob" }), fileName(d, "-hole-pages.zip"));
+    }),
+    png: run("Hole picture", async () => {
+      const d = getDoc();
+      const p = await onePage(d);
+      save(await canvasBlob(await svgToCanvas(p.svg, p.width, p.height, HOLE_PAGES[pageSize].dpi)), fileName(d, `${holeSuffix(d, pageHole!.id)}.png`));
+    }),
+    svg: run("Hole SVG", async () => {
+      const d = getDoc();
+      save(svgBlob((await onePage(d)).svg), fileName(d, `${holeSuffix(d, pageHole!.id)}.svg`));
+    }),
+    geojson: run("Hole GeoJSON", () => {
+      const d = getDoc();
+      if (!pageHole) throw new Error("Pick a hole first.");
+      save(new Blob([holeGeoJSON(d, pageHole.id)], { type: "application/geo+json" }), fileName(d, `${holeSuffix(d, pageHole.id)}.geojson`));
+    })
   };
 
-  const parts = partsList(doc);
-  // (live while typed; one undo step when the field is left, not one a keystroke)
-  const setPrice = (key: PriceKey, v: number) => changeDoc(d => ({ rules: { ...d.rules, prices: { ...d.rules.prices, [key]: v } } }), false);
-  const pricesDone = () => useCourse.getState().commit();
+  const scorecard = {
+    pdf: run("Scorecard PDF", async () => {
+      const d = getDoc();
+      const s = renderScorecard(d);
+      save(await pdfFromPages([await pdfPage(await svgToCanvas(s.svg, s.width, s.height, 300), s.width, s.height)]), fileName(d, "-scorecard.pdf"));
+    }),
+    svg: run("Scorecard SVG", () => save(svgBlob(renderScorecard(getDoc()).svg), fileName(getDoc(), "-scorecard.svg")))
+  };
+  // (the 3D view as it is in the preview, nothing picked)
+  const snapshot = run("Picture of the 3D view", async () => {
+    select(null);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const url = getView()?.capture(1920, 1080);
+    if (!url) {
+      toast("The 3D view isn't ready yet. Try again in a moment.", "info");
+      return;
+    }
+    save(await (await fetch(url)).blob(), fileName(getDoc(), "-3d.png"));
+  });
+  const text = (label: string, content: () => string, suffix: string, type: string) => run(label, () => save(new Blob([content()], { type }), fileName(getDoc(), suffix)));
+  const DATA: Record<DataFormat, { label: string; run: () => void; testid: string; gps: boolean }> = {
+    kml: { label: "KML", run: text("KML file", () => toKML(getDoc()), ".kml", "application/vnd.google-earth.kml+xml"), testid: "export-kml", gps: true },
+    gpx: { label: "GPX", run: text("GPX file", () => toGPX(getDoc()), ".gpx", "application/gpx+xml"), testid: "export-gpx", gps: true },
+    geojson: { label: "GeoJSON", run: text("GeoJSON file", () => toGeoJSON(getDoc()), ".geojson", "application/geo+json"), testid: "export-geojson", gps: true },
+    holes: { label: "Holes CSV", run: text("Holes spreadsheet", () => holesCsv(getDoc()), "-holes.csv", "text/csv"), testid: "export-holes-csv", gps: false },
+    stakeout: { label: "Stake-out CSV", run: text("Stake-out spreadsheet", () => stakeOutCsv(getDoc()), "-stake-out.csv", "text/csv"), testid: "export-stakeout", gps: false }
+  };
+  const data = pick.dataFormat ?? (geo ? "kml" : "holes");
 
-  const nothing = !complete.length;
-  // (only the owner makes public links: others share with people)
-  const owner = useServerCourse(s => s.role) === "owner";
-  const shares = ([["public", <Link2 key="l" size={16} />, "Public link"], ["people", <Users key="u" size={16} />, "People"]] as const).filter(([t]) => owner || t === "people");
-  // (the course file first: in the demo, the one way to share that works)
-  const courseFile = (
-    <div className={listRow}>
-      <span className={rowIcon}><FileJson size={16} /></span>
-      <span className="flex-1 min-w-0 text-[13.5px] text-zinc-100">Course file</span>
-      <Button small onClick={() => { saveCourseFile(); toast(`Saved ${fileName(getDoc(), ".dgcourse.json")}.`, "success"); }} disabled={busy} testid="export-file"><FileDown size={13} /> Save</Button>
-    </div>
-  );
-  const which = (label: string, testid: string, value: string, onChange: (v: string) => void, all = "All holes") => (
-    <Field label="Which holes">
-      <select aria-label={label} data-testid={testid} className={`${selectCls} w-full`} value={value} onChange={e => onChange(e.target.value)} disabled={nothing}>
-        <option value="all">{all}{complete.length ? ` (${complete.length})` : ""}</option>
-        {complete.map(h => <option key={h.id} value={h.id}>Hole {holeLabel(doc, h.id)}{h.name ? ` · ${h.name}` : ""}</option>)}
-      </select>
-    </Field>
-  );
+  // (why it can't be made just now)
+  const off = (needsHole = true) => (busy ? "Another export is under way." : needsHole && nothing ? "No hole has a tee and a basket yet." : undefined);
+  const parts = partsList(doc);
+
+  const signFormats = sheetFormats(!!signHole), signFmt = formatOf(pick.signFormat, signFormats);
+  const pageFormats = sheetFormats(!!pageHole, true), pageFmt = formatOf(pick.pageFormat, pageFormats);
+  const fmtName = (f: string) => (f === "zip" ? "pictures" : f.toUpperCase());
+  // (a hole picked: the preview shows its sign or page)
+  const holeTo = (key: "signHoles" | "pageHoles", tab: "sign" | "page") => (id: string) => {
+    pick.set({ [key]: id });
+    useEditor.getState().set({ designTab: tab, ...(id !== "all" ? { designHole: id } : {}) });
+  };
+
+  return [
+    {
+      id: "map", name: "Course map", icon: MapIcon, help: "print",
+      summary: `${PAPER_SHORT[doc.style.paper]} · ${pick.mapFormat.toUpperCase()}`,
+      choices: [
+        { id: "paper", name: "Paper", value: PAPER_SHORT[doc.style.paper], control: <ChipPick label="Map paper" testid="map-paper" value={doc.style.paper} options={sizes(PAPER, PAPER_SHORT)} onChange={v => setStyle({ paper: v })} /> },
+        { id: "format", name: "Format", value: pick.mapFormat.toUpperCase(), control: <Segmented label="Map format" value={pick.mapFormat} onChange={v => pick.set({ mapFormat: v })} options={[{ value: "pdf", label: "PDF" }, { value: "png", label: "PNG" }, { value: "svg", label: "SVG" }]} /> }
+      ],
+      go: { label: `Download ${pick.mapFormat.toUpperCase()}`, short: "Download", run: map[pick.mapFormat], testid: `export-map-${pick.mapFormat}`, off: off(false) },
+      note: PAPER[doc.style.paper].label
+    },
+    {
+      id: "signs", name: "Tee signs", icon: Signpost, help: "print",
+      summary: `${SIGN_SHORT[signSize]} · ${signHole ? `hole ${holeLabel(doc, signHole.id)}` : `all ${n}`}`,
+      choices: [
+        { id: "holes", name: "Holes", value: holesShown(signHole), control: <HolePick label="Tee signs to export" testid="sign-pick" value={pick.signHoles} onChange={holeTo("signHoles", "sign")} /> },
+        { id: "size", name: "Size", value: SIGN_SHORT[signSize], control: <ChipPick label="Tee sign size" testid="sign-size" value={signSize} options={sizes(SIGN_SIZES, SIGN_SHORT)} onChange={v => setStyle({ signSize: v })} /> },
+        { id: "format", name: "Format", value: signFmt === "zip" ? "ZIP" : signFmt.toUpperCase(), control: <Segmented label="Tee sign format" value={signFmt} onChange={v => pick.set({ signFormat: v })} options={signFormats} /> }
+      ],
+      go: {
+        label: signHole ? `Download sign ${holeLabel(doc, signHole.id)} (${signFmt.toUpperCase()})` : `Download ${n} ${signFmt === "zip" ? "sign pictures" : "signs"}`,
+        short: "Download", run: signs[signFmt],
+        testid: signHole && signFmt !== "pdf" ? `export-sign-${signFmt}` : `export-signs-${signFmt}`, off: off()
+      },
+      note: signHole ? undefined : signFmt === "zip" ? "A PNG under 5 MB and an SVG a sign, for UDisc." : "One page a sign."
+    },
+    {
+      id: "pages", name: "Hole pages", icon: BookOpen, help: "hole-by-hole",
+      summary: `${PAGE_SHORT[pageSize]} · ${pageHole ? `hole ${holeLabel(doc, pageHole.id)}` : `all ${n}`}`,
+      choices: [
+        { id: "holes", name: "Holes", value: holesShown(pageHole), control: <HolePick label="Hole to export" testid="hole-pick" value={pick.pageHoles} onChange={holeTo("pageHoles", "page")} /> },
+        { id: "size", name: "Size", value: PAGE_SHORT[pageSize], control: <div data-testid="hole-page-size"><ChipPick label="Hole page size" value={pageSize} options={sizes(HOLE_PAGES, PAGE_SHORT)} onChange={v => setStyle({ holePageSize: v })} /></div> },
+        { id: "format", name: "Format", value: pageFmt === "zip" ? "ZIP" : pageFmt === "geojson" ? "GeoJSON" : pageFmt.toUpperCase(), control: <Segmented label="Hole page format" value={pageFmt} onChange={v => pick.set({ pageFormat: v })} options={pageFormats} /> }
+      ],
+      go: {
+        label: pageHole ? `Download hole ${holeLabel(doc, pageHole.id)} (${pageFmt === "geojson" ? "GeoJSON" : pageFmt.toUpperCase()})` : `Download ${n} ${fmtName(pageFmt) === "pictures" ? "hole pictures" : "hole pages"}`,
+        short: "Download", run: pages[pageFmt],
+        testid: pageHole && pageFmt !== "pdf" ? `export-hole-${pageFmt}` : `export-holes-${pageFmt}`,
+        off: pageFmt === "geojson" && !geo ? "GeoJSON needs the site brought in." : off()
+      },
+      note: pageFmt === "geojson" && !geo ? "Needs the site brought in." : undefined
+    },
+    {
+      id: "scorecard", name: "Scorecard", icon: Table2, help: "print",
+      summary: pick.cardFormat.toUpperCase(),
+      choices: [{ id: "format", name: "Format", value: pick.cardFormat.toUpperCase(), control: <Segmented label="Scorecard format" value={pick.cardFormat} onChange={v => pick.set({ cardFormat: v })} options={[{ value: "pdf", label: "PDF" }, { value: "svg", label: "SVG" }]} /> }],
+      go: { label: `Download ${pick.cardFormat.toUpperCase()}`, short: "Download", run: scorecard[pick.cardFormat], testid: pick.cardFormat === "pdf" ? "export-scorecard" : "export-scorecard-svg", off: off() }
+    },
+    {
+      id: "picture", name: "3D picture", icon: ImageIcon, help: "picture-3d",
+      summary: "1920 × 1080 · PNG",
+      choices: [],
+      go: { label: "Download PNG", short: "Download", run: snapshot, testid: "export-3d", off: off(false) },
+      note: "The 3D view as it is. Move it to frame the picture."
+    },
+    {
+      id: "video", name: "Flyover video", icon: Clapperboard, help: "video",
+      summary: `${VIDEO_SHORT[video.resolution]} · ${videoHoles.length === 1 && n > 1 ? `hole ${holeLabel(doc, videoHoles[0])}` : `all ${n}`}${nothing ? "" : ` · ${minSec(videoSeconds(doc, videoHoles))}`}`,
+      choices: [
+        { id: "holes", name: "Holes", value: holesShown(one(pick.videoHoles)), control: <HolePick label="Holes to fly over" testid="video-holes" value={pick.videoHoles} onChange={v => pick.set({ videoHoles: v })} /> },
+        { id: "size", name: "Size", value: VIDEO_SHORT[video.resolution], control: <div data-testid="video-resolution"><Segmented label="Video size" value={video.resolution} onChange={v => video.set({ resolution: v })} options={(Object.keys(VIDEO_SIZES) as VideoResolution[]).map(k => ({ value: k, label: VIDEO_SHORT[k], title: VIDEO_SIZES[k].label }))} /></div> },
+        { id: "fps", name: "Frame rate", value: `${video.fps} fps`, control: <Segmented label="Frame rate" value={video.fps} onChange={v => video.set({ fps: v })} options={[{ value: 30, label: "30 fps" }, { value: 60, label: "60 fps" }]} /> },
+        // (the same setting as the tee view's: the ground flyovers show, on screen and in videos)
+        { id: "ground", name: "Ground", value: flyGround === "ground" ? "Course" : flyGround === "painted" ? "Painted" : "Photo", control: <div data-testid="video-ground"><Segmented label="Ground" value={flyGround} onChange={v => useEditor.getState().set({ flyGround: v })} options={[{ value: "ground", label: "Course", title: "The course's own ground" }, { value: "painted", label: "Painted", title: "The painted map" }, { value: "photo", label: "Photo", title: "The aerial photo" }]} /></div> }
+      ],
+      go: { label: `Make the video of ${videoHoles.length === 1 && n > 1 ? `hole ${holeLabel(doc, videoHoles[0])}` : "the course"}`, short: "Make", run: () => void recordVideo(videoHoles), testid: "video-record", off: off() },
+      note: `${nothing ? "" : `About ${minSec(videoSeconds(doc, videoHoles))} of video. `}The flyovers are set in Design.`
+    },
+    {
+      id: "data", name: "GPS and spreadsheets", icon: MapPin, help: "gps-files",
+      summary: "KML, GPX, CSV",
+      choices: [{ id: "format", name: "Format", value: DATA[data].label, control: <ChipPick label="GPS or spreadsheet format" testid="data-format" value={data} onChange={v => pick.set({ dataFormat: v })} options={(Object.keys(DATA) as DataFormat[]).map(k => ({ value: k, label: DATA[k].label, title: DATA[k].gps ? "GPS file" : "Spreadsheet" }))} /> }],
+      go: { label: `Download ${DATA[data].label}`, short: "Download", run: DATA[data].run, testid: DATA[data].testid, off: DATA[data].gps && !geo ? "GPS files need the site brought in." : off() },
+      note: DATA[data].gps && !geo ? "GPS files need the site brought in." : undefined
+    },
+    {
+      id: "parts", name: "Parts and budget", icon: Calculator,
+      summary: `$${parts.total.toLocaleString()} · CSV`,
+      choices: [{ id: "budget", name: "Estimate", value: `$${parts.total.toLocaleString()}`, wide: true, control: <div className="px-1 py-1"><PartsTable /></div> }],
+      go: { label: "Download parts list (CSV)", short: "Download", run: text("Parts list", () => partsCsv(getDoc()), "-parts.csv", "text/csv"), testid: "export-parts", off: off(false) },
+      note: parts.lines.length ? `Concrete for the pads: ${fmtConcrete(parts.concreteYd3, doc.units)}` : undefined
+    }
+  ];
+}
+
+/** Saves the course file, and says so. */
+const saveFile = () => { saveCourseFile(); toast(`Saved ${fileName(getDoc(), ".dgcourse.json")}.`, "success"); };
+/** Sharing: the course's people and its public link (locked in the demo). */
+const share = () => (SERVER ? useAuth.getState().share("people") : showLocked("share"));
+/** The thing made, or why it can't be yet. */
+const make = (t: Thing) => (t.go.off ? toast(t.go.off, "info") : t.go.run());
+
+// (the page beside the list follows the thing picked, from the step's start)
+const usePreviewFollows = () => useEffect(() => { pickThing(useExportPick.getState().thing); }, []);
+
+export function ExportPanel() {
+  const things = useThings();
+  const thing = useExportPick(s => s.thing);
+  const busy = useExportJob(s => !!s.job);
+  const nothing = !playable(useCourse(s => s.doc)).length;
+  usePreviewFollows();
+  const top = "flex-1 h-9 touch:h-11 rounded-[11px] bg-white/[0.07] hover:bg-white/[0.11] disabled:opacity-40 flex items-center justify-center gap-1.5 text-[12.5px] font-semibold text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400";
   return (
     <>
       <ExportBanner />
-      {/* (why most of the buttons below are off) */}
+      <div className="flex gap-1.5 px-4 pb-3" data-testid="export-share">
+        <button className={top} onClick={saveFile} disabled={busy} data-testid="export-file"><FileDown size={14} /> Save course file</button>
+        <button className={top} onClick={share} data-testid={SERVER ? "export-share-people" : "locked-share"}><Share2 size={14} /> Share</button>
+      </div>
+      {/* (why most of what's below can't be made yet) */}
       {nothing && <p className="mx-4 mb-2 rounded-[14px] bg-white/[0.06] px-3 py-2 text-[12.5px] text-zinc-300" data-testid="export-needs-hole">No hole has a tee and a basket yet.</p>}
-      {SERVER && (
-        <Section title="Share" testid="export-share">
-          <div className="rounded-[16px] bg-white/[0.06] overflow-hidden divide-y divide-white/[0.07]">
-            {courseFile}
-            {shares.map(([t, icon, label]) => (
-              <button key={t} data-testid={`export-share-${t}`} onClick={() => useAuth.getState().share(t)} className={listRow}>
-                <span className={rowIcon}>{icon}</span>
-                <span className="flex-1 min-w-0 text-[13.5px] text-zinc-100">{label}</span>
-                <ChevronRight size={15} className="text-zinc-500" />
-              </button>
-            ))}
-          </div>
-        </Section>
-      )}
-      {!SERVER && (
-        <Section title="Share" testid="export-share">
-          <div className="rounded-[16px] bg-white/[0.06] overflow-hidden divide-y divide-white/[0.07]">
-            {courseFile}
-            <LockedRow id="site" icon={<Link2 size={16} />} label="Public link" />
-            <LockedRow id="share" icon={<Users size={16} />} label="People" />
-          </div>
-        </Section>
-      )}
-      <Section title="Print" help="print">
-        <Row icon={<MapIcon size={15} className="text-orange-300" />} title="Course map" tab="map" pick={
-          <Field label="Paper size"><select aria-label="Map paper" className={`${selectCls} w-full`} value={doc.style.paper} onChange={e => setStyle({ paper: e.target.value as PaperSize })}>
-            {(Object.keys(PAPER) as PaperSize[]).map(p => <option key={p} value={p}>{PAPER[p].label}</option>)}
-          </select></Field>
-        }>
-          <Button small onClick={mapPdf} disabled={busy} testid="export-map-pdf"><FileDown size={13} /> PDF</Button>
-          <Button small onClick={mapPng} disabled={busy} testid="export-map-png"><ImageIcon size={13} /> PNG</Button>
-          <Button small onClick={mapSvg} disabled={busy} testid="export-map-svg">SVG</Button>
-        </Row>
-        <Row icon={<Signpost size={15} className="text-orange-300" />} title="Tee signs" tab="sign" pick={
-          <>
-            {which("Tee signs to export", "sign-pick", signHole ? signHole.id : "all", pickSign)}
-            <Field label="Sign size"><select aria-label="Tee sign size" className={`${selectCls} w-full`} value={signSize} onChange={e => setSignSize(e.target.value as SignSize)}>
-              {(Object.keys(SIGN_SIZES) as SignSize[]).map(p => <option key={p} value={p}>{SIGN_SIZES[p].label}</option>)}
-            </select></Field>
-          </>
-        }>
-          <Button small onClick={signsPdf} disabled={busy || nothing} testid="export-signs-pdf"><FileDown size={13} /> PDF</Button>
-          {!signHole && <Button small onClick={signsZip} disabled={busy || nothing} testid="export-signs-zip"><ImageIcon size={13} /> Pictures (ZIP)</Button>}
-          {signHole && (
-            <>
-              <Button small onClick={signPng} disabled={busy} testid="export-sign-png"><ImageIcon size={13} /> PNG</Button>
-              <Button small onClick={signSvg} disabled={busy} testid="export-sign-svg">SVG</Button>
-            </>
-          )}
-        </Row>
-        <Row icon={<Table2 size={15} className="text-orange-300" />} title="Scorecard" tab="scorecard">
-          <Button small onClick={scorecardPdf} disabled={busy || nothing} testid="export-scorecard"><FileDown size={13} /> PDF</Button>
-          <Button small onClick={run("Scorecard SVG", () => save(svgBlob(renderScorecard(getDoc()).svg), fileName(getDoc(), "-scorecard.svg")))} disabled={busy || nothing}>SVG</Button>
-        </Row>
-      </Section>
-      <Section title="Hole by hole" testid="hole-exports" help="hole-by-hole">
-        <div onPointerDownCapture={() => showPage("page")} onFocusCapture={() => showPage("page")}>
-          {which("Hole to export", "hole-pick", pageHole ? pageHole.id : "all", pickPage)}
-          <Field label="Page size">
-            <select aria-label="Hole page size" data-testid="hole-page-size" className={`${selectCls} w-full`} value={pageSize} onChange={e => setPageSize(e.target.value as HolePageSize)}>
-              {(Object.keys(HOLE_PAGES) as HolePageSize[]).map(k => <option key={k} value={k}>{HOLE_PAGES[k].label}</option>)}
-            </select>
-          </Field>
-          <div className="flex flex-wrap gap-1.5">
-            <Button small onClick={pagesPdf} disabled={busy || nothing} testid="export-holes-pdf"><FileDown size={13} /> PDF</Button>
-            {!pageHole && <Button small onClick={pagesZip} disabled={busy || nothing} testid="export-holes-zip"><ImageIcon size={13} /> Pictures (ZIP)</Button>}
-            {pageHole && (
-              <>
-                <Button small onClick={pagePng} disabled={busy} testid="export-hole-png"><ImageIcon size={13} /> PNG</Button>
-                <Button small onClick={pageSvg} disabled={busy} testid="export-hole-svg">SVG</Button>
-                <Button small onClick={pageGeo} disabled={busy || !geo} title={geo ? undefined : "Needs the course's real place"} testid="export-hole-geojson">GeoJSON</Button>
-              </>
-            )}
-          </div>
-          {pageHole && !geo && <p className="text-[11px] text-zinc-500 mt-1.5" data-testid="hole-geojson-why">Needs the site brought in.</p>}
+      <Section title="Make" testid="export-things">
+        <div className="flex flex-col gap-0.5 -mx-1.5">
+          {things.map(t => <ThingRow key={t.id} t={t} open={t.id === thing} />)}
         </div>
-      </Section>
-      <Section title="3D" testid="export-3d-section">
-        <Row icon={<Box size={15} className="text-orange-300" />} title="Picture of the 3D view" help="picture-3d" pick={
-          thumb
-            ? <img src={thumb} alt="" className="block w-full max-w-[240px] aspect-video object-cover rounded-[12px] ring-1 ring-white/15" draggable={false} data-testid="export-3d-thumb" />
-            : <div className="w-full max-w-[240px] aspect-video rounded-[12px] bg-white/[0.06] ring-1 ring-white/10 flex items-center justify-center text-zinc-500" data-testid="export-3d-thumb"><Box size={22} /></div>
-        }>
-          <Button small onClick={snapshot} disabled={busy} testid="export-3d"><ImageIcon size={13} /> PNG</Button>
-          <Button small onClick={() => useEditor.getState().set({ step: "design", view: "3d", teeView: null, flyover: false })} testid="export-3d-frame"><Crop size={13} /> Frame it</Button>
-        </Row>
-        <div className="pt-1" data-testid="video-export">
-        <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100 mb-1.5"><Clapperboard size={15} className="text-orange-300" />Flyover video<HelpLink topic="video" label="Flyover video" /></div>
-        {which("Holes to fly over", "video-holes", videoHoles.length === 1 && videoPick !== "all" ? videoPick : "all", setVideoPick)}
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <Field label="Size">
-            <select aria-label="Video size" data-testid="video-resolution" className={`${selectCls} w-full`} value={video.resolution} onChange={e => video.set({ resolution: e.target.value as VideoResolution })}>
-              {(Object.keys(VIDEO_SIZES) as VideoResolution[]).map(k => <option key={k} value={k}>{VIDEO_SIZES[k].label}</option>)}
-            </select>
-          </Field>
-          <Field label="Frame rate">
-            <Segmented label="Frame rate" value={video.fps} onChange={v => video.set({ fps: v })} options={[{ value: 30, label: "30 fps" }, { value: 60, label: "60 fps" }]} />
-          </Field>
-        </div>
-        {/* (the same setting as the tee view's: the ground flyovers show, on screen and in videos) */}
-        <Field label="Ground">
-          <div data-testid="video-ground"><Segmented label="Ground" value={flyGround} onChange={v => useEditor.getState().set({ flyGround: v })} options={[{ value: "ground", label: "Course ground" }, { value: "painted", label: "Painted map" }, { value: "photo", label: "Photo" }]} /></div>
-        </Field>
-        {/* (the camera is set where its flight is seen: the view from the tee, its Settings) */}
-        <div className="flex flex-wrap gap-1.5 mb-3" data-testid="video-camera">
-          <Button small onClick={() => fromTee(false)} disabled={nothing} testid="video-fly"><Plane size={13} /> Play flyover</Button>
-          {!readOnly && <Button small onClick={() => fromTee(true)} disabled={nothing} testid="video-camera-settings"><Video size={13} /> Edit flyover</Button>}
-        </div>
-        {/* (its progress and Cancel: in the bar at the top of the step) */}
-        <Button tone="primary" full onClick={() => void recordVideo(videoHoles)} disabled={busy || nothing} testid="video-record"><Clapperboard size={15} /> Export video of {videoHoles.length === 1 ? `hole ${holeLabel(doc, videoHoles[0])}` : "the course"}</Button>
-        {!nothing && <p className="text-[11px] text-zinc-500 mt-1.5">About {minSec(videoSeconds(doc, videoHoles))} of video.</p>}
-        </div>
-      </Section>
-      <Section title="GPS and data" help="gps-files">
-        {!geo && (
-          <button className="mb-3 w-full flex items-center justify-between rounded-[12px] bg-white/[0.06] px-3 py-2 touch:py-2.5 text-left text-[13px] text-zinc-200 hover:bg-white/[0.09]" onClick={() => useEditor.getState().set({ step: "site", teeView: null, flyover: false })} data-testid="export-bring-site">
-            <span>Bring in the site</span>
-            <ChevronRight size={15} className="text-zinc-500" />
-          </button>
-        )}
-        <Row icon={<FileJson size={15} className="text-sky-300" />} title="GPS files">
-          <Button small onClick={text("KML file", () => toKML(getDoc()), ".kml", "application/vnd.google-earth.kml+xml")} disabled={busy || !geo} testid="export-kml">KML</Button>
-          <Button small onClick={text("GeoJSON file", () => toGeoJSON(getDoc()), ".geojson", "application/geo+json")} disabled={busy || !geo} testid="export-geojson">GeoJSON</Button>
-          <Button small onClick={text("GPX file", () => toGPX(getDoc()), ".gpx", "application/gpx+xml")} disabled={busy || !geo} testid="export-gpx">GPX</Button>
-        </Row>
-        <Row icon={<FileJson size={15} className="text-sky-300" />} title="Spreadsheets">
-          <Button small onClick={text("Holes spreadsheet", () => holesCsv(getDoc()), "-holes.csv", "text/csv")} disabled={busy || nothing} testid="export-holes-csv">Holes CSV</Button>
-          <Button small onClick={text("Stake-out spreadsheet", () => stakeOutCsv(getDoc()), "-stake-out.csv", "text/csv")} disabled={busy || nothing} testid="export-stakeout">Stake-out CSV</Button>
-        </Row>
-      </Section>
-      <Section title="Parts list and budget" testid="parts">
-        {parts.lines.length === 0 ? <p className="text-xs text-zinc-400">No holes yet.</p> : (
-          <>
-            <table className="w-full text-xs text-zinc-300 tabular-nums">
-              <tbody>
-                {parts.lines.map(l => (
-                  <tr key={l.item}>
-                    <td className="py-0.5">{l.item}</td>
-                    <td className="text-right">{l.qty}</td>
-                    <td className="text-right text-zinc-400">× ${l.unitPrice}</td>
-                    <td className="text-right font-semibold text-zinc-100">${l.total.toLocaleString()}</td>
-                  </tr>
-                ))}
-                <tr className="border-t border-white/[0.12]"><td className="pt-1 font-bold text-zinc-100" colSpan={3}>Estimate</td><td className="text-right pt-1 font-bold text-zinc-50" data-testid="parts-total">${parts.total.toLocaleString()}</td></tr>
-              </tbody>
-            </table>
-            <p className="text-[11px] text-zinc-500 mt-1">Concrete for the pads: {fmtConcrete(parts.concreteYd3, doc.units)}</p>
-            <details className="mt-2">
-              <summary className="text-xs text-orange-300 cursor-pointer">Change prices</summary>
-              <div className="grid grid-cols-2 gap-x-2 mt-2">
-                {PRICE_LABELS.map(([k, name]) => (
-                  <Field key={k} label={name}>
-                    <div onBlur={pricesDone}><NumberInput label={`${name} price`} min={0} value={priceOf(doc, k)} onChange={v => setPrice(k, v)} /></div>
-                  </Field>
-                ))}
-              </div>
-            </details>
-            <div className="mt-2"><Button small onClick={text("Parts list", () => partsCsv(getDoc()), "-parts.csv", "text/csv")} disabled={busy} testid="export-parts">Parts list CSV</Button></div>
-          </>
-        )}
       </Section>
     </>
+  );
+}
+
+/** One thing in the list: its name and choices in a line; open, its choices and its button. */
+function ThingRow({ t, open }: { t: Thing; open: boolean }) {
+  const Icon = t.icon;
+  return (
+    <div className={`rounded-[14px] transition-colors ${open ? "bg-white/[0.07] ring-1 ring-inset ring-orange-300/35" : ""}`} data-testid={`export-thing-${t.id}`} data-open={open || undefined}>
+      <div className="flex items-center pr-2">
+        <button className={`flex-1 min-w-0 flex items-center gap-2.5 px-2.5 ${open ? "pt-2.5 pb-2" : "py-2 hover:bg-white/[0.05]"} rounded-[14px] text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400`} onClick={() => pickThing(t.id)} aria-expanded={open}>
+          <span className={`w-[30px] h-[30px] shrink-0 rounded-[9px] flex items-center justify-center ${open ? "bg-orange-300/20 text-orange-200" : "bg-white/[0.07] text-zinc-300"}`}><Icon size={16} /></span>
+          <span className="flex-1 min-w-0 flex flex-col">
+            <span className={`text-[13.5px] ${open ? "font-bold text-zinc-50" : "font-semibold text-zinc-100"}`}>{t.name}</span>
+            <span className="text-[11.5px] text-zinc-400 truncate" data-testid={`export-summary-${t.id}`}>{t.summary}</span>
+          </span>
+          {!open && <ChevronRight size={15} className="shrink-0 text-zinc-500" />}
+        </button>
+        {open && t.help && <HelpLink topic={t.help} label={t.name} />}
+      </div>
+      {open && (
+        <div className="dg-appear px-2.5 pb-3 flex flex-col gap-2.5">
+          {t.choices.map(c => <div key={c.id}><Field label={c.name}>{c.control}</Field></div>)}
+          <button className="w-full h-10 touch:h-12 rounded-[12px] bg-orange-500 hover:bg-orange-400 active:bg-orange-400 text-zinc-950 font-bold text-[13.5px] flex items-center justify-center gap-2 disabled:opacity-40 disabled:hover:bg-orange-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+            onClick={() => make(t)} disabled={!!t.go.off} title={t.go.off} data-testid={t.go.testid}>
+            {t.id === "video" ? <Clapperboard size={15} /> : <Download size={15} />}{t.go.label}
+          </button>
+          {(t.go.off || t.note) && <p className="-mt-1 text-[11.5px] text-zinc-400 text-center" data-testid={t.go.off && t.go.off !== t.note ? "export-why" : `export-note-${t.id}`}>{t.go.off && t.go.off !== t.note ? t.go.off : t.note}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A phone's Export step: the preview has the screen; the glass bar names the thing made in its
+ * pill (which opens every other, the course file and Share), its choices along the bar, and the
+ * button that makes it at its end. */
+export function ExportBar({ onHeight, bottom = 0 }: { onHeight?: (px: number) => void; bottom?: number }) {
+  const things = useThings();
+  const id = useExportPick(s => s.thing);
+  usePreviewFollows();
+  const t = things.find(x => x.id === id) ?? things[0];
+  const Icon = t.icon;
+  const settings: BarSetting[] = t.choices.map(c => ({ id: c.id, name: c.name, value: c.value, control: c.control, wide: c.wide, testid: `export-set-${c.id}` }));
+  // (a thing with nothing to choose: what it is, said where its choices would be)
+  if (!settings.length && t.note) settings.push({ id: "note", name: t.note, run: () => toast(t.note!, "info"), testid: "export-set-note" });
+  const menu = (
+    <div className="flex flex-col gap-0.5" data-testid="export-menu">
+      {things.map(x => <ActRow key={x.id} label={x.name} hint={x.summary} icon={<x.icon size={18} className={x.id === id ? "text-orange-300" : "text-zinc-300"} />} onClick={() => pickThing(x.id)} testid={`export-pick-${x.id}`} />)}
+      <div className="h-px bg-white/[0.08] mx-3 my-1" />
+      <ActRow label="Save course file" icon={<FileDown size={18} className="text-zinc-300" />} onClick={saveFile} testid="export-file" />
+      <ActRow label="Share" icon={<Share2 size={18} className="text-zinc-300" />} onClick={share} testid={SERVER ? "export-share-people" : "locked-share"} />
+    </div>
+  );
+  return (
+    <GlassBar pill={{ name: t.name, icon: <Icon size={17} />, testid: "export-pill" }} pillMenu={menu}
+      settings={settings} onDone={() => make(t)} doneText={t.go.short} doneLabel={t.go.label} doneTestid={t.go.testid}
+      remember={`export-${t.id}`} bottom={bottom} onHeight={onHeight} testid="export-bar" />
   );
 }

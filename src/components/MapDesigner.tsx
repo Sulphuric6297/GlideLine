@@ -807,7 +807,8 @@ export function MapDesigner({ compact = false, topInset = 0, bottomInset = 0, pr
   // A phone's Map step, as the 3D map is: the page under the bars (the printouts are chips on the
   // top bar, PageChips), at first filling the room between them, a finger sliding it about and a
   // pinch zooming it; Fit shows it whole. What opens over it floats over it: nothing zooms
-  const phonePage = compact && !only;
+  // (a phone's page has the screen, its zoom down the right: the Map step's and Export's)
+  const phonePage = compact;
   const BAR = 76; // (the tools' sheet along the bottom, the same room kept whatever's open)
   const room = { top: topInset + 6, bottom: BAR + 8 };
   const visW = size.w - 20, visH = Math.max(80, size.h - room.top - room.bottom);
@@ -974,7 +975,8 @@ export function MapDesigner({ compact = false, topInset = 0, bottomInset = 0, pr
     <div className="absolute inset-0 z-20 bg-zinc-950 flex flex-col isolate overflow-clip" style={compact && !phonePage ? { paddingTop: topInset } : undefined} data-testid="map-designer">
       <Woods inset />
       {!phonePage && <div ref={controls} className={compact ? "flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2 py-2" : "flex items-center gap-2 px-3 py-2.5 flex-wrap"}>
-        <div role="tablist" className={compact ? "w-full flex gap-1" : "flex gap-1"}>{[...(only ? [] : [tab("general", "General")]), tab("map", "Course map", "Map"), tab("sign", "Tee sign", "Sign"), tab("page", "Hole page", "Page"), tab("scorecard", "Scorecard", "Card")]}</div>
+        {/* (Export: the thing picked in its list is the page shown) */}
+        {!only && <div role="tablist" className={compact ? "w-full flex gap-1" : "flex gap-1"}>{[tab("general", "General"), tab("map", "Course map", "Map"), tab("sign", "Tee sign", "Sign"), tab("page", "Hole page", "Page"), tab("scorecard", "Scorecard", "Card")]}</div>}
         {/* (a phone: the hole and the size on one row, the size by its short name) */}
         <div className={compact ? "w-full flex items-center gap-2 min-w-0 empty:hidden" : "contents"}>
         {holeStep}

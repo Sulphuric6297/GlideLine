@@ -184,7 +184,7 @@ export const flyButton = (page: Page) => page.getByTestId("tee-bar").getByTestId
 
 export const editorState = (page: Page) => page.evaluate(() => {
   const s = (window as any).__dgEditor();
-  return { step: s.step, tool: s.tool, selectedId: s.selectedId, group: s.group, dragSelect: s.dragSelect, designSel: s.designSel, activeHoleId: s.activeHoleId, view: s.view, teeView: s.teeView, flyGround: s.flyGround };
+  return { step: s.step, tool: s.tool, selectedId: s.selectedId, group: s.group, dragSelect: s.dragSelect, designSel: s.designSel, activeHoleId: s.activeHoleId, view: s.view, teeView: s.teeView, flyGround: s.flyGround, designTab: s.designTab };
 });
 
 /** The map at rest: a fit or zoom easing in on a slow machine moves what's under a click. */

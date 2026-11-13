@@ -6,8 +6,30 @@ import { createArea, createBasket, createEmptyCourse, createTee, newHole } from 
 import { HOLE_PAGES, holeLengths, renderHolePage } from "../../src/lib/holePage";
 import { renderTeeSign } from "../../src/lib/teeSign";
 
-/** Clicks an export button and returns the downloaded file's name and contents. */
+/** Each export button's thing in the Export list, and the format picked for it there. */
+const VIA: Record<string, [thing: string, format?: string]> = {
+  "export-map-pdf": ["map", "PDF"], "export-map-png": ["map", "PNG"], "export-map-svg": ["map", "SVG"],
+  "export-signs-pdf": ["signs", "PDF"], "export-signs-zip": ["signs", "Pictures (ZIP)"], "export-sign-png": ["signs", "PNG"], "export-sign-svg": ["signs", "SVG"],
+  "export-holes-pdf": ["pages", "PDF"], "export-holes-zip": ["pages", "Pictures (ZIP)"], "export-hole-png": ["pages", "PNG"], "export-hole-svg": ["pages", "SVG"], "export-hole-geojson": ["pages", "GeoJSON"],
+  "export-scorecard": ["scorecard", "PDF"],
+  "export-kml": ["data", "KML"], "export-gpx": ["data", "GPX"], "export-geojson": ["data", "GeoJSON"], "export-holes-csv": ["data", "Holes CSV"], "export-stakeout": ["data", "Stake-out CSV"],
+  "export-parts": ["parts"]
+};
+/** Opens a thing in the Export list (its row: its choices and its button). */
+const openThing = async (page: Page, id: string) => {
+  const row = page.getByTestId(`export-thing-${id}`);
+  if (!(await row.getAttribute("data-open"))) await row.getByRole("button").first().click();
+  return row;
+};
+
+/** Opens the export's thing, picks its format, clicks its button and returns the downloaded file's
+ * name and contents. */
 const exported = async (page: Page, testid: string) => {
+  const via = VIA[testid];
+  if (via) {
+    const row = await openThing(page, via[0]);
+    if (via[1]) await row.getByRole("radio", { name: via[1], exact: true }).click();
+  }
   const [download] = await Promise.all([page.waitForEvent("download", { timeout: 150_000 }), page.getByTestId(testid).click()]);
   const path = await download.path();
   return { name: download.suggestedFilename(), data: readFileSync(path!) };
@@ -84,18 +106,16 @@ test("spreadsheets: the hole list, the stake-out list and the parts list", async
 test("printing: course map PDF and SVG, tee signs PDF and pictures, scorecard", async ({ page }) => {
   test.setTimeout(420_000);
   await setup(page);
-  // Each kind's formats in one row under its size (none left on a line of its own)
-  const tops = async (...ids: string[]) => Promise.all(ids.map(async id => Math.round((await page.getByTestId(id).boundingBox())!.y)));
-  expect(new Set(await tops("export-map-pdf", "export-map-png", "export-map-svg")).size).toBe(1);
-  expect(new Set(await tops("export-signs-pdf", "export-signs-zip")).size).toBe(1);
-  // The video sizes read in full in their box
-  const room = await page.getByTestId("video-resolution").evaluate((el: HTMLSelectElement) => {
-    const c = document.createElement("canvas").getContext("2d")!;
-    const cs = getComputedStyle(el);
-    c.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-    return Math.min(...[...el.options].map(o => el.clientWidth - parseFloat(cs.paddingLeft) - c.measureText(o.text).width));
-  });
-  expect(room).toBeGreaterThan(22);
+  // One thing open at a time, with only its own choices; each of them inside the panel, none cut off
+  for (const id of ["map", "signs", "pages", "video"]) {
+    const row = await openThing(page, id);
+    await expect(page.locator("[data-testid^=export-thing-][data-open]")).toHaveCount(1);
+    const box = (await row.boundingBox())!;
+    for (const r of await row.getByRole("radio").all()) {
+      const b = (await r.boundingBox())!;
+      expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 0.5);
+    }
+  }
   const svg = await exported(page, "export-map-svg");
   expect(svg.name).toMatch(/-map\.svg$/);
   expect(svg.data.toString()).toContain("<svg");
@@ -134,8 +154,8 @@ test("hole by hole: a PDF page and a picture per hole, and one hole's PNG, SVG a
   await page.getByTestId("belongs-to").getByRole("button", { name: "Hole 1" }).click();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "4 Export" }).click();
-  const holes = page.getByTestId("hole-exports");
-  await expect(holes.getByTestId("hole-pick")).toHaveValue("all");
+  const holes = await openThing(page, "pages");
+  await expect(holes.getByTestId("hole-pick").getByRole("radio", { name: "All 2" })).toHaveAttribute("aria-checked", "true");
   // All holes: one PDF page each, and a ZIP with a picture of each
   const pdf = await exported(page, "export-holes-pdf");
   expect(pdf.name).toBe("springfield-park-disc-golf-course-hole-pages.pdf");
@@ -148,9 +168,9 @@ test("hole by hole: a PDF page and a picture per hole, and one hole's PNG, SVG a
   // (printed at 300 dpi)
   expect(pngSize(letter)).toEqual({ width: 2550, height: 3300 });
   // One hole: its page as a square picture for sharing, as SVG, and its GPS file
-  await holes.getByTestId("hole-pick").selectOption({ label: "Hole 2" });
-  await holes.getByTestId("hole-page-size").selectOption("square");
-  await expect(holes.getByTestId("export-holes-zip")).toBeHidden();
+  await holes.getByTestId("hole-pick").getByRole("radio", { name: "2", exact: true }).click();
+  await holes.getByTestId("hole-page-size").getByRole("radio", { name: "Square" }).click();
+  await expect(holes.getByRole("radio", { name: "Pictures (ZIP)" })).toHaveCount(0);
   const one = await exported(page, "export-holes-pdf");
   expect(one.name).toBe("springfield-park-disc-golf-course-hole-2.pdf");
   expect(pdfPages(one.data)).toBe(1);

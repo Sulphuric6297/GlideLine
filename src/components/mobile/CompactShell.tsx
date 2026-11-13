@@ -56,6 +56,8 @@ import { startTour } from "../Tour";
 
 import { ViewerPanelBody } from "../../auth/ViewerPanel";
 import { SERVER } from "../../auth/api";
+import { ExportBar } from "../ExportPanel";
+import { usePageShown } from "../../state/exportPick";
 import { useAllowed } from "../../auth/perms";
 import { CoursePageButton, SITE_TOKEN } from "../../auth/PublicSite";
 
@@ -905,15 +907,17 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
   // (No sheet under the welcome card: it is the first step's panel, with the same two choices;
   // and none on the Map step, where the page's settings are a row of tools under it)
   const pageTools = ed.step === "map" && !immersive && !readOnly;
+  // (Export, as the Map step: the preview has the screen, the thing made in the glass bar under it)
+  const exportBar = ed.step === "export" && !immersive && !welcome;
   // (standing in 3D with a thing picked: its usual sheet, over the tee view's bar)
   const pickedInTee = immersive && !onSite && !readOnly && !ed.flyover && !ed.flyCam && !!ed.selectedId && getDoc().items.some(i => i.id === ed.selectedId);
   // (a tool in use, or a thing picked: the glass bar over a whole-screen map, not the sheet; view
   // only, a thing's numbers are in the sheet as before)
-  const bar = !readOnly && !welcome && !pageTools && (panel.mode === "tool" || panel.mode === "selection") && (!immersive || pickedInTee);
+  const bar = !readOnly && !welcome && !pageTools && !exportBar && (panel.mode === "tool" || panel.mode === "selection") && (!immersive || pickedInTee);
   // (the step's own panel, out of its tab or back in it; view only, it's the course's numbers, out)
   const [panelOpen, setPanelOpen] = useState(() => STEP_OPEN[useEditor.getState().step]);
   const stepOnly = panel.mode === "step" && !readOnly;
-  const sheet = (!immersive || pickedInTee) && !welcome && !pageTools && !bar && (!stepOnly || panelOpen);
+  const sheet = (!immersive || pickedInTee) && !welcome && !pageTools && !exportBar && !bar && (!stepOnly || panelOpen);
   // (the step's tools in the row over the steps, the panel in its tab)
   const stepRow = stepOnly && !sheet && !welcome && !immersive && (ed.step === "design" || ed.step === "site");
   const [barH, setBarH] = useState(132);
@@ -1058,10 +1062,10 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
   // (the panel dragged down to its smallest: back into its tab)
   const onDetent = (d: Detent) => { if (d === "peek" && stepOnly) setPanelOpen(false); else setDetent(d); };
   const top = 72; // below the top bar
-  const design = (ed.step === "map" || ed.step === "export") && !ed.teeView;
+  const design = usePageShown(ed.step, ed.teeView);
   // (Room for the map's buttons: between the top bar and the sheet, less the drawing buttons;
   // none under the welcome card or the Design preview)
-  const controlsRoom = welcome || design ? 0 : mainH - sheetH - top - 12 - (drawBar ? 64 : 0);
+  const controlsRoom = welcome || design ? 0 : mainH - (exportBar ? toolsH : sheetH) - top - 12 - (drawBar ? 64 : 0);
 
   return (
     <div className="dg-compact fixed inset-0 flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden isolate" data-layout="phone" onScroll={keepPut}>
@@ -1072,13 +1076,13 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
         {/* (the page over the whole map, so nothing of the 3D view shows: on the Map step with its
             tools under it, the page fitting the room above them and whatever they open; on Export
             over a low sheet, staying put as the sheet's pulled up) */}
-        {design && pageTools && (
+        {design && (pageTools || exportBar) && (
           <div className="absolute inset-0 z-20 bg-zinc-950" data-testid="design-layer">
-            <MapDesigner compact topInset={top} bottomInset={toolsH} />
-            {!ed.designSel && <div ref={toolsAt} className="absolute inset-x-0 bottom-0 z-30"><PageTools /></div>}
+            <MapDesigner compact topInset={top} bottomInset={toolsH} preview={exportBar} />
+            {pageTools && !ed.designSel && <div ref={toolsAt} className="absolute inset-x-0 bottom-0 z-30"><PageTools /></div>}
           </div>
         )}
-        {design && !pageTools && (
+        {design && !pageTools && !exportBar && (
           <div className="absolute inset-0 z-20 bg-zinc-950" data-testid="design-layer">
             <div className="absolute inset-x-0 top-0" style={{ bottom: Math.min(sheetH, Math.round(mainH * 0.55)) }}>
               <MapDesigner compact topInset={top} preview={ed.step === "export"} />
@@ -1088,12 +1092,13 @@ function PhoneShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts
         {!immersive && <PhoneTopBar onMenu={openApp} pages={design && pageTools} />}
         {!immersive && <GettingStarted phone />}
         {!immersive && <DrawBar bottom={bar && ed.drawPoints > 0 ? 18 : sheetH + 12} />}
+        {exportBar && <ExportBar onHeight={h => setToolsH(h + 18)} />}
         {stepRow && <StepTools onPick={setFrom} back={back} />}
         {bar && <PhoneBar faded={faded} onHeight={setBarH} mainH={mainH} from={from} />}
         {onSite ? <OnSite /> : ed.teeView && (ed.flyCam && !useCourse.getState().readOnly ? <CameraHud compact /> : <TeeViewHud compact />)}
         <ExportProgressPill top={immersive ? undefined : top + 4} bottom={immersive ? 146 : undefined} />
         {/* (above the drawing buttons when they're up) */}
-        {toasts(onSite ? 340 : immersive ? (exporting ? 206 : 146) : pageTools ? 84 : sheetH + 12 + (drawBar ? 64 : 0))}
+        {toasts(onSite ? 340 : immersive ? (exporting ? 206 : 146) : pageTools ? 84 : exportBar ? toolsH + 12 : sheetH + 12 + (drawBar ? 64 : 0))}
         {welcome && !immersive && (
           <div className="absolute inset-0 z-10 flex items-end justify-center px-3 pb-3 pointer-events-none" style={{ paddingTop: top }}>{welcome}</div>
         )}
@@ -1175,7 +1180,7 @@ function RailShell({ onFindSite, onHelp, onGoTo, onContextMenu, welcome, toasts 
     setOpen(true);
     goStep(s, () => {}, () => setOpen(o => !o));
   };
-  const design = (ed.step === "map" || ed.step === "export") && !ed.teeView;
+  const design = usePageShown(ed.step, ed.teeView);
   return (
     <div className="dg-compact fixed inset-0 flex bg-zinc-950 text-zinc-100 overflow-hidden isolate" data-layout="rail" onScroll={keepPut}>
       <Woods />

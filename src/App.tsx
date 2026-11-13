@@ -29,6 +29,7 @@ import { SiteReady, readyFacts, type ReadyFact } from "./components/SiteReady";
 import { TeeViewHud } from "./components/TeeViewHud";
 import { CameraHud } from "./components/CameraHud";
 import { MapDesigner } from "./components/MapDesigner";
+import { usePageShown } from "./state/exportPick";
 import { ExportProgressPill } from "./components/ExportProgress";
 import { Button, HELP_EVENT } from "./components/ui";
 import { GettingStarted, openGettingStarted } from "./components/GettingStarted";
@@ -544,6 +545,8 @@ export default function App() {
     );
   }
 
+  // (the page over the 3D view: the Map step's, Export's but for a picture or a video)
+  const pageShown = usePageShown(ed.step, ed.teeView);
   return (
     <div className="h-screen w-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden relative isolate">
       <Woods />
@@ -553,7 +556,7 @@ export default function App() {
         {readOnly ? <ViewerPanel /> : ed.step !== "design" && <SidePanel onFindSite={() => setFindSite(true)} />}
         <main className="flex-1 relative min-w-0 rounded-[20px] overflow-hidden ring-1 ring-white/10">
           <MapViewport onContextMenu={onContextMenu} />
-          {(ed.step === "map" || ed.step === "export") && !ed.teeView && <MapDesigner preview={ed.step === "export"} />}
+          {pageShown && <MapDesigner preview={ed.step === "export"} />}
           {ed.step === "design" && !readOnly && !ed.teeView && !ed.reviewing && <HolesColumn />}
           {ed.step === "design" && !readOnly && <ProblemsPanel />}
           {/* (from a tee, only in Tap mode Select: walking, playing a flyover and editing its camera path
