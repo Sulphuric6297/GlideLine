@@ -763,7 +763,8 @@ test("looked over in 3D: water reshaped by hand comes in as it was left, after a
   await page.evaluate(() => localStorage.setItem("hyzerlab-gpu", "1"));
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload();
-  await expect(page.getByTestId("welcome")).toBeVisible();
+  // (slower to start with the 3D view drawn in full on a machine without a graphics card)
+  await expect(page.getByTestId("welcome")).toBeVisible({ timeout: 60_000 });
   const water = async () => (await course(page)).items.filter((i: any) => i.type === "area" && i.kind === "water");
   let moved: { x: number; y: number }[] = [];
   await importSite(page, { review: async p => {
