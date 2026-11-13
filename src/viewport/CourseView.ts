@@ -15,9 +15,10 @@ import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp } from "../constants";
 import { FAIRWAY_STATIONS, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
-import { boundsOf, centroid, clipPolygonToRect, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
+import { boundsOf, centroid, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
 import { heightAt } from "../lib/terrainGrid";
+import { waterLevel, waterOutline, withWaterBeds } from "../lib/waterBed";
 import { conifersOf, treeMixOf } from "../lib/landscapes";
 import { LOOK_LABEL, sharesOf, standShares, type TreeLookId } from "../lib/treeMix";
 import { fmtArea, fmtDist, fmtElev } from "../lib/units";
@@ -619,8 +620,10 @@ export class CourseView {
 
   // ------------------------------------------------------------------ public API
 
-  setDoc(doc: ViewDoc) {
+  setDoc(given: ViewDoc) {
     const prev = this.doc;
+    this.given = given;
+    const doc = this.withBeds(given);
     this.doc = doc;
     if (doc.heights !== this.heightsRef) {
       this.heightsRef = doc.heights;
@@ -3244,6 +3247,29 @@ export class CourseView {
     return this.doc ? heightAt(this.doc.heights, this.doc.gridSize, x, y) : 0;
   }
 
+  /** The ground as measured (or as shaped with the Ground tool), with no bed under the water. */
+  private rawH(x: number, y: number) {
+    return this.given ? heightAt(this.given.heights, this.given.gridSize, x, y) : 0;
+  }
+
+  /** The doc as handed in, and the heights the view draws: the same, with a bed under each water
+   * outline (worked out again only when the ground or the water changes; while a point is dragged,
+   * once it's let go). */
+  private given: ViewDoc | null = null;
+  private beds: { heights: unknown; key: string; out: Record<string, number> } | null = null;
+  private bedsAfterDrag = false;
+  private withBeds(doc: ViewDoc): ViewDoc {
+    const waters = (doc.course.items.filter(i => i.type === "area" && i.kind === "water") as AreaItem[]).map(a => this.shapeOf(a).pts).filter(p => p.length >= 3);
+    const key = JSON.stringify([doc.gridSize, doc.canvas, waters]);
+    const b = this.beds;
+    if (b && b.heights === doc.heights && b.key === key) return { ...doc, heights: b.out };
+    // (a drag under way: the bed as it was, till it's let go)
+    if (b && b.heights === doc.heights && this.dragging) { this.bedsAfterDrag = true; return { ...doc, heights: b.out }; }
+    const out = withWaterBeds(doc.heights, doc.gridSize, doc.canvas, waters);
+    this.beds = { heights: doc.heights, key, out };
+    return { ...doc, heights: out };
+  }
+
   private item(id: string | null): CourseItem | null {
     return id ? this.doc?.course.items.find(i => i.id === id) ?? null : null;
   }
@@ -3868,43 +3894,14 @@ export class CourseView {
           return g;
         }
         if (a.kind === "water") {
-          // Water lies at the level of its banks nearby (a pond level, a river sloping down its
-          // length), and never under the ground: over the highest corner of the ground's cell it's
-          // in (ground measured from the air is bumpy, and its triangles rise between samples)
+          // Water lies flat at the level of its banks nearby (a pond level, a river sloping down its
+          // length), worked out from the ground as measured; under it the ground is a bed shelving
+          // from the bank (lib/waterBed), so no tall spot the survey guessed at breaks it
           const cell = doc.gridSize || 20;
           // (only on the site: a lake's outline the maps hand over can run past its edges)
-          const pts = clipPolygonToRect(a.points, { x0: 0, y0: 0, x1: doc.canvas.width, y1: doc.canvas.height });
+          const pts = waterOutline(a.points, doc.canvas);
           if (pts.length < 3) return g;
-          const banks: { x: number; y: number; h: number }[] = [];
-          for (let i = 0; i < pts.length; i++) {
-            const p = pts[i], q = pts[(i + 1) % pts.length];
-            const n = Math.max(1, Math.ceil(Math.hypot(q.x - p.x, q.y - p.y) / 8));
-            for (let k = 0; k < n; k++) { const x = p.x + ((q.x - p.x) * k) / n, y = p.y + ((q.y - p.y) * k) / n; banks.push({ x, y, h: this.h(x, y) }); }
-          }
-          const lowest = Math.min(...banks.map(b => b.h));
-          const REACH = 90;
-          const bankLevel = (x: number, y: number) => {
-            let m = Infinity;
-            for (const b of banks) if (Math.abs(b.x - x) < REACH && Math.abs(b.y - y) < REACH && b.h < m) m = b.h;
-            return Number.isFinite(m) ? m : lowest;
-          };
-          const cellTop = (x: number, y: number) => {
-            const i = Math.floor(x / cell) * cell, j = Math.floor(y / cell) * cell;
-            return Math.max(this.h(i, j), this.h(i + cell, j), this.h(i, j + cell), this.h(i + cell, j + cell));
-          };
-          // (land inside its outline, an island or a shore drawn too wide: where the ground stands
-          // well clear of the water's level the water lies at its own level under it, so the
-          // ground's own slope is the shore, and it doesn't climb over the land)
-          // (out in the water it rides over the survey's bumps; near its edge it lies flat at its own
-          // level, so the ground itself says where the shore is, not the map's straight lines)
-          const edgeLine = [...pts, pts[0]];
-          const surface = (x: number, y: number) => {
-            const level = bankLevel(x, y) + 0.2, top = cellTop(x, y) + 0.3, over = top - level;
-            const ride = over <= 1.5 ? Math.max(level, top) : over >= 3.5 ? level : level + (top - level) * (1 - (over - 1.5) / 2);
-            if (ride <= level) return level;
-            const k = Math.min(1, Math.max(0, (distanceToPath({ x, y }, edgeLine) - 10) / 14));
-            return level + (ride - level) * k;
-          };
+          const surface = waterLevel(pts, (x, y) => this.rawH(x, y));
           // (its depth: shelving from the bank, a foot every 2 ft out, to 9 ft; the survey
           // can't see under water, so the ground there is only the water's own level)
           // The shore: the map's outline is only roughly where the water ends, so the water goes on
@@ -3915,7 +3912,7 @@ export class CourseView {
           const inner = drapedPolygon(pts, surface, cell / 2, 0);
           const W2 = doc.canvas.width, H2 = doc.canvas.height, SHORE = SHORE_FT;
           const ring = pts;
-          const level = (x: number, y: number) => bankLevel(x, y) + 0.2;
+          const level = surface;
           const band: number[] = [];
           const onEdge = (p: P) => p.x < 0.5 || p.y < 0.5 || p.x > W2 - 0.5 || p.y > H2 - 0.5;
           const m = ring.length;
@@ -6309,6 +6306,7 @@ export class CourseView {
       this.handleKey = "";
       this.syncHandles();
       if (this.afterDrag && this.doc) { this.afterDrag = false; this.syncShapes(); this.invalidate(); }
+      if (this.bedsAfterDrag && this.given) { this.bedsAfterDrag = false; this.setDoc(this.given); }
       if (this.shadowsAfterDrag) { this.shadowsAfterDrag = false; this.shadowsDirty = true; this.invalidate(); }
     }
     this.updateCursor();
@@ -7474,12 +7472,12 @@ export class CourseView {
     const g0 = at0 ? { x: at0.x, z: at0.y } : this.groundAt(start.clientX, start.clientY);
     if (!g0) return null;
     const b = this.tool.brush ?? { size: 25, strength: 5, ground: "raise" as const };
-    const heights: Record<string, number> = { ...doc.heights };
+    const heights: Record<string, number> = { ...(this.given ?? doc).heights };
     const original: Record<string, number> = { ...(doc.course.terrainOriginal ?? {}) };
     const W = doc.course.canvas.width, H = doc.course.canvas.height;
     // (raise and lower: a quarter foot a dab at strength 1; flatten and smooth: how far a dab goes)
     const amount = b.ground === "raise" || b.ground === "lower" ? b.strength * 0.12 : Math.min(1, b.strength * 0.05);
-    const level = heightAt(doc.heights, doc.gridSize, g0.x, g0.z);
+    const level = this.rawH(g0.x, g0.z);
     let last: P = { x: g0.x, y: g0.z }, frame = 0;
     const put = (p: P) => dab(heights, doc.gridSize, W, H, p, b.size, b.ground, amount, level, original);
     // (while painting, only the ground itself reshapes, once a frame at most: the trees, lines,
