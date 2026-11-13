@@ -91,7 +91,15 @@ export const waterMaterial = (color: string, shore = "#2a3a24", rise = 0.08, opt
   });
   const tex = rippleTexture();
   // (with its depth known: clear where it's a few inches deep, so it meets its banks softly)
-  if (opts.bottom) { m.defines = { ...m.defines, DG_DEPTH: "" }; m.transparent = true; }
+  if (opts.bottom) {
+    m.defines = { ...m.defines, DG_DEPTH: "" };
+    m.transparent = true;
+    // (it lies at its own level now, the ground drawing its shore: only the least nudge toward the
+    // eye, not one that grows with the slant, which seen from far off drew it over the land and
+    // the trees on its banks)
+    m.polygonOffsetFactor = 0;
+    m.polygonOffsetUnits = -2;
+  }
   if (opts.mirror) m.defines = { ...m.defines, DG_MIRROR: "" };
   // (a pond's floor at its very edge: the water's own color a little darker, a touch of the bank's)
   const bottom = new THREE.Color(opts.bottom ?? "#5a5238").multiplyScalar(0.62);

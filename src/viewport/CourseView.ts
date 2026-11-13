@@ -15,7 +15,7 @@ import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp } from "../constants";
 import { FAIRWAY_STATIONS, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine } from "../lib/course";
-import { boundsOf, centroid, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
+import { boundsOf, centroid, clipPolygonToRect, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
 import { heightAt } from "../lib/terrainGrid";
 import { conifersOf, treeMixOf } from "../lib/landscapes";
@@ -3865,9 +3865,12 @@ export class CourseView {
           // length), and never under the ground: over the highest corner of the ground's cell it's
           // in (ground measured from the air is bumpy, and its triangles rise between samples)
           const cell = doc.gridSize || 20;
+          // (only on the site: a lake's outline the maps hand over can run past its edges)
+          const pts = clipPolygonToRect(a.points, { x0: 0, y0: 0, x1: doc.canvas.width, y1: doc.canvas.height });
+          if (pts.length < 3) return g;
           const banks: { x: number; y: number; h: number }[] = [];
-          for (let i = 0; i < a.points.length; i++) {
-            const p = a.points[i], q = a.points[(i + 1) % a.points.length];
+          for (let i = 0; i < pts.length; i++) {
+            const p = pts[i], q = pts[(i + 1) % pts.length];
             const n = Math.max(1, Math.ceil(Math.hypot(q.x - p.x, q.y - p.y) / 8));
             for (let k = 0; k < n; k++) { const x = p.x + ((q.x - p.x) * k) / n, y = p.y + ((q.y - p.y) * k) / n; banks.push({ x, y, h: this.h(x, y) }); }
           }
@@ -3887,7 +3890,7 @@ export class CourseView {
           // ground's own slope is the shore, and it doesn't climb over the land)
           // (out in the water it rides over the survey's bumps; near its edge it lies flat at its own
           // level, so the ground itself says where the shore is, not the map's straight lines)
-          const edgeLine = [...a.points, a.points[0]];
+          const edgeLine = [...pts, pts[0]];
           const surface = (x: number, y: number) => {
             const level = bankLevel(x, y) + 0.2, top = cellTop(x, y) + 0.3, over = top - level;
             const ride = over <= 1.5 ? Math.max(level, top) : over >= 3.5 ? level : level + (top - level) * (1 - (over - 1.5) / 2);
@@ -3902,9 +3905,9 @@ export class CourseView {
           // it (the ground hides it there, along the ground's own lie); where the ground stays low it
           // thins away. Each point's depth from the ground under it (and, inside the outline, a foot
           // every 2 ft from the edge: the survey can't see under water) says how clear it is.
-          const inner = drapedPolygon(a.points, surface, cell / 2, 0);
+          const inner = drapedPolygon(pts, surface, cell / 2, 0);
           const W2 = doc.canvas.width, H2 = doc.canvas.height, SHORE = SHORE_FT;
-          const ring = a.points;
+          const ring = pts;
           const level = (x: number, y: number) => bankLevel(x, y) + 0.2;
           const band: number[] = [];
           const onEdge = (p: P) => p.x < 0.5 || p.y < 0.5 || p.x > W2 - 0.5 || p.y > H2 - 0.5;
@@ -3957,10 +3960,10 @@ export class CourseView {
           }
           geo.setAttribute("aDepth", new THREE.BufferAttribute(depth, 1));
           geo.setAttribute("aShore", new THREE.BufferAttribute(reach, 1));
-          const shore = this.waterShore(a.points), bottom = `#${new THREE.Color(c).multiplyScalar(0.8).lerp(new THREE.Color(doc.groundColor), 0.2).getHexString()}`;
+          const shore = this.waterShore(pts), bottom = `#${new THREE.Color(c).multiplyScalar(0.8).lerp(new THREE.Color(doc.groundColor), 0.2).getHexString()}`;
           const pond = new THREE.Mesh(geo, waterMaterial(c, ...shore, { bottom }));
           pond.userData.water = true;
-          const mid = centroid(a.points);
+          const mid = centroid(pts);
           this.ponds.set(pond, { color: c, shore, bottom, at: new THREE.Vector3(mid.x, surface(mid.x, mid.y) + 2.5, mid.y), size: Math.abs(polygonArea(a.points)), done: false });
           this.pondsDirty = true;
           pond.renderOrder = 2;
