@@ -342,6 +342,7 @@ if (typeof window !== "undefined") {
   (window as any).__dgCourse = () => useCourse.getState().doc;
   (window as any).__dgEditor = () => useEditor.getState();
   (window as any).__dgHistory = () => ({ past: useCourse.getState().past.length, future: useCourse.getState().future.length });
+  (window as any).__dgStore = useCourse;
 }
 
 // (another hole, or back to the map: standing on its tee again, unless a spot came with it)

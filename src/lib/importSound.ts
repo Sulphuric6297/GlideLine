@@ -34,32 +34,43 @@ const fade = (el: HTMLAudioElement, to: number, ms: number, then?: () => void) =
   fades.set(el, id);
 };
 
-// --- the effects, ready before they're wanted
+// --- the effects, ready before they're wanted. Played as plain audio, as the music is (a sound
+// made ready through the page's audio graph can be held back on a phone, unheard); fetched at the
+// press, so each starts the moment it's asked for, from where its sound begins.
 let ctx: AudioContext | null = null;
-const ready = new Map<string, AudioBuffer>(), asked = new Set<string>();
-const sounding = new Set<{ src: AudioBufferSourceNode; gain: GainNode }>();
+const loaded = new Map<string, HTMLAudioElement>();
+type One = { el: HTMLAudioElement };
+const sounding = new Set<One>();
 const prepare = () => {
   const AC = typeof window === "undefined" ? undefined : window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AC) return;
-  if (!ctx) ctx = new AC();
-  void ctx.resume().catch(() => { /* not allowed yet */ });
+  if (AC && !ctx) ctx = new AC();
+  if (ctx) void ctx.resume().catch(() => { /* not allowed yet */ });
+  if (typeof Audio === "undefined") return;
   for (const url of [TREES, CHIME]) {
-    if (asked.has(url)) continue;
-    asked.add(url);
-    fetch(url).then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error("not there")))).then(b => ctx!.decodeAudioData(b)).then(buf => { ready.set(url, buf); }).catch(() => { asked.delete(url); });
+    if (loaded.has(url)) continue;
+    const el = new Audio(url);
+    el.preload = "auto";
+    el.load();
+    loaded.set(url, el);
   }
 };
+const ready = { get size() { return [...loaded.values()].filter(e => e.readyState >= 3).length; } };
 /** An effect, at once; `hold`: faded out after that many seconds, over `out`. */
 const play = (url: string, hold?: number, out = 1.6) => {
-  const buf = ready.get(url), fx = FX[url];
-  if (!ctx || !buf || !fx || !importSoundOn()) return null;
-  const src = ctx.createBufferSource(), gain = ctx.createGain(), one = { src, gain };
-  src.buffer = buf; gain.gain.value = fx.gain;
-  src.connect(gain); gain.connect(ctx.destination);
-  src.onended = () => { sounding.delete(one); };
+  const fx = FX[url];
+  if (!fx || !importSoundOn() || typeof Audio === "undefined") return null;
+  if (ctx && ctx.state !== "running") void ctx.resume().catch(() => {});
+  const first = loaded.get(url), el = first && first.paused ? first : new Audio(url);
+  if (!loaded.has(url)) loaded.set(url, el);
+  const one: One = { el };
+  window.clearInterval(fades.get(el));
+  el.volume = Math.min(1, fx.gain);
+  try { el.currentTime = fx.from; } catch { /* not seekable yet: from its start */ }
+  const done = () => { el.pause(); sounding.delete(one); };
+  el.onended = done;
   sounding.add(one);
-  src.start(0, Math.min(fx.from, Math.max(0, buf.duration - 0.1)));
-  if (hold !== undefined) { const t = ctx.currentTime + hold; gain.gain.setValueAtTime(fx.gain, t); gain.gain.linearRampToValueAtTime(0, t + out); src.stop(t + out + 0.05); }
+  void el.play().catch(done);
+  if (hold !== undefined) window.setTimeout(() => { if (sounding.has(one)) fade(el, 0, out * 1000, done); }, hold * 1000);
   return one;
 };
 
@@ -110,7 +121,7 @@ export const setImportSound = (on: boolean) => {
   if (on) { startImportMusic(); return; }
   if (music) { leaving = false; stopImportMusic(350); }
   if (bus && ctx) { const b = bus; b.gain.setValueAtTime(0, ctx.currentTime); window.setTimeout(() => { b.gain.value = 1; }, 3000); }
-  for (const one of sounding) { try { one.gain.gain.cancelScheduledValues(0); one.gain.gain.value = 0; one.src.stop(); } catch { /* ended already */ } }
+  for (const one of sounding) { const el = one.el; fade(el, 0, 250, () => { el.pause(); sounding.delete(one); }); }
 };
 
 // --- the other parts' sounds: made here, not recorded (nothing to fetch, each as long as its part
@@ -176,6 +187,7 @@ export const playImportNote = (i: number) => {
  * stroke of air, the buildings a soft note each. */
 export const playImportFx = (part: "photo" | "ground" | "water" | "paths" | "build", seconds: number, n = 0) => {
   if (!importSoundOn()) return;
+  if (ctx && ctx.state !== "running") void ctx.resume().catch(() => {});
   const to = mix();
   if (!ctx || !to) return;
   const t0 = ctx.currentTime + 0.02, len = Math.max(0.6, seconds);
