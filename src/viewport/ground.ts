@@ -555,6 +555,27 @@ export class Ground {
     geo.computeVertexNormals();
     const skirt = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: new THREE.Color(doc.groundColor).offsetHSL(0, -0.04, -0.03), side: THREE.DoubleSide }));
     skirt.name = "landscape";
+    // (the site's own edge, eased into the dark round it when it's looked down on: a band along
+    // the edge, dark at the edge itself and clear a little way in)
+    {
+      const wid = span * 0.055, fp: number[] = [], fc: number[] = [], fi: number[] = [], m = edge.length;
+      for (const e of edge) {
+        const dx = cx - e.x, dy = cy - e.y, len = Math.hypot(dx, dy) || 1, ix = e.x + (dx / len) * wid, iy = e.y + (dy / len) * wid;
+        fp.push(e.x, e.h + 0.7, e.y, ix, this.h(doc, ix, iy) + 0.7, iy);
+        fc.push(0.027, 0.039, 0.024, 1, 0.027, 0.039, 0.024, 0);
+      }
+      for (let i = 0; i < m; i++) { const a = 2 * i, b = a + 1, c = 2 * ((i + 1) % m), e2 = c + 1; fi.push(a, b, c, c, b, e2); }
+      const fg = new THREE.BufferGeometry();
+      fg.setAttribute("position", new THREE.Float32BufferAttribute(fp, 3)); fg.setAttribute("color", new THREE.Float32BufferAttribute(fc, 4)); fg.setIndex(fi);
+      const feather = new THREE.Mesh(fg, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false, toneMapped: false }));
+      feather.name = "site-edge"; feather.renderOrder = 4; feather.visible = visible;
+      noRaycast(feather);
+      if (this.feather) { this.group.remove(this.feather); disposeObjectDeep(this.feather); }
+      this.feather = feather;
+      this.group.add(feather);
+    }
+    skirt.userData.base = (skirt.material as THREE.MeshLambertMaterial).color.clone();
+    this.shadeLandscape(this.landShade);
     skirt.receiveShadow = true;
     skirt.visible = visible;
     noRaycast(skirt);
@@ -562,9 +583,20 @@ export class Ground {
     this.group.add(skirt);
   }
 
+  /** How much of its own colour the land round the site has (1: all of it, seen from the ground;
+   * 0: dark, as the app's own backdrop is, looked down on from above, where it's only a surround). */
+  private landShade = 1;
+  private feather: THREE.Mesh | null = null;
+  shadeLandscape(k: number) {
+    this.landShade = k;
+    const m = this.skirt?.material as THREE.MeshLambertMaterial | undefined, base = this.skirt?.userData.base as THREE.Color | undefined;
+    if (m && base) m.color.set(0x070a06).lerp(base, k);
+    if (this.feather) (this.feather.material as THREE.MeshBasicMaterial).opacity = 1 - k;
+  }
   /** The tilted and tee views: land out to the horizon instead of the map's cut-away block. */
   landscape(on: boolean) {
     if (this.skirt) this.skirt.visible = on;
+    if (this.feather) this.feather.visible = on;
     if (this.sides) this.sides.visible = !on;
   }
 

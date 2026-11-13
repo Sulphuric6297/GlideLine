@@ -131,6 +131,9 @@ type EditorStore = {
   group: string[];
   /** A drag on the map draws a box to pick things with (instead of moving the map). */
   dragSelect: boolean;
+  /** A site just fetched is being looked over in 3D before it comes in: the tools, the panels and
+   * the keys stand aside (see SiteImportDialog). */
+  reviewing: boolean;
   /** Measure: from one spot (each click moves the far end; the default) or along a path (each click adds a turn). */
   measureMode?: "spot" | "path";
   /** The hole whose line is being plotted by hand, point by point. */
@@ -234,6 +237,8 @@ type EditorStore = {
   stumps: boolean;
   /** Every tree hidden, to see the photo under them (this screen only, not kept). */
   hideTrees: boolean;
+  /** Underbrush tinted and outlined by how thick it is, seen through the trees. */
+  brushOutlines: boolean;
   /** The ground from a tee, in flyovers and videos: the course's own ground (as Design shows it
    * with the photo off), the painted map, or the photo. (Named anew when the ground's own became
    * the usual: a course's old pick, kept on this device, was only ever the old default.) */
@@ -269,6 +274,7 @@ export const useEditor = create<EditorStore>()(set => ({
   selectedId: null,
   group: [],
   dragSelect: false,
+  reviewing: false,
   plotLine: null,
   obPick: null,
   pickCut: false,
@@ -311,6 +317,7 @@ export const useEditor = create<EditorStore>()(set => ({
   ...DISPLAY_DEFAULTS,
   stumps: false,
   hideTrees: false,
+  brushOutlines: false,
   set: patch => {
     set(patch);
     if (DISPLAY.some(k => k in patch)) {
@@ -335,6 +342,7 @@ if (typeof window !== "undefined") {
   (window as any).__dgCourse = () => useCourse.getState().doc;
   (window as any).__dgEditor = () => useEditor.getState();
   (window as any).__dgHistory = () => ({ past: useCourse.getState().past.length, future: useCourse.getState().future.length });
+  (window as any).__dgStore = useCourse;
 }
 
 // (another hole, or back to the map: standing on its tee again, unless a spot came with it)

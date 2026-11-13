@@ -275,6 +275,11 @@ export function DesignPanel() {
         <Toggle label="Distances" checked={s.distances} onChange={v => setStyle({ distances: v })} />
         <Toggle label="Putting circle" checked={s.circle} onChange={v => setStyle({ circle: v })} />
       </Section>
+      <Section title="Amenity marks" help="amenities" testid="amenity-marks">
+        <Segmented label="Amenity marks" value={s.amenityMarks ?? "comforts"} onChange={v => setStyle({ amenityMarks: v === "comforts" ? undefined : v })}
+          options={[{ value: "essentials", label: "Essentials" }, { value: "comforts", label: "+ Comforts" }, { value: "all", label: "Everything" }]} />
+        <p className="text-[11.5px] text-zinc-400 mt-1.5 leading-snug">{s.amenityMarks === "essentials" ? "Parking, restrooms, water, the map board and the practice basket." : s.amenityMarks === "all" ? "A sign for every amenity, poles and lights too." : "Essentials, and benches, tables and trash cans near the holes, where there's room."} Poles, lights and gates are drawn as what they are.</p>
+      </Section>
       {/* (the course name's font is on the General tab: it goes on every printout) */}
       <Fold title={<span className="flex items-center gap-1.5">Lettering <HelpLink topic="lettering" label="Lettering" /></span>} testid="fold-title">
         <Field label="Labels font">

@@ -102,6 +102,11 @@ type Props = {
   /** ✓ at the row's end: put the tool away, put the thing down. */
   onDone?: () => void;
   doneLabel?: string;
+  doneTestid?: string;
+  /** The button's own mark in place of the tick (an arrow: on to the next step), or, named, a
+   * button with its words (the last step's). */
+  doneIcon?: ReactNode;
+  doneText?: string;
   /** In the row's place, as it is (drawing: room for the drawing's Undo, Cancel and Done). */
   replace?: ReactNode;
   /** The row's place is remembered under this name (a kind of thing, a tool). */
@@ -135,7 +140,7 @@ type Props = {
   inset?: number;
 };
 
-export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want, from, line, lineAbove = false, beside, tucked = false, center, inset = 0 }: Props) {
+export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, doneLabel = "Done", doneTestid = "bar-done", doneIcon, doneText, replace, remember, faded = false, side = false, bottom = 0, testid = "glass-bar", onHeight, onOpen, want, from, line, lineAbove = false, beside, tucked = false, center, inset = 0 }: Props) {
   const [open, setOpen] = useState<Open>(null);
   // (tucked: first the pill and the row fade where they are; a moment later, folded, only the line
   // at the foot; brought back from there by the page once no finger is on the line)
@@ -280,8 +285,8 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   );
 
   const doneEl = onDone && (
-    <button className="shrink-0 w-[50px] h-[50px] rounded-full bg-orange-300 text-zinc-950 flex items-center justify-center active:bg-orange-400 shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400" aria-label={doneLabel} title={doneLabel} onClick={() => { close(); onDone(); }} data-testid="bar-done">
-      <Check size={23} strokeWidth={3} />
+    <button className={`shrink-0 h-[50px] rounded-full bg-orange-300 text-zinc-950 flex items-center justify-center active:bg-orange-400 active:scale-[0.97] transition-transform shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${doneText ? "px-5 text-[15px] font-bold whitespace-nowrap dg-step-ready" : "w-[50px]"}`} aria-label={doneLabel} title={doneLabel} onClick={() => { close(); onDone(); }} data-testid={doneTestid}>
+      {doneText ? <span className="dg-appear">{doneText}</span> : doneIcon ?? <Check size={23} strokeWidth={3} />}
     </button>
   );
 

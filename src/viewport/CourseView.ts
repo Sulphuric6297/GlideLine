@@ -14,8 +14,8 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp } from "../constants";
-import { FAIRWAY_STATIONS, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine } from "../lib/course";
-import { boundsOf, centroid, dist, distanceToPath, distanceToPolygon, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
+import { FAIRWAY_STATIONS, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
+import { boundsOf, centroid, clipPolygonToRect, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
 import { heightAt } from "../lib/terrainGrid";
 import { conifersOf, treeMixOf } from "../lib/landscapes";
@@ -98,6 +98,10 @@ const SELECT = "#22d3ee";
 type Rect = { x: number; y: number; width: number; height: number };
 /** A picture on screen: the camera it's drawn with, and where (the container's pixels). */
 type Eye = { cam: THREE.PerspectiveCamera; rect: Rect };
+/** How far water goes on past its map outline, at its own level, to meet the ground (ft). */
+const SHORE_FT = 26;
+/** How long the view eases into place after a move (s): quick, so a wheel's turn stops when it does. */
+const SMOOTH = 0.16;
 const LIFT = 0.45;
 
 type Drag = { move: (e: PointerEvent) => void; end: (e: PointerEvent) => void };
@@ -546,13 +550,13 @@ export class CourseView {
     c.touches.three = ACTION.TOUCH_TRUCK;
     c.minPolarAngle = 0;
     c.maxPolarAngle = MAX_TILT;
-    c.smoothTime = 0.16;
+    c.smoothTime = SMOOTH;
     c.draggingSmoothTime = 0.06;
     c.azimuthRotateSpeed = 0.7;
     c.polarRotateSpeed = 0.7;
     c.dollyToCursor = true;
     c.addEventListener("controlend", () => this.snapNorth());
-    c.addEventListener("controlstart", () => { this.posePinned = false; this.autoFit = null; this.onUserMove?.(); });
+    c.addEventListener("controlstart", () => { if (c.smoothTime !== SMOOTH) { window.clearTimeout(this.easeTimer); c.smoothTime = SMOOTH; } this.posePinned = false; this.autoFit = null; this.onUserMove?.(); });
     c.addEventListener("rest", () => { this.posePinned = false; });
 
     this.ground = new Ground(this.renderer, () => this.invalidate(true));
@@ -775,7 +779,7 @@ export class CourseView {
     this.tool = tool;
     if (tool.mode === "select") this.updateGhost(null);
     // (painting underbrush: each patch tinted by how thick it is, as Look first shows it)
-    const k = this.paintKind(), tint = !!k?.brush;
+    const k = this.paintKind(), tint = !!k?.brush || this.brushShown || this.brushLayer;
     if (tint !== this.brushTint) { this.brushTint = tint; if (this.doc) this.syncShapes(); }
     if (this.doc) this.syncSelection();
     this.updateCursor();
@@ -786,6 +790,47 @@ export class CourseView {
 
   /** Underbrush tinted by its level (while it's being painted). */
   private brushTint = false;
+  /** Underbrush shown tinted and outlined whatever the tool (a site being looked over). */
+  private brushShown = false;
+  /** The view tilted, gently, to `polar` (0: straight down): a step of the import showing its own. */
+  easeTilt(polar: number) {
+    const c = this.controls;
+    c.smoothTime = 0.75;
+    void c.rotatePolarTo(clamp(polar, c.minPolarAngle, c.maxPolarAngle), true);
+    // (back to the view's own easing after, always to that, however many came close together)
+    window.clearTimeout(this.easeTimer);
+    this.easeTimer = window.setTimeout(() => { c.smoothTime = SMOOTH; }, 1800);
+    this.invalidate();
+  }
+  private easeTimer = 0;
+  /** The underbrush's tint and outlines eased in (shown at once, they'd pop). */
+  private fadeTintIn() {
+    const mats: { m: THREE.Material & { opacity: number }; to: number }[] = [];
+    for (const [k, e] of this.shapes) if (k.startsWith("area:")) e.obj.traverse(o => { const to = o.userData.tint as number | undefined, m = (o as THREE.Mesh).material as (THREE.Material & { opacity: number }) | undefined; if (to !== undefined && m && !Array.isArray(m)) { m.transparent = true; m.opacity = 0; mats.push({ m, to }); } });
+    if (!mats.length) return;
+    const t0 = performance.now();
+    const step = () => { const u = Math.min(1, (performance.now() - t0) / 800), e = u * u * (3 - 2 * u); for (const q of mats) q.m.opacity = q.to * e; this.invalidate(); if (u < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
+  /** Underbrush shown that way as a setting of the view's (View's Underbrush outlines). */
+  private brushLayer = false;
+  setBrushLayer(on: boolean) {
+    if (on === this.brushLayer) return;
+    this.brushLayer = on;
+    const tint = on || this.brushShown || !!this.paintKind()?.brush;
+    if (tint !== this.brushTint) { this.brushTint = tint; if (this.doc) this.syncShapes(); this.invalidate(); }
+  }
+  /** The patch of it in hand: brighter, its edge white. */
+  private brushPicked: string | null = null;
+  setBrushShown(on: boolean, picked: string | null = null) {
+    if (on === this.brushShown && picked === this.brushPicked) return;
+    const came = on && !this.brushShown && !this.brushTint;
+    this.brushShown = on; this.brushPicked = picked;
+    this.brushTint = on || this.brushLayer || !!this.paintKind()?.brush;
+    if (this.doc) this.syncShapes();
+    if (came && !(typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches)) this.fadeTintIn();
+    this.invalidate();
+  }
   /** What the brush paints: the area being reshaped's kind, or the tool's (a stand of bushes is
    * underbrush); null when it isn't painting areas. */
   private paintKind(): PaintKind | null {
@@ -2652,6 +2697,7 @@ export class CourseView {
     this.invalidate();
   }
 
+  private backdrop = new THREE.Color();
   private siteSpan() {
     return this.doc ? Math.max(this.doc.canvas.width, this.doc.canvas.height) : 1500;
   }
@@ -2680,6 +2726,10 @@ export class CourseView {
     this.lastSky = true;
     this.skyBox.updateMatrixWorld();
     this.ground.landscape(true);
+    // (looked down on, the land round the site is only a surround: dark, like the app's own
+    // backdrop; as the view comes down toward the horizon it turns to land, under its haze)
+    const pol = this.controls.polarAngle, low = eyeLevel || this.videoDetail ? 1 : clamp((pol - 1.24) / 0.26, 0, 1), land = low * low * (3 - 2 * low);
+    this.ground.shadeLandscape(land);
     const prevDensity = this.haze.density;
     const prevBg = this.scene.background;
     const haze = sm.uniforms.uHaze.value as THREE.Color;
@@ -2688,9 +2738,11 @@ export class CourseView {
     const thin = this.videoDetail ? 0.5 : 1;
     // (one haze, its density and color set each picture: a new one would have every material
     // worked out again, each frame)
-    this.haze.density = (eyeLevel ? 0.8 / (span * 2.4) : 0.7 / (span * 3.2)) * thin;
+    this.haze.density = (eyeLevel ? 0.8 / (span * 2.4) : 0.7 / (span * 3.2)) * thin * (0.12 + 0.88 * land);
     this.haze.color.copy(haze);
-    this.scene.background = haze;
+    // (no sky over a surround that's dark: the app's own backdrop behind it)
+    if (land <= 0.001) { this.skyBox.visible = false; if (this.photoSky) this.photoSky.visible = false; }
+    this.scene.background = land >= 0.999 ? haze : land <= 0.001 ? this.sky : this.backdrop.set(0x0e140d).lerp(haze, land);
     return () => {
       this.haze.density = prevDensity;
       this.scene.background = prevBg;
@@ -3252,7 +3304,7 @@ export class CourseView {
       case "mando": return item.side;
       case "dropzone": return "dz";
       case "tree": return getTreeSignature(item as TreeItem) + item.id + (this.doc ? `|${this.doc.course.style.trees}|${this.doc.course.style.landscape ?? ""}|${this.doc.course.style.treeMix?.join() ?? ""}` : "");
-      case "amenity": return item.kind;
+      case "amenity": return `${item.kind}|${item.width ?? ""}`;
       default: return "";
     }
   }
@@ -3265,7 +3317,7 @@ export class CourseView {
       case "mando": return createMando(item.side);
       case "dropzone": return createDropZone();
       case "tree": { const st = doc.course.style; return create3dTree(item, { color: st.trees, mix: treeMixOf(st) }); }
-      case "amenity": return createAmenity(item.kind);
+      case "amenity": return createAmenity(item.kind, item.width);
       default: return null;
     }
   }
@@ -3791,16 +3843,18 @@ export class CourseView {
       // (woods: no fill, the ground under the trees as it is; the trees show it, its edge line only)
       const bare = a.kind === "woods";
       const tinted = this.brushTint && a.kind === "woods" && (a.bushes ?? 0) >= 1 ? levelOf(a) : 0;
-      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted, standing]), () => {
+      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted, tinted && a.id === this.brushPicked, standing]), () => {
         const g = new THREE.Group();
         // (underbrush being painted: tinted light, medium or heavy, the heavier over the lighter)
         if (tinted) {
-          const tc = ["", "#fde68a", "#f59e0b", "#b45309"][tinted];
+          const tc = ["", "#fde68a", "#f59e0b", "#b45309"][tinted], hot = a.id === this.brushPicked;
           const geo = this.draped.get(a.points, (x, y) => this.h(x, y), hv, doc.gridSize, 0.2 + tinted * 0.02);
-          const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: tc, transparent: true, opacity: 0.13, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 }));
+          const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: tc, transparent: true, opacity: hot ? 0.36 : 0.13, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 }));
           mesh.renderOrder = 3 + tinted * 0.01;
           g.add(mesh);
-          g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.1, true), tc, 2, { order: 5 }));
+          g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.1, true), hot ? "#ffffff" : tc, hot ? 3.5 : 2, { order: hot ? 6 : 5 }));
+          // (seen through the trees: underbrush lies under them, and it has to be plain where it is)
+          g.traverse(o => { const m = (o as THREE.Mesh).material as (THREE.Material & { opacity?: number }) | undefined; if (m && !Array.isArray(m)) { m.depthTest = false; o.renderOrder = 40 + tinted + (hot ? 5 : 0); o.userData.tint = m.opacity ?? 1; } });
         }
         const fill = photo ? meta.fill : Math.min(0.9, meta.fill + 0.35);
         const rule = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo";
@@ -3816,9 +3870,12 @@ export class CourseView {
           // length), and never under the ground: over the highest corner of the ground's cell it's
           // in (ground measured from the air is bumpy, and its triangles rise between samples)
           const cell = doc.gridSize || 20;
+          // (only on the site: a lake's outline the maps hand over can run past its edges)
+          const pts = clipPolygonToRect(a.points, { x0: 0, y0: 0, x1: doc.canvas.width, y1: doc.canvas.height });
+          if (pts.length < 3) return g;
           const banks: { x: number; y: number; h: number }[] = [];
-          for (let i = 0; i < a.points.length; i++) {
-            const p = a.points[i], q = a.points[(i + 1) % a.points.length];
+          for (let i = 0; i < pts.length; i++) {
+            const p = pts[i], q = pts[(i + 1) % pts.length];
             const n = Math.max(1, Math.ceil(Math.hypot(q.x - p.x, q.y - p.y) / 8));
             for (let k = 0; k < n; k++) { const x = p.x + ((q.x - p.x) * k) / n, y = p.y + ((q.y - p.y) * k) / n; banks.push({ x, y, h: this.h(x, y) }); }
           }
@@ -3833,16 +3890,85 @@ export class CourseView {
             const i = Math.floor(x / cell) * cell, j = Math.floor(y / cell) * cell;
             return Math.max(this.h(i, j), this.h(i + cell, j), this.h(i, j + cell), this.h(i + cell, j + cell));
           };
-          const surface = (x: number, y: number) => Math.max(bankLevel(x, y) + 0.2, cellTop(x, y) + 0.3);
+          // (land inside its outline, an island or a shore drawn too wide: where the ground stands
+          // well clear of the water's level the water lies at its own level under it, so the
+          // ground's own slope is the shore, and it doesn't climb over the land)
+          // (out in the water it rides over the survey's bumps; near its edge it lies flat at its own
+          // level, so the ground itself says where the shore is, not the map's straight lines)
+          const edgeLine = [...pts, pts[0]];
+          const surface = (x: number, y: number) => {
+            const level = bankLevel(x, y) + 0.2, top = cellTop(x, y) + 0.3, over = top - level;
+            const ride = over <= 1.5 ? Math.max(level, top) : over >= 3.5 ? level : level + (top - level) * (1 - (over - 1.5) / 2);
+            if (ride <= level) return level;
+            const k = Math.min(1, Math.max(0, (distanceToPath({ x, y }, edgeLine) - 10) / 14));
+            return level + (ride - level) * k;
+          };
           // (its depth: shelving from the bank, a foot every 2 ft out, to 9 ft; the survey
           // can't see under water, so the ground there is only the water's own level)
-          const geo = drapedPolygon(a.points, surface, cell / 2, 0), pa = geo.attributes.position, depth = new Float32Array(pa.count);
-          for (let i = 0; i < pa.count; i++) depth[i] = Math.min(9, distanceToPolygon({ x: pa.getX(i), y: pa.getZ(i) }, a.points) * 0.5);
+          // The shore: the map's outline is only roughly where the water ends, so the water goes on
+          // past it at its own level, a band SHORE_FT wide, and ends where the ground rises out of
+          // it (the ground hides it there, along the ground's own lie); where the ground stays low it
+          // thins away. Each point's depth from the ground under it (and, inside the outline, a foot
+          // every 2 ft from the edge: the survey can't see under water) says how clear it is.
+          const inner = drapedPolygon(pts, surface, cell / 2, 0);
+          const W2 = doc.canvas.width, H2 = doc.canvas.height, SHORE = SHORE_FT;
+          const ring = pts;
+          const level = (x: number, y: number) => bankLevel(x, y) + 0.2;
+          const band: number[] = [];
+          const onEdge = (p: P) => p.x < 0.5 || p.y < 0.5 || p.x > W2 - 0.5 || p.y > H2 - 0.5;
+          const m = ring.length;
+          // (each corner's way out: the two edges' outward normals together)
+          const outs = ring.map((p, k) => {
+            const q0 = ring[(k + m - 1) % m], q1 = ring[(k + 1) % m];
+            const n0 = { x: p.y - q0.y, y: q0.x - p.x }, n1 = { x: q1.y - p.y, y: p.x - q1.x };
+            const l0 = Math.hypot(n0.x, n0.y) || 1, l1 = Math.hypot(n1.x, n1.y) || 1;
+            const nx = n0.x / l0 + n1.x / l1, ny = n0.y / l0 + n1.y / l1, l = Math.hypot(nx, ny) || 1;
+            // (out of the water, whichever way round its outline runs)
+            const o = { x: nx / l, y: ny / l };
+            return pointInPolygon({ x: p.x + o.x * 1.5, y: p.y + o.y * 1.5 }, ring) ? { x: -o.x, y: -o.y } : o;
+          });
+          const RINGS = [0, 0.2, 0.45, 0.72, 1];
+          for (let k = 0; k < m; k++) {
+            const p = ring[k], q = ring[(k + 1) % m];
+            // (not past the site's own edge)
+            if (onEdge(p) && onEdge(q)) continue;
+            const steps = Math.max(1, Math.ceil(Math.hypot(q.x - p.x, q.y - p.y) / 8));
+            for (let s = 0; s < steps; s++) for (let r = 0; r + 1 < RINGS.length; r++) {
+              const at = (u: number, w: number) => {
+                const o = { x: outs[k].x + (outs[(k + 1) % m].x - outs[k].x) * u, y: outs[k].y + (outs[(k + 1) % m].y - outs[k].y) * u };
+                const ol = Math.hypot(o.x, o.y) || 1;
+                const x = Math.max(0, Math.min(W2, p.x + (q.x - p.x) * u + (o.x / ol) * SHORE * w)), y = Math.max(0, Math.min(H2, p.y + (q.y - p.y) * u + (o.y / ol) * SHORE * w));
+                return [x, level(x, y), y];
+              };
+              const u0 = s / steps, u1 = (s + 1) / steps, w0 = RINGS[r], w1 = RINGS[r + 1];
+              const A = at(u0, w0), B = at(u1, w0), C = at(u1, w1), D = at(u0, w1);
+              band.push(...A, ...C, ...B, ...A, ...D, ...C);
+            }
+          }
+          const ip = inner.attributes.position.array as Float32Array, all = new Float32Array(ip.length + band.length);
+          all.set(ip); all.set(band, ip.length);
+          inner.dispose();
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute("position", new THREE.BufferAttribute(all, 3));
+          geo.computeVertexNormals();
+          const pa = geo.attributes.position, depth = new Float32Array(pa.count), reach = new Float32Array(pa.count);
+          // (how far from its outline's edge: inside or out)
+          const closed = [...ring, ring[0]];
+          for (let i = 0; i < pa.count; i++) {
+            const x = pa.getX(i), y = pa.getZ(i), p = { x, y }, d = distanceToPath(p, closed), inside = i < ip.length / 3 || pointInPolygon(p, ring);
+            const gap = pa.getY(i) - this.h(x, y);
+            // (inside its outline, deep a foot every 2 ft from the edge, where it lies over the ground;
+            // where the ground comes up to it, only as deep as it is over the ground, so it clears there too)
+            const over = Math.min(1, Math.max(0, (gap - 0.05) / 0.15));
+            depth[i] = Math.max(-3, Math.min(9, inside ? gap + (Math.max(gap, d * 0.5) - gap) * over : gap));
+            reach[i] = inside ? d : -d;
+          }
           geo.setAttribute("aDepth", new THREE.BufferAttribute(depth, 1));
-          const shore = this.waterShore(a.points), bottom = `#${new THREE.Color(c).multiplyScalar(0.8).lerp(new THREE.Color(doc.groundColor), 0.2).getHexString()}`;
+          geo.setAttribute("aShore", new THREE.BufferAttribute(reach, 1));
+          const shore = this.waterShore(pts), bottom = `#${new THREE.Color(c).multiplyScalar(0.8).lerp(new THREE.Color(doc.groundColor), 0.2).getHexString()}`;
           const pond = new THREE.Mesh(geo, waterMaterial(c, ...shore, { bottom }));
           pond.userData.water = true;
-          const mid = centroid(a.points);
+          const mid = centroid(pts);
           this.ponds.set(pond, { color: c, shore, bottom, at: new THREE.Vector3(mid.x, surface(mid.x, mid.y) + 2.5, mid.y), size: Math.abs(polygonArea(a.points)), done: false });
           this.pondsDirty = true;
           pond.renderOrder = 2;
@@ -4609,6 +4735,9 @@ export class CourseView {
           }
           return el;
         }, at(b, 2), 0);
+      } else if (item.type === "amenity" && !sel && !amenityMarked(item as AmenityItem, course.style.amenityMarks)) {
+        // (its mark not shown: the thing itself is there in 3D, and picked there)
+        continue;
       } else if (item.type === "mando" || item.type === "dropzone" || item.type === "amenity") {
         // The same symbols as the printed map (the mando's arrow and line are drawn on the ground)
         const isM = item.type === "mando", isDz = item.type === "dropzone";
@@ -7649,6 +7778,8 @@ export class CourseView {
 
   private onWheel(e: WheelEvent) {
     e.preventDefault();
+    // (a wheel turned: the view's own quick easing at once, not a slow glide still under way)
+    if (this.controls.smoothTime !== SMOOTH) { window.clearTimeout(this.easeTimer); this.controls.smoothTime = SMOOTH; }
     this.glide = null;
     this.lookGlide = null;
     e.stopPropagation();

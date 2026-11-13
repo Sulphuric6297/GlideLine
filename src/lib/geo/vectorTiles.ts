@@ -222,9 +222,23 @@ export const tileFeatures = (layers: TileLayer[], tx: number, ty: number, z = ZO
       if (what.geom === "line") {
         for (const r of f.rings) for (const piece of clipPathToRect(r, box)) out.push({ geom: "line", kind: what.kind as "path", points: piece.map(ll), name });
       } else {
-        // Outer rings only (an island in a pond stays water on the course map)
-        for (const r of f.rings) {
+        // Outer rings; water's islands (the rings wound the other way that follow an outer one)
+        // cut out of it, each joined to it by a cut of no width where they're nearest, so it's
+        // still one outline. (Other kinds' holes are left: a wood's clearing shows by its trees.)
+        for (let k = 0; k < f.rings.length; k++) {
+          let r = f.rings[k];
           if (r.length < 4 || ringArea(r) <= 0) continue;
+          if (what.kind === "water") {
+            let ring = r.slice(0, -1);
+            for (let h = k + 1; h < f.rings.length && ringArea(f.rings[h]) <= 0; h++) {
+              const hole = f.rings[h].slice(0, -1);
+              if (hole.length < 3) continue;
+              let bi = 0, bj = 0, bd = Infinity;
+              for (let i = 0; i < hole.length; i++) for (let j = 0; j < ring.length; j++) { const d = (hole[i].x - ring[j].x) ** 2 + (hole[i].y - ring[j].y) ** 2; if (d < bd) { bd = d; bi = i; bj = j; } }
+              ring = [...ring.slice(0, bj + 1), ...hole.slice(bi), ...hole.slice(0, bi + 1), ...ring.slice(bj)];
+            }
+            r = [...ring, ring[0]];
+          }
           const inside = clipPolygonToRect(r.slice(0, -1), box);
           if (inside.length < 3) continue;
           const pts = inside.map(ll);

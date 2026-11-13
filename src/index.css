@@ -476,3 +476,27 @@ select {
 .dg-tuck { animation: dgtuck 0.26s cubic-bezier(0.2, 0.9, 0.3, 1) forwards; }
 .dg-untuck { animation: dguntuck 0.26s cubic-bezier(0.2, 0.9, 0.3, 1); }
 @media (prefers-reduced-motion: reduce) { .dg-tuck, .dg-untuck { animation: none; } }
+
+/* The import's steps: a step slides in from the side it's gone to, its parts a moment after each
+   other; the progress fills; the card's height eases; the last step's button glows once. */
+@keyframes dgstepnext { from { opacity: 0; transform: translateX(22px); } to { opacity: 1; transform: none; } }
+@keyframes dgstepprev { from { opacity: 0; transform: translateX(-22px); } to { opacity: 1; transform: none; } }
+@keyframes dgsteprow { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+@keyframes dgstepready { 0% { box-shadow: 0 0 0 0 rgba(162, 207, 106, 0.55); } 70% { box-shadow: 0 0 0 12px rgba(162, 207, 106, 0); } 100% { box-shadow: 0 0 0 0 rgba(162, 207, 106, 0); } }
+@keyframes dgstepcard { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+.dg-step-next { animation: dgstepnext 0.43s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.dg-step-prev { animation: dgstepprev 0.43s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.dg-step-row { animation: dgsteprow 0.48s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.dg-step-fill { transform-origin: left center; transition: transform 0.63s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.dg-step-height { transition: height 0.43s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.dg-step-ready { animation: dgstepready 1.5s ease-out 0.25s 2; }
+.dg-step-card { animation: dgstepcard 0.53s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .dg-step-next, .dg-step-prev, .dg-step-row, .dg-step-ready, .dg-step-card { animation: none; }
+  .dg-step-fill, .dg-step-height { transition: none; }
+}
+
+/* A building's soft light as it rises while a site is built. */
+@keyframes dgbuildglow { 0% { opacity: 0; transform: scale(0.3); } 22% { opacity: 1; } 100% { opacity: 0; transform: scale(2); } }
+.dg-build-glow { position: fixed; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; pointer-events: none; z-index: 9996;
+  background: radial-gradient(circle, rgba(243, 255, 217, 0.8) 0%, rgba(162, 207, 106, 0.4) 34%, rgba(162, 207, 106, 0) 70%); animation: dgbuildglow 1.15s ease-out forwards; }

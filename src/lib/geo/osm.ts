@@ -218,13 +218,12 @@ type OsmMember = { type: string; role?: string; geometry?: (LatLon | null)[] };
 
 /**
  * A multipolygon's outer rings, joined from its member ways (they meet end to end, either way
- * round). Lakes and wide rivers are mapped like this, in pieces; the islands (inner rings) stay
- * water on the course map.
+ * round). Lakes and wide rivers are mapped like this, in pieces; `inner`: its islands instead.
  */
-export const outerRings = (members: OsmMember[]): LatLon[][] => {
+export const outerRings = (members: OsmMember[], inner = false): LatLon[][] => {
   const same = (a: LatLon, b: LatLon) => a.lat === b.lat && a.lon === b.lon;
   const parts = members
-    .filter(m => m.type === "way" && m.role !== "inner" && Array.isArray(m.geometry))
+    .filter(m => m.type === "way" && (m.role === "inner") === inner && Array.isArray(m.geometry))
     .map(m => m.geometry!.filter((g): g is LatLon => !!g).map(g => ({ lat: g.lat, lon: g.lon })))
     .filter(p => p.length >= 2);
   const rings: LatLon[][] = [];
@@ -242,6 +241,23 @@ export const outerRings = (members: OsmMember[]): LatLon[][] => {
     if (ring.length >= 4 && same(ring[0], ring[ring.length - 1])) rings.push(ring.slice(0, -1));
   }
   return rings;
+};
+
+/**
+ * An outline with its islands cut out of it, still one ring: each island joined to the outline by
+ * a cut of no width where they're nearest (the ring goes in along it, round the island and back
+ * out), so water with an island in it is drawn, measured and stood on as it is.
+ */
+export const withIslands = (outer: LatLon[], islands: LatLon[][]): LatLon[] => {
+  const inside = (p: LatLon, ring: LatLon[]) => { let c = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const a = ring[i], b = ring[j]; if (a.lat > p.lat !== b.lat > p.lat && p.lon < ((b.lon - a.lon) * (p.lat - a.lat)) / (b.lat - a.lat) + a.lon) c = !c; } return c; };
+  let ring = outer;
+  for (const hole of islands) {
+    if (hole.length < 3 || !inside(hole[0], outer)) continue;
+    let bi = 0, bj = 0, bd = Infinity;
+    for (let i = 0; i < hole.length; i++) for (let j = 0; j < ring.length; j++) { const d = (hole[i].lat - ring[j].lat) ** 2 + ((hole[i].lon - ring[j].lon) * Math.cos((hole[i].lat * Math.PI) / 180)) ** 2; if (d < bd) { bd = d; bi = i; bj = j; } }
+    ring = [...ring.slice(0, bj + 1), ...hole.slice(bi), ...hole.slice(0, bi + 1), ...ring.slice(bj)];
+  }
+  return ring;
 };
 
 /** What an Overpass answer holds for the course map: its nodes, its ways, and its multipolygons' outlines. */
@@ -279,7 +295,9 @@ export const osmFeaturesFrom = (json: { elements?: any[] }): OsmFeature[] => {
     } else if (el.type === "relation" && (tags.type === "multipolygon" || tags.leisure === "disc_golf_course")) {
       const what = classifyOsm(tags, true);
       if (what?.geom !== "area") continue;
-      for (const ring of outerRings(el.members ?? [])) out.push({ geom: "area", kind: what.kind as any, points: ring, name: tags.name, tags, ...(park ? { park } : {}) });
+      // (water's islands cut out of it; a wood's clearings are left to the trees measured there)
+      const islands = what.kind === "water" ? outerRings(el.members ?? [], true) : [];
+      for (const ring of outerRings(el.members ?? [])) out.push({ geom: "area", kind: what.kind as any, points: islands.length ? withIslands(ring, islands) : ring, name: tags.name, tags, ...(park ? { park } : {}) });
     }
   }
   return out;

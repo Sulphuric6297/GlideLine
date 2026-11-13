@@ -102,11 +102,12 @@ export function Header({ onHelp, onGoTo }: { onHelp: () => void; onGoTo: () => v
       {readOnly ? <div className="flex-1" /> : <nav aria-label="Steps" className="flex-1 min-w-0 flex justify-center overflow-hidden">
         <ol className="flex items-center gap-0.5 p-[3px] rounded-full bg-white/[0.06]">
           {STEPS.map((s, i) => {
-            const on = ed.step === s.id;
+            // (a site being looked over is still the import, on Site, though the 3D view shows it)
+            const on = (ed.reviewing ? "site" : ed.step) === s.id;
             return (
               <li key={s.id}>
                 <button
-                  onClick={() => ed.set({ step: s.id, tool: "select" })}
+                  onClick={() => { if (!ed.reviewing) ed.set({ step: s.id, tool: "select" }); }}
                   aria-current={on ? "step" : undefined}
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-[5px] rounded-full text-[13px] transition-colors ${FOCUS} ${on ? "bg-white/[0.16] text-zinc-50 font-semibold shadow-[inset_0_0.5px_0_rgba(255,255,255,0.25)]" : "text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]"}`}
                 >

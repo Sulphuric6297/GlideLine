@@ -15,6 +15,50 @@ type SceneInfo = {
 };
 const scene = (page: import("@playwright/test").Page) => page.evaluate(() => (window as any).__dgView.sceneInfo() as SceneInfo);
 
+test("a site just brought in is built in front of you: the show plays its steps and leaves the course, the view and the tools exactly as they were; Skip ends it at once", async ({ page }) => {
+  test.setTimeout(240_000);
+  await blankCourse(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__dgEditor().set({ areaKind: "water" });
+    w.__dgActions.addDrawn("area", [{ x: 200, y: 600 }, { x: 420, y: 560 }, { x: 640, y: 620 }, { x: 860, y: 580 }, { x: 860, y: 640 }, { x: 640, y: 680 }, { x: 420, y: 620 }, { x: 200, y: 660 }]);
+    w.__dgEditor().set({ tool: "add-tree" });
+    for (let i = 0; i < 14; i++) w.__dgActions.placeAt({ x: 250 + i * 40, y: 300 + (i % 3) * 50 });
+    w.__dgEditor().set({ tool: "select", selectedId: null });
+  });
+  const state = () => page.evaluate(() => {
+    const w = window as any, v = w.__dgView;
+    let off = 0;
+    for (const [, e] of v.objects) if (Math.abs(e.obj.scale.y - 1) > 1e-6 || !e.obj.visible) off++;
+    return { show: w.__dgImportShow.state, steps: w.__dgImportShow.steps, off, groundY: v.ground.group.scale.y, haze: v.haze.density, sun: [v.doc.sun?.azimuth, v.doc.sun?.altitude], tool: w.__dgEditor().tool, left: document.querySelectorAll('[data-testid^="import-show"]').length, panel: !!document.querySelector('[data-testid="view-light"]'), wrapped: Object.prototype.hasOwnProperty.call(v, "setDoc"), doc: JSON.stringify(w.__dgCourse().style) };
+  });
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", view: "3d" }));
+  await expect.poll(async () => (await state()).off, { timeout: 60_000 }).toBe(0);
+  const before = await state();
+  // (not played by itself here: a machine drawing without a graphics card skips it)
+  await page.evaluate(() => (window as any).__dgImportShow.play(false));
+  expect((await state()).show).toBe("skipped");
+  // Asked for all the same, many times as fast: it plays its steps and puts everything back
+  await page.evaluate(() => { (window as any).__dgShowSpeed = 3; void (window as any).__dgImportShow.play(true); });
+  await expect.poll(async () => (await state()).show, { timeout: 90_000 }).toBe("playing");
+  expect((await state()).steps).toEqual(expect.arrayContaining(["ground", "water"]));
+  await expect.poll(async () => (await state()).show, { timeout: 120_000 }).toBe("done");
+  await page.waitForTimeout(700);
+  const after = await state();
+  expect({ ...after, show: 0, steps: 0 }).toEqual({ ...before, show: 0, steps: 0 });
+  expect(after.left).toBe(0);
+  // Skip, part-way: over at once, all of it back just the same
+  // (slowed: with no hand acting it out the build is short, and Skip has to find it still going)
+  await page.evaluate(() => { (window as any).__dgShowSpeed = 0.35; void (window as any).__dgImportShow.play(true); });
+  await expect.poll(async () => (await state()).show, { timeout: 90_000 }).toBe("playing");
+  await page.waitForTimeout(2500);
+  await expect(page.getByTestId("import-show-card")).toBeVisible();
+  await page.getByTestId("import-show-skip").click();
+  await expect.poll(async () => (await state()).show, { timeout: 30_000 }).toBe("done");
+  await page.waitForTimeout(700);
+  expect({ ...(await state()), show: 0, steps: 0 }).toEqual({ ...before, show: 0, steps: 0 });
+});
+
 test("3D: a sky when tilted (none looking straight down), lit by the course's sun", async ({ page }) => {
   await blankCourse(page);
   await addHole(page, { x: 400, y: 700 }, { x: 750, y: 700 });
@@ -354,28 +398,32 @@ test("3D woods planted again only once a drag ends, and only the woods near what
   expect(await page.evaluate(([x, y]) => (window as any).__dgView.treesNear(x, y, 8), [basket.x, basket.y])).toBe(0);
 });
 
-test("3D water: a pond on sloping ground lies level but never under the ground, and reflects (water material)", async ({ page }) => {
+test("3D water: a pond on sloping ground lies level, never under the ground out in it, and meets its banks where the ground rises out of it, clear there (water material)", async ({ page }) => {
   await importSite(page);
   await page.keyboard.press("3");
   const check = () => page.evaluate(() => {
     const v = (window as any).__dgView;
-    let ponds = 0, below = 0, vertices = 0;
+    let ponds = 0, below = 0, vertices = 0, shoreUnder = 0, shoreUnderSeen = 0;
     v.scene.traverse((o: any) => {
       if (!o.isMesh || !String(o.material?.customProgramCacheKey?.()).startsWith("dg-water")) return;
       ponds++;
-      const pos = o.geometry.getAttribute("position");
+      const pos = o.geometry.getAttribute("position"), depth = o.geometry.getAttribute("aDepth"), reach = o.geometry.getAttribute("aShore");
       for (let i = 0; i < pos.count; i++) {
         vertices++;
-        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-        if (y < v.groundHeight(x, z) - 0.05) below++;
+        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), under = y < v.groundHeight(x, z) - 0.05;
+        // (out in it, past its shore: always over the ground)
+        if (under && reach.getX(i) > 24) below++;
+        // (at its shore it may lie under the bank, the ground hiding it: and it's clear there)
+        if (under && reach.getX(i) <= 24) { shoreUnder++; if (depth.getX(i) > 0.05) shoreUnderSeen++; }
       }
     });
-    return { ponds, below, vertices };
+    return { ponds, below, vertices, shoreUnder, shoreUnderSeen };
   });
   await expect.poll(async () => (await check()).ponds, { timeout: 30_000 }).toBeGreaterThan(0);
   const r = await check();
   expect(r.vertices).toBeGreaterThan(10);
   expect(r.below).toBe(0);
+  expect(r.shoreUnderSeen).toBe(0);
 });
 
 test("the map view rests while the Design step's page covers it, and draws the changes when it comes back", async ({ page }) => {

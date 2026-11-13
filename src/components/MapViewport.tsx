@@ -62,7 +62,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
     if (!ref.current) return;
     const v = new CourseView(ref.current, {
       onSelect: (id, add) => select(id, add),
-      onAdoptTree: (tree, look) => adoptTree(tree, look),
+      // (a site being looked over: its trees aren't made the course's own by a click; the look-over picks them)
+      onAdoptTree: (tree, look) => { if (!useEditor.getState().reviewing) adoptTree(tree, look); },
       onBoxSelect: (ids, add, trees) => boxSelect(ids, add, trees),
       onMoveGroup: (base, ids, dx, dy) => moveGroup(base, ids, dx, dy, false),
       onPlace: (mode, p) => placeAt(mode, p),
@@ -95,7 +96,9 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
         if (done) courseStore.getState().commit();
       },
       onHover: setHover,
-      onPose: pose => useEditor.getState().set({ view: pose === "top" ? "2d" : "3d" }),
+      // (not while a site is built in front of you: the build's own swoop from straight down would
+      // have the whole screen drawn again part-way through it, and a frame held)
+      onPose: pose => { const st = (window as { __dgImportShow?: { state?: string } }).__dgImportShow?.state; if (st === "waiting" || st === "playing") return; useEditor.getState().set({ view: pose === "top" ? "2d" : "3d" }); },
       onTeeView: id => useEditor.getState().set({ teeView: id }),
       onContextMenu: i => menuRef.current(i),
       // (a walk ended near another hole: on that hole now, still looking the same way)
@@ -216,6 +219,7 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   useEffect(() => { view?.setReadOnly(viewOnly); }, [view, viewOnly]);
   useEffect(() => { view?.setShowStumps(ed.stumps); }, [view, ed.stumps]);
   useEffect(() => { view?.setTreesHidden(ed.hideTrees); }, [view, ed.hideTrees]);
+  useEffect(() => { view?.setBrushLayer(ed.brushOutlines); }, [view, ed.brushOutlines]);
   useEffect(() => { view?.setGroup(ed.group); }, [view, ed.group]);
   useEffect(() => { view?.setPlotLine(ed.plotLine); }, [view, ed.plotLine]);
   useEffect(() => { view?.setObPick(ed.obPick, ed.pickCut); }, [view, ed.obPick, ed.pickCut]);

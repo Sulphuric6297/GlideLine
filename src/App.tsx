@@ -20,6 +20,7 @@ import { startTour } from "./components/Tour";
 import { Inspector } from "./components/Inspector";
 import { stepHole } from "./components/HoleSteps";
 import { GoTo } from "./components/GoTo";
+import { liveShowEnded, playImportShow } from "./viewport/importShow";
 import { SiteImportDialog } from "./components/SiteImportDialog";
 import { PerfPanel } from "./components/PerfPanel";
 import { CourseFileDialog, FIND_PARK_EVENT, useCourseFile, type FindParkNear } from "./components/CourseFileDialog";
@@ -176,6 +177,10 @@ function saveByHand() {
   );
 }
 
+/** How a fetched site comes in: with the course mapped there, the frame's turn, the tree colours
+ * picked while looking it over; `live`/`shown`: it was built in front of you already. */
+type SiteOpts = { course?: boolean; turn?: number; live?: boolean; shown?: boolean; look?: { trees: string; treeMix: string[] } };
+
 export default function App() {
   const ed = useEditor();
   // (view only: no tools to change the course with)
@@ -296,17 +301,18 @@ export default function App() {
     if (turn) v?.rotateBy(turn);
     v?.fitSite();
   };
-  const onImported = (site: ImportedSite, opts?: { course?: boolean; turn?: number }) => {
+  /** A fetched site laid into a course: what changes, and what was carried over from the design. */
+  const siteInto = (d0: CourseDoc, site: ImportedSite, opts?: SiteOpts) => {
     // (the disc golf course mapped there, when asked for: its holes after the ones here)
     const mappedCourse = opts?.course && site.course?.holes.length ? site.course : null;
     // What was designed stays on the same ground when the frame grows, shrinks or moves
-    const d0 = getDoc();
     const from = geoRefOf(d0);
     // (OpenStreetMap out of reach this time: what it brought in before stays)
     const keptOsm = (i: CourseItem) => !!site.osmFailed && fromMaps(i);
     const designed = d0.items.filter(i => !isImported(i) || keptOsm(i));
     const carried = from && site.site.bounds ? reframeDesign({ holes: d0.holes, items: designed }, from, { ...site.site.bounds, ...site.canvas }) : { holes: d0.holes, items: designed, outside: 0 };
-    changeDoc(d => ({
+    const style = opts?.turn !== undefined || opts?.look ? { ...d0.style, ...(opts?.turn !== undefined ? { rotation: opts.turn } : {}), ...(opts?.look ? { look3d: { ...d0.style.look3d, ...opts.look } } : {}) } : undefined;
+    const patch: Partial<CourseDoc> = {
       canvas: site.canvas,
       gridSize: site.gridSize,
       terrainHeights: site.terrainHeights,
@@ -315,22 +321,38 @@ export default function App() {
       site: mappedCourse ? { ...site.site, holesFromOsm: true } : site.site,
       groundPaint: {},
       // (named for the park only when one was found by name)
-      name: d.name === "New Disc Golf Course" && site.site.location?.label ? `${site.site.location.label.split(",")[0]} Disc Golf Course` : d.name,
+      name: d0.name === "New Disc Golf Course" && site.site.location?.label ? `${site.site.location.label.split(",")[0]} Disc Golf Course` : d0.name,
       // (the trees cut down stay cut, on the same spot on the ground)
-      cutTrees: from && site.site.bounds ? d.cutTrees?.map(reframe(from, { ...site.site.bounds, ...site.canvas })) : d.cutTrees,
+      cutTrees: from && site.site.bounds ? d0.cutTrees?.map(reframe(from, { ...site.site.bounds, ...site.canvas })) : d0.cutTrees,
       holes: mappedCourse ? [...carried.holes, ...mappedCourse.holes] : carried.holes,
       items: [...carried.items, ...freshOnly(carried.items, [...site.mapped, ...site.trees]), ...(mappedCourse?.items ?? [])],
       lidar: site.lidar,
-      // (the frame turned on the way in: the course map turned to match; the site stays north up)
-      ...(opts?.turn !== undefined ? { style: { ...d.style, rotation: opts.turn } } : {})
-    }));
+      // (the frame turned on the way in: the course map turned to match; the site stays north up.
+      // The tree colours picked while it was looked over come with it.)
+      ...(style ? { style } : {})
+    };
+    return { patch, carried, mappedCourse };
+  };
+  /** The site as it would come in, shown in the course while it's looked over (no undo step: the
+   * course as it was, `d0`, is put back if it isn't brought in). */
+  const onPreview = (d0: CourseDoc, site: ImportedSite, opts?: SiteOpts) => {
+    useCourse.setState({ doc: { ...d0, ...siteInto(d0, site, opts).patch }, gestureStart: null });
+  };
+  const onImported = (site: ImportedSite, opts?: SiteOpts) => {
+    const { patch, carried, mappedCourse } = siteInto(getDoc(), site, opts);
+    changeDoc(() => patch);
     setFindSite(false);
     setFindNear(undefined);
     useEditor.getState().set({ step: "design", tool: "select" });
     setTimeout(() => getView()?.fitSite(), 50);
+    // (a first site, on a computer: built in front of you in 3D; see viewport/importShow)
     const outside = carried.outside ? ` ${carried.outside} ${carried.outside === 1 ? "thing you drew is" : "things you drew are"} now past the site's edges.` : "";
-    const name = getDoc().name.replace(/ Disc Golf Course$/, "");
-    setSiteReady({ name, facts: readyFacts(site, getDoc().units, mappedCourse?.holes.length ?? 0), said: `Site brought in${cameIn(site)}.${outside}` });
+    // (a course not named yet: "Your site is in", not "New is in")
+    const name = getDoc().name === "New Disc Golf Course" ? "Your site" : getDoc().name.replace(/ Disc Golf Course$/, "");
+    // (what came in is said once the show is over, or at once where it doesn't play)
+    const ready = { name, facts: readyFacts(site, getDoc().units, mappedCourse?.holes.length ?? 0), said: `Site brought in${cameIn(site)}.${outside}` };
+    // (looked over in 3D first: it was built in front of you then)
+    void (opts?.live ? liveShowEnded() : opts?.shown ? Promise.resolve() : playImportShow()).finally(() => setSiteReady(ready));
     if (outside) toast(outside.trim(), "info");
     if (site.osmFailed) osmFailedToast();
   };
@@ -344,6 +366,8 @@ export default function App() {
     // (the last arrow nudge: the next one soon after joins its undo step)
     let nudged: { doc: CourseDoc; at: number } | null = null;
     const onKey = (e: KeyboardEvent) => {
+      // (a site being looked over before it comes in: nothing of the course is worked meanwhile)
+      if (useEditor.getState().reviewing) return;
       // (a dialog open over everything, the help guide say: its keys, except ? and Esc)
       if (document.querySelector('[aria-modal="true"]') && e.key !== "?" && e.key !== "Escape") return;
       const target = e.target as HTMLElement;
@@ -473,7 +497,12 @@ export default function App() {
 
   const empty = useMemo(() => !doc.background && !doc.holes.length && !doc.items.length, [doc]);
   const showWelcome = ready && empty && ed.step === "site";
-  const onContextMenu = (i: { clientX: number; clientY: number; itemId: string | null; ground: P | null; under?: string | null }) => setMenu(i);
+  const onContextMenu = (i: { clientX: number; clientY: number; itemId: string | null; ground: P | null; under?: string | null }) => {
+    // (a site being looked over before it comes in: Design's menu isn't its own; the thing is picked,
+    // and the look-over offers to leave it out)
+    if (useEditor.getState().reviewing) { if (i.itemId) useEditor.getState().set({ selectedId: i.itemId }); return; }
+    setMenu(i);
+  };
   const welcome = (
     <div className="pointer-events-auto glass-solid rounded-2xl shadow-2xl ring-1 ring-white/10 p-6 w-[440px] max-w-full text-center" data-testid="welcome">
       <div className="w-12 h-12 rounded-xl bg-orange-500/15 text-orange-400 flex items-center justify-center mx-auto mb-3"><Route size={24} /></div>
@@ -487,7 +516,7 @@ export default function App() {
   );
   const dialogs = (
     <>
-      {findSite && <SiteImportDialog near={findNear} onClose={closeFindSite} onImported={onImported} />}
+      {findSite && <SiteImportDialog near={findNear} onClose={closeFindSite} onImported={onImported} onPreview={onPreview} />}
       <CourseFileDialog />
       <PerfPanel />
       {siteReady && <SiteReady {...siteReady} onLook={() => { setSiteReady(null); useEditor.getState().set({ view: "3d" }); setTimeout(() => faceTheSite(), 50); }} onStart={() => { setSiteReady(null); setTimeout(() => faceTheSite(), 50); }} />}
@@ -525,12 +554,12 @@ export default function App() {
         <main className="flex-1 relative min-w-0 rounded-[20px] overflow-hidden ring-1 ring-white/10">
           <MapViewport onContextMenu={onContextMenu} />
           {(ed.step === "map" || ed.step === "export") && !ed.teeView && <MapDesigner preview={ed.step === "export"} />}
-          {ed.step === "design" && !readOnly && !ed.teeView && <HolesColumn />}
+          {ed.step === "design" && !readOnly && !ed.teeView && !ed.reviewing && <HolesColumn />}
           {ed.step === "design" && !readOnly && <ProblemsPanel />}
           {/* (from a tee, only in Tap mode Select: walking, playing a flyover and editing its camera path
               draw nothing) */}
-          {(ed.step === "design" || ed.step === "site") && !(ed.teeView && (ed.flyCam || ed.flyover || ed.standTap !== "edit")) ? !readOnly && <Toolbar /> : null}
-          {ed.step === "design" && !readOnly && <Inspector />}
+          {(ed.step === "design" || ed.step === "site") && !(ed.teeView && (ed.flyCam || ed.flyover || ed.standTap !== "edit")) ? !readOnly && !ed.reviewing && <Toolbar /> : null}
+          {ed.step === "design" && !readOnly && !ed.reviewing && <Inspector />}
           {ed.teeView && (ed.flyCam && !readOnly ? <CameraHud /> : <TeeViewHud />)}
           <ExportProgressPill />
           <Toasts />

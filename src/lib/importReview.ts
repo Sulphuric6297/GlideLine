@@ -4,6 +4,7 @@
 import type { CourseItem, P } from "../types";
 import type { ImportedSite } from "./importSite";
 import { centroid, pointInPolygon } from "./geom";
+import { AREA_KINDS, LINE_KINDS, STRUCTURE_KINDS } from "../constants";
 import { signed } from "./importSite";
 import { BEST_GUESS, brushAreas, brushLevels, keepFound, type BrushTune } from "./undergrowth";
 
@@ -19,7 +20,7 @@ export type SourceGroup = "trees" | "buildings" | "water" | "parking" | "paths" 
 /** Each source: its group, what to call it and where it's from, its color on the map. */
 export const SOURCES: Record<SourceKey, { group: SourceGroup; label: string; who?: string; color: string }> = {
   lidarTrees: { group: "trees", label: "Measured", who: "LiDAR", color: "#4ade80" },
-  summerTrees: { group: "trees", label: "From the photo", who: "the survey's gaps", color: "#bef264" },
+  summerTrees: { group: "trees", label: "Gaps filled from the photo", color: "#bef264" },
   photoTrees: { group: "trees", label: "From the photo", color: "#bef264" },
   bushes: { group: "trees", label: "Bushes", who: "LiDAR", color: "#6ee7b7" },
   underbrush: { group: "trees", label: "Underbrush", who: "survey and satellite", color: "#f59e0b" },
@@ -69,6 +70,26 @@ export const sourceOf = (i: CourseItem): SourceKey | null => {
   return null;
 };
 
+/** What kind of thing one is, in a word or two (a source's things by kind, each with its switch). */
+export const kindOf = (i: CourseItem): string => {
+  const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1).replace(/[-_]/g, " ") : "Other");
+  if (i.type === "area") return AREA_KINDS[i.kind]?.label ?? cap(i.kind);
+  if (i.type === "line") return LINE_KINDS[i.kind]?.label ?? cap(i.kind);
+  if (i.type === "structure") return STRUCTURE_KINDS[i.kind]?.label ?? cap(i.kind);
+  if (i.type === "amenity") return cap(String((i as { kind?: string }).kind ?? "other"));
+  return cap(i.type);
+};
+/** The sources whose things are of several kinds worth telling apart. */
+export const KINDED: SourceKey[] = ["osmPaths", "osmOther"];
+/** A source's things by kind: how many of each, most first. */
+export const kindCounts = (site: ImportedSite, key: SourceKey) => {
+  const n = new Map<string, number>();
+  for (const i of [...site.mapped, ...site.trees]) if (sourceOf(i) === key) n.set(kindOf(i), (n.get(kindOf(i)) ?? 0) + 1);
+  return [...n].sort((a, b) => b[1] - a[1]);
+};
+/** The finer choices: kinds switched off (as "source:Kind"), and the measured trees' own settings. */
+export type ReviewOpts = { offKinds?: string[]; lidar?: { minHeight?: number; crownSize?: number } };
+
 /** Each source's count in what was found (the measured trees by the survey's own list). */
 export const sourceCounts = (site: ImportedSite) => {
   const n: Partial<Record<SourceKey, number>> = {};
@@ -90,10 +111,12 @@ const overlaps = (a: P[], b: P[]) => pointInPolygon(centroid(a), b) || pointInPo
 
 /** The site with only what's on, and where FEMA and OpenStreetMap have the same building, the one
  * asked for. */
-export const reviewedSite = (site: ImportedSite, on: Partial<Record<SourceKey, boolean>>, keep: "osm" | "fema" = "osm", tune: BrushTune = BEST_GUESS): ImportedSite => {
+export const reviewedSite = (site: ImportedSite, on: Partial<Record<SourceKey, boolean>>, keep: "osm" | "fema" = "osm", tune: BrushTune = BEST_GUESS, opts: ReviewOpts = {}): ImportedSite => {
+  const off = new Set(opts.offKinds ?? []);
   const yes = (k: SourceKey | null) => !k || on[k] !== false;
-  let mapped = site.mapped.filter(i => yes(sourceOf(i)));
-  const trees = site.trees.filter(i => yes(sourceOf(i)));
+  const kept = (i: CourseItem) => { const k = sourceOf(i); return yes(k) && !(off.size && k && off.has(`${k}:${kindOf(i)}`)); };
+  let mapped = site.mapped.filter(kept);
+  const trees = site.trees.filter(kept);
   // FEMA's where both have it: OpenStreetMap's that overlap one of FEMA's give way to it
   if (keep === "fema" && on.femaBuildings !== false) {
     const fema = (site.alternates?.fema ?? []).filter(isBuilding) as (CourseItem & { points: P[] })[];
@@ -116,11 +139,32 @@ export const reviewedSite = (site: ImportedSite, on: Partial<Record<SourceKey, b
     const { fromPhoto, ...rest } = lidar;
     lidar = { ...rest, trees: lidar.trees.slice(0, lidar.trees.length - fromPhoto) };
   }
+  // (the measured trees' own settings: the short ones left out, the crowns' size)
+  if (lidar && opts.lidar) lidar = { ...lidar, minHeight: opts.lidar.minHeight || undefined, crownSize: opts.lidar.crownSize && Math.abs(opts.lidar.crownSize - 1) > 0.001 ? opts.lidar.crownSize : undefined };
   // The brush, as tuned (and the tuning kept with the course, for the next time it comes in)
   const u = site.underbrush;
   const lv = u && on.underbrush !== false ? brushLevels(u, tune) : null;
   if (u && lv) mapped = [...mapped, ...brushAreas(lv, u.bx, u.by).map(signed)];
   return { ...site, site: u ? { ...site.site, brushTune: { much: tune.much, thick: tune.thick }, ...(lv ? { brushFound: keepFound(lv, u.bx, u.by) } : {}) } : site.site, mapped, trees, lidar };
+};
+
+/** Things left out by hand while a site is looked over: items by their id, measured trees by
+ * their place in the survey's list (as `reviewedSite` gives it). One batch per step, for Undo. */
+export type LeftOut = { ids: string[]; trees: number[] };
+
+/** The site without what was left out by hand. */
+export const withoutLeft = (site: ImportedSite, left: LeftOut[]): ImportedSite => {
+  if (!left.length) return site;
+  const ids = new Set(left.flatMap(l => l.ids)), cut = new Set(left.flatMap(l => l.trees));
+  let lidar = site.lidar;
+  if (lidar && cut.size) {
+    // (the ones filled in from the summer photo are the list's last: their count kept right)
+    const n = lidar.trees.length, summer = lidar.fromPhoto ?? 0;
+    let gone = 0;
+    const trees = lidar.trees.filter((_, k) => { const out = cut.has(k); if (out && k >= n - summer) gone++; return !out; });
+    lidar = { ...lidar, trees, ...(summer ? { fromPhoto: summer - gone } : {}) };
+  }
+  return { ...site, mapped: ids.size ? site.mapped.filter(i => !ids.has(i.id)) : site.mapped, trees: ids.size ? site.trees.filter(i => !ids.has(i.id)) : site.trees, lidar };
 };
 
 /** How many FEMA buildings OpenStreetMap has too (the choice of which to keep matters only then). */

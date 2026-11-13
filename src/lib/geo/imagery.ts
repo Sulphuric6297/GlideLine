@@ -125,7 +125,7 @@ export const fetchArcgisExportImage = async (
     total2++;
   }
   if (blank / Math.max(total2, 1) > 0.3) throw new Error("Imagery service has no coverage here");
-  return out.toDataURL("image/jpeg", 0.92);
+  return dataUrlOf(out);
 };
 
 /** The most street-map tiles one map is made of (OpenStreetMap's tiles are for light use). */
@@ -251,6 +251,20 @@ const streetMap = async (bounds: GeoBounds, widthFt: number, onProgress?: (f: nu
   return { ...got, sourceLabel: "OpenStreetMap", credit: config.attribution };
 };
 
+/** A canvas as a JPEG data URL, encoded off the page's thread (`toDataURL` holds the page still for
+ * a quarter of a second on a site's photo); the same picture either way. */
+const dataUrlOf = (canvas: HTMLCanvasElement, quality = 0.92) =>
+  new Promise<string>((ok, no) => {
+    if (typeof canvas.toBlob !== "function" || typeof FileReader === "undefined") { ok(canvas.toDataURL("image/jpeg", quality)); return; }
+    canvas.toBlob(blob => {
+      if (!blob) { ok(canvas.toDataURL("image/jpeg", quality)); return; }
+      const r = new FileReader();
+      r.onload = () => ok(r.result as string);
+      r.onerror = () => no(r.error ?? new Error("Couldn't read the photo."));
+      r.readAsDataURL(blob);
+    }, "image/jpeg", quality);
+  });
+
 /** Map tiles over the bounds, cut to them exactly and scaled to MAP_IMAGERY_TARGET_PX at most
  * (null when not one tile came). */
 const mosaicImage = async (bounds: GeoBounds, zoom: number, maxTiles: number, url: (z: number, x: number, y: number) => string, onProgress?: (f: number) => void, signal?: AbortSignal) => {
@@ -270,7 +284,7 @@ const mosaicImage = async (bounds: GeoBounds, zoom: number, maxTiles: number, ur
   outCtx.drawImage(mosaic.canvas, nw.x, nw.y, cropW, cropH, 0, 0, out.width, out.height);
   const lat = (bounds.north + bounds.south) / 2;
   const tileMpp = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** mosaic.z;
-  return { url: out.toDataURL("image/jpeg", 0.92), partial: !mosaic.loadedAll, metersPerPx: tileMpp / outScale };
+  return { url: await dataUrlOf(out), partial: !mosaic.loadedAll, metersPerPx: tileMpp / outScale };
 };
 
 // Satellite + labels for browsing in the site picker (the imported image itself has no labels).

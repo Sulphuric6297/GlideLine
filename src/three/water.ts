@@ -90,21 +90,33 @@ export const waterMaterial = (color: string, shore = "#2a3a24", rise = 0.08, opt
     polygonOffsetUnits: -8
   });
   const tex = rippleTexture();
-  if (opts.bottom) m.defines = { ...m.defines, DG_DEPTH: "" };
+  // (with its depth known: clear where it's a few inches deep, so it meets its banks softly)
+  if (opts.bottom) {
+    m.defines = { ...m.defines, DG_DEPTH: "" };
+    m.transparent = true;
+    // (it lies at its own level now, the ground drawing its shore: only the least nudge toward the
+    // eye, not one that grows with the slant, which seen from far off drew it over the land and
+    // the trees on its banks)
+    m.polygonOffsetFactor = 0;
+    m.polygonOffsetUnits = -2;
+  }
   if (opts.mirror) m.defines = { ...m.defines, DG_MIRROR: "" };
   // (a pond's floor at its very edge: the water's own color a little darker, a touch of the bank's)
   const bottom = new THREE.Color(opts.bottom ?? "#5a5238").multiplyScalar(0.62);
   m.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, waterUniforms, { uRipples: { value: tex }, uReflect: { value: 0.9 }, uShore: { value: new THREE.Color(shore).multiplyScalar(0.55) }, uRise: { value: rise }, uBottom: { value: bottom } });
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec2 vWaterXZ;\n#ifdef DG_DEPTH\nattribute float aDepth;\nvarying float vDepth;\n#endif")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWaterXZ = (modelMatrix * vec4(transformed, 1.0)).xz;\n#ifdef DG_DEPTH\nvDepth = aDepth;\n#endif");
+      .replace("#include <common>", "#include <common>\nvarying vec2 vWaterXZ;\n#ifdef DG_DEPTH\nattribute float aDepth;\nattribute float aShore;\nvarying float vDepth;\nvarying float vShore;\n#endif")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWaterXZ = (modelMatrix * vec4(transformed, 1.0)).xz;\n#ifdef DG_DEPTH\nvDepth = aDepth;\nvShore = aShore;\n#endif");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec2 vWaterXZ;\nuniform sampler2D uRipples;\nuniform float uTime;\nuniform float uWind;\nuniform float uReflect;\nuniform vec3 uShore;\nuniform float uRise;\nuniform vec3 uSunDir;\nuniform vec3 uSunColor;\nuniform vec3 uBottom;\n#ifdef DG_DEPTH\nvarying float vDepth;\n#endif")
+      .replace("#include <common>", "#include <common>\nvarying vec2 vWaterXZ;\nuniform sampler2D uRipples;\nuniform float uTime;\nuniform float uWind;\nuniform float uReflect;\nuniform vec3 uShore;\nuniform float uRise;\nuniform vec3 uSunDir;\nuniform vec3 uSunColor;\nuniform vec3 uBottom;\n#ifdef DG_DEPTH\nvarying float vDepth;\nvarying float vShore;\n#endif")
       // The shallows: a thin band at the bank, the water's own color everywhere past it
       .replace("#include <color_fragment>", `#include <color_fragment>
         #ifdef DG_DEPTH
           diffuseColor.rgb = mix( uBottom, diffuseColor.rgb, smoothstep( 0.1, 2.0, vDepth ) );
+          // (clear where it's inches deep, so the bank shows through; and thinning away past its
+          // outline where the ground stays as low as it)
+          diffuseColor.a *= smoothstep( 0.0, 0.55, vDepth ) * smoothstep( -26.0, -12.0, vShore );
         #endif`)
       // Two layers of ripples at different sizes, drifting different ways, tilting the surface
       .replace("#include <normal_fragment_maps>", `
@@ -137,6 +149,14 @@ export const waterMaterial = (color: string, shore = "#2a3a24", rise = 0.08, opt
           fres *= mix( 0.4, 1.0, smoothstep( 0.1, 1.2, vDepth ) );
           #endif
           outgoingLight = mix( outgoingLight, sky, clamp( fres, 0.0, 0.85 ) );
+          #ifdef DG_DEPTH
+          // A thin lace of foam where it laps at the bank, broken up by the ripples
+          {
+            float lap = smoothstep( 0.04, 0.14, vDepth ) * ( 1.0 - smoothstep( 0.18, 0.45, vDepth ) );
+            float n = texture2D( uRipples, vWaterXZ / 9.0 + vec2( 0.013, -0.009 ) * uTime * uWind ).z;
+            outgoingLight = mix( outgoingLight, vec3( 0.8, 0.85, 0.8 ), lap * smoothstep( 0.55, 0.85, n ) * 0.22 );
+          }
+          #endif
           // The sun's glitter: where a ripple tilts the sun's mirror image right at the eye
           float glint = pow( max( dot( R, normalize( uSunDir ) ), 0.0 ), 900.0 );
           outgoingLight += uSunColor * glint * 7.0 * smoothstep( 0.0, 0.08, uSunDir.y );

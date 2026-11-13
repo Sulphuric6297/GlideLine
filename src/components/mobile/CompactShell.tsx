@@ -1,3 +1,4 @@
+import { AmenityItem } from "../../types";
 // The app on a phone (and a phone turned on its side). The map is the screen; everything else
 // is within reach of a thumb:
 // - upright: a floating top bar (name, 2D/3D, menu), map controls on the right, a bottom
@@ -16,7 +17,7 @@ import { EXAMPLE_ID } from "../../lib/example";
 import { courseIssues, courseStats, courseTotals, holeStats, openIssues, playsOf } from "../../lib/holeStats";
 import { fmtArea, fmtDist, fmtElev } from "../../lib/units";
 import { deleteSelection, duplicateSelection, select } from "../../state/actions";
-import { getDoc, useCourse, useEditor, type Step } from "../../state/course";
+import { getDoc, useCourse, useEditor, type Step, changeDoc } from "../../state/course";
 import { deleteRecent, newCourse, openCourseFile, openRecent, recentCourses, saveCourseFile } from "../../state/files";
 import type { PlanMeta } from "../../lib/storage";
 import type { CourseItem, Hole, P } from "../../types";
@@ -48,7 +49,7 @@ import { useExportJob } from "../../state/exportJob";
 import { ViewToggle } from "../ViewToggle";
 import { groupActions, groundActions, itemActions, type ItemAction } from "../itemActions";
 import { treeActions, treesAt, treeTitle, underAction } from "../treeActions";
-import { HelpLink, askHelp } from "../ui";
+import { HelpLink, askHelp, PickRow } from "../ui";
 import { ago } from "../../auth/Home";
 import { goDemoHome } from "../DemoHome";
 import { startTour } from "../Tour";
@@ -156,7 +157,7 @@ function goStep(id: Step, setDetent: (d: Detent) => void, toggle: () => void) {
 const STEP_OPEN: Record<Step, boolean> = { site: true, design: false, map: false, export: true };
 
 function BottomNav({ onStep, motion = null }: { onStep: (s: Step) => void; motion?: "out" | "in" | null }) {
-  const step = useEditor(e => e.step);
+  const step = useEditor(e => (e.reviewing ? "site" : e.step)), reviewing = useEditor(e => e.reviewing);
   // (the checks on Design's tab, as a count: its panel has the list)
   const issues = useSummary().issues;
   return (
@@ -168,7 +169,7 @@ function BottomNav({ onStep, motion = null }: { onStep: (s: Step) => void; motio
           return (
             <li key={s.id} className="flex-1 min-w-0">
               <button
-                onClick={() => onStep(s.id)}
+                onClick={() => { if (!reviewing) onStep(s.id); }}
                 aria-current={on ? "step" : undefined}
                 className="w-full h-[60px] flex flex-col items-center justify-center gap-1 focus:outline-none focus-visible:bg-white/[0.08] rounded-[26px]"
               >
@@ -186,7 +187,7 @@ function BottomNav({ onStep, motion = null }: { onStep: (s: Step) => void; motio
 }
 
 function NavRail({ onStep, onMenu, panelOpen, onPanel }: { onStep: (s: Step) => void; onMenu: () => void; panelOpen: boolean; onPanel: () => void }) {
-  const step = useEditor(e => e.step);
+  const step = useEditor(e => (e.reviewing ? "site" : e.step)), reviewing = useEditor(e => e.reviewing);
   return (
     <nav aria-label="Steps" className="glass w-[72px] shrink-0 relative z-40 flex flex-col items-center my-2 ml-[max(8px,env(safe-area-inset-left))] rounded-[26px] py-1" data-testid="nav-rail">
       <button className={`${iconBtn} [@media(max-height:400px)]:h-10`} aria-label="Menu: files, help" onClick={onMenu} data-testid="app-menu-button"><Logo size={28} /></button>
@@ -196,7 +197,7 @@ function NavRail({ onStep, onMenu, panelOpen, onPanel }: { onStep: (s: Step) => 
           const on = step === s.id;
           return (
             <li key={s.id} className="flex-1 min-h-0 max-h-[52px]">
-              <button onClick={() => onStep(s.id)} aria-current={on ? "step" : undefined} className="w-full h-full flex flex-col items-center justify-center gap-0.5 focus:outline-none focus-visible:bg-white/[0.06]">
+              <button onClick={() => { if (!reviewing) onStep(s.id); }} aria-current={on ? "step" : undefined} className="w-full h-full flex flex-col items-center justify-center gap-0.5 focus:outline-none focus-visible:bg-white/[0.06]">
                 <span className={`flex items-center justify-center w-[46px] h-[26px] rounded-full ${on ? "bg-orange-500/20 text-orange-300" : "text-zinc-400"}`}><Icon size={19} strokeWidth={on ? 2.4 : 2} /></span>
                 <span className={`text-[11px] leading-none font-semibold ${on ? "text-zinc-50" : "text-zinc-400"}`}><span className="sr-only">Step {i + 1}: </span>{s.label}</span>
               </button>
@@ -323,6 +324,7 @@ const stepRowAt: Partial<Record<Step, number>> = {};
  * pill (`onPick` with where it was); `back`, the tool coming back down into its place from the
  * pill, its neighbours sliding back in. */
 function StepTools({ onPick, back }: { onPick: (from: DOMRect) => void; back: { tool: string; from: DOMRect } | null }) {
+  const reviewing = useEditor(s => s.reviewing);
   const step = useEditor(e => e.step);
   const main = STEP_TOOLS[step] ?? STEP_TOOLS.design;
   // (no Select: outside a tool, a tap picks; the step's own tools first, then the rest)
@@ -353,6 +355,8 @@ function StepTools({ onPick, back }: { onPick: (from: DOMRect) => void; back: { 
     count();
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
   const more = () => row.current?.scrollBy({ left: row.current.clientWidth * 0.8, behavior: "smooth" });
+  // (a site being looked over before it comes in: its own bar has the place)
+  if (reviewing) return null;
   return (
     <div className="absolute left-2.5 right-2.5 bottom-2 z-30 flex items-center gap-1 h-[64px] px-1.5 rounded-[26px] glass border border-white/10 shadow-2xl" data-testid="tool-strip">
       <div ref={row} onScroll={count} role="toolbar" aria-label="Tools" className={`flex-1 min-w-0 flex gap-1 overflow-x-auto dg-noscrollbar touch-pan-x ${past ? "dg-fade-r" : ""}`}>
@@ -678,6 +682,16 @@ function PhoneGroupBar({ group, faded, side, onHeight }: BarProps & { group: Cou
   const doc = useCourse(s => s.doc);
   const parts = groupSummary(doc, group);
   const settings: BarSetting[] = groupActions().map((a, i) => ({ id: `g${i}`, name: `All ${group.length}`, value: a.label.replace(/ \d+$/, ""), icon: a.icon ? <a.icon size={16} /> : undefined, run: a.run, testid: a.testid }));
+  // (all of them amenities: their mark set for all at once)
+  if (group.every(i => i.type === "amenity")) {
+    const modes = new Set((group as AmenityItem[]).map(a => (a.mark === true ? "always" : a.mark === false ? "never" : "auto")));
+    const now = modes.size === 1 ? [...modes][0] : "mixed";
+    const setMark = (m: string) => { const ids = new Set(group.map(i => i.id)), mark = m === "always" ? true : m === "never" ? false : undefined; changeDoc(d => ({ items: d.items.map(i => (ids.has(i.id) && i.type === "amenity" ? ({ ...i, mark } as CourseItem) : i)) })); };
+    settings.unshift({ id: "mark", name: "Mark on the map", value: now === "auto" ? "Auto" : now === "always" ? "Always" : now === "never" ? "Never" : "Mixed", testid: "group-mark", control: (
+      <div className="flex flex-col" role="radiogroup" aria-label="Mark on the map">
+        {(["auto", "always", "never"] as const).map(m => <PickRow key={m} on={m === now} onClick={() => setMark(m)} label={m === "auto" ? "Auto" : m === "always" ? "Always" : "Never"} testid={`group-mark-${m}`} />)}
+      </div>) });
+  }
   return <GlassBar remember="group" pill={{ name: `${group.length} selected`, small: parts.slice(0, 2).join(" · "), testid: "selection-header" }} settings={settings} onDone={() => select(null)} doneLabel="Done: put them down" faded={faded} side={side} onHeight={onHeight} testid="group-strip" />;
 }
 
@@ -685,6 +699,9 @@ function PhoneGroupBar({ group, faded, side, onHeight }: BarProps & { group: Cou
 function PhoneBar(props: BarProps) {
   const mode = useMode();
   const { hole, item, group } = useSelection();
+  // (a site being looked over before it comes in: its own bar has the place)
+  const reviewing = useEditor(s => s.reviewing);
+  if (reviewing) return null;
   if (mode === "tool") return <PhoneToolBar {...props} />;
   if (hole) return <PhoneHoleBar key={hole.id} hole={hole} {...props} />;
   if (item) return <PhoneItemBar key={item.id} item={item} {...props} />;

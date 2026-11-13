@@ -25,6 +25,7 @@ import { createAmenity, createArea, createBasket, createLine, createStructure, c
 import { courtCount, createField, fieldKindOf, fieldWord } from "./fields";
 import { fieldOf } from "./geo/parkKinds";
 import { centroid, clipPathToRect, clipPolygonToRect, nearestOnSegment, pointInPolygon, polygonArea, simplify } from "./geom";
+import { lampLike } from "./lidar";
 import { fetchStructures, fetchWater, fetchWetlands, inUS } from "./geo/usgov";
 import { courtsFromPhoto } from "./geo/courtsFound";
 import { fittedToPhoto } from "./geo/photoFit";
@@ -131,11 +132,20 @@ export type ImportOptions = {
   onProgress?: (p: ImportProgress) => void;
   /** What each source brought, as it lands. */
   onLayer?: (layer: ImportLayer) => void;
+  /** Waited for once every source is in, before they're sorted out against each other (the one
+   * long piece of work on the page's own thread): whoever is drawing meanwhile says when. */
+  beforeSort?: () => Promise<void>;
+  /** Waited for before a short piece of work on the page's own thread (a survey tile's points
+   * taken in): resolves when nothing on the screen is moving. */
+  calm?: () => Promise<void>;
   /** Stops it: every download, at once (the import then rejects with an AbortError). */
   signal?: AbortSignal;
   /** (older callers) What it is doing, and how far along all of it is (`fraction`). */
   onStatus?: (text: string, progress?: { step: number; of: number; fraction?: number }) => void;
 };
+
+/** A moment for the page to draw between two long pieces of work (stopped: throws as the import does). */
+const breath = (signal?: AbortSignal) => new Promise<void>((ok, no) => setTimeout(() => (signal?.aborted ? no(new DOMException("Aborted", "AbortError")) : ok()), 24));
 
 /** Terrain grid spacing for a site this wide: about 160 cells across, 4 to 20 ft. */
 export const gridFor = (widthFt: number) => clamp(Math.round(widthFt / 160), 4, 20);
@@ -160,6 +170,31 @@ export const heightsFromSamples = (values: Float32Array, samplesX: number, sampl
 /** What the photo shows: stands of trees (as woods areas), the trees standing on their own (as
  * trees) and open water (as water areas), found in a worker (geo/photoNature.ts). */
 export { natureFromPhoto };
+
+/**
+ * The measured "trees" that are lamp posts or power poles. Where a lamp or a pole is mapped at the
+ * spot, that settles it. Otherwise, in a survey flown bare (where a small bare tree comes back to
+ * the laser just as a lamp's head does), a small thing that came back that way is a post where
+ * posts stand: by a road's edge, in or round a parking lot, under a power line. Out in the park
+ * it's a small tree, and stays. (In a survey flown in leaf the survey itself tells them apart:
+ * lib/lidar's findTrees.)
+ */
+export const postsAmong = (trees: LidarTree[], m: { nx: number; ny: number; cell: number; canopy: Float32Array; nUp?: Uint8Array; nMulti?: Uint8Array; leafOn?: boolean | null }, items: CourseItem[]) => {
+  const out = new Set<number>();
+  const REACH = 14;
+  const marks = items.filter(i => i.type === "amenity" && ((i.kind as string) === "light" || (i.kind as string) === "pole")) as { x: number; y: number }[];
+  const lines = items.filter((i): i is LineItem => i.type === "line" && (i.kind === "road" || i.kind === "power")).map(l => ({ pts: l.points, reach: l.kind === "power" ? 12 : (l.width ?? LINE_KINDS.road.width) / 2 + REACH }));
+  const lots = items.filter((i): i is AreaItem => i.type === "area" && i.kind === "parking");
+  const toLine = (p: P, pts: P[]) => { let best = Infinity; for (let k = 1; k < pts.length; k++) best = Math.min(best, nearestOnSegment(p, pts[k - 1], pts[k]).distance); return best; };
+  trees.forEach((t, k) => {
+    if (t[3] >= 9) return;
+    const p = { x: t[0], y: t[1] };
+    if (marks.some(a => Math.hypot(a.x - p.x, a.y - p.y) <= 10)) { out.add(k); return; }
+    if (m.leafOn !== false || !lampLike(m, t)) return;
+    if (lines.some(l => toLine(p, l.pts) <= l.reach) || lots.some(a => pointInPolygon(p, a.points) || toLine(p, [...a.points, a.points[0]]) <= REACH)) out.add(k);
+  });
+  return out;
+};
 
 /** What a thing brought in is like (all of it but its id and this), as a short code: kept with it
  * when it comes in, so one changed since (a road made OB, a building renamed) can be told apart. */
@@ -198,13 +233,17 @@ export const freshOnly = (kept: CourseItem[], incoming: CourseItem[]) => {
 export const govFresh = (gov: { water: CourseItem[]; wet: CourseItem[]; built: CourseItem[] }, mapped: CourseItem[]) => {
   const out: CourseItem[] = [];
   const near = (p: P, line: P[]) => line.some((q, k) => k > 0 && nearestOnSegment(p, line[k - 1], q).distance < 30);
-  const covers = (a: P[], b: P[]) => pointInPolygon(centroid(b), a) || pointInPolygon(centroid(a), b);
+  // (covered: one's middle in the other; or, for water, nearly all of the one lying in or along
+  // the other's outline: the US maps' piece of a lake that fills an island OpenStreetMap leaves
+  // out of it sits wholly along that island's shore, and is no water the map hasn't got)
+  const along = (a: P[], b: P[]) => b.filter(p => pointInPolygon(p, a) || near(p, [...a, a[0]])).length >= b.length * 0.8;
+  const covers = (a: P[], b: P[], water = false) => pointInPolygon(centroid(b), a) || pointInPolygon(centroid(a), b) || (water && along(a, b));
   const has = (i: CourseItem, pool: CourseItem[]) => {
     if (i.type === "line") {
       const streams = pool.filter((m): m is LineItem => m.type === "line" && m.kind === "stream");
       return i.points.filter(p => streams.some(s => near(p, s.points))).length >= i.points.length * 0.5;
     }
-    if (i.type === "area") return pool.some(m => m.type === "area" && (m.kind === i.kind || m.kind === "water" || (i.kind === "rough" && m.kind === "woods")) && covers(m.points, i.points));
+    if (i.type === "area") return pool.some(m => m.type === "area" && (m.kind === i.kind || m.kind === "water" || (i.kind === "rough" && m.kind === "woods")) && covers(m.points, i.points, i.kind === "water" && m.kind === "water"));
     if (i.type === "structure") return pool.some(m => (m.type === "structure" || (m.type === "area" && m.kind === "building")) && covers(m.points, i.points));
     return true;
   };
@@ -315,6 +354,8 @@ export const osmFeatureItems = (features: OsmFeature[], ref: GeoBounds & { width
     const radius = t?.crownM ? clamp((t.crownM / 2) * FEET_PER_METER, 4, 40) : fallback.radius;
     return { ...createTree(at, { radius: Math.round(radius * 2) / 2, height: Math.round(t?.heightM ? clamp(t.heightM * FEET_PER_METER, 8, 150) : fallback.height), treeType: t?.conifer ? "conifer" : "deciduous" }), importSource: "osm" as const } as TreeItem;
   };
+  // (gates: turned across the road or path they stand on, and as wide, once all of it is in)
+  const gates: AmenityItem[] = [];
   for (const f of features) {
     if (f.kind === "dgCourse" || f.kind === "dgHole" || f.kind === "dgTee" || f.kind === "dgBasket" || f.kind === "dgHint") continue;
     if (f.geom === "point") {
@@ -327,6 +368,7 @@ export const osmFeatureItems = (features: OsmFeature[], ref: GeoBounds & { width
         if (f.name) a.label = f.name;
         items.push(a);
         count(said);
+        if (f.amenity === "gate") gates.push(a);
       } else if (f.kind === "tree") {
         items.push(osmTreeItem(at, f.tree, { radius: 12, height: 35 }));
         count("tree");
@@ -392,6 +434,8 @@ export const osmFeatureItems = (features: OsmFeature[], ref: GeoBounds & { width
         const pts = simplify(piece, 1);
         if (pts.length < 2) continue;
         const line = createLine(f.kind, pts) as LineItem;
+        // (as it's mapped, point to point: a curve through the points leaves the road)
+        line.straight = true;
         if (f.name && f.kind !== "path") line.label = f.name;
         if ((f.kind === "path" || f.kind === "road") && f.surface) line.surface = f.surface;
         if ((f.kind === "path" || f.kind === "road" || f.kind === "stream") && f.widthM) line.width = halfFt(clamp(f.widthM * FEET_PER_METER, 2, LINE_KINDS[f.kind].maxWidth));
@@ -406,6 +450,21 @@ export const osmFeatureItems = (features: OsmFeature[], ref: GeoBounds & { width
       if (pieces && f.kind !== "fence") count(f.kind, pieces);
       if (pieces && f.kind === "fence" && f.park) countPark(f.park);
     }
+  }
+  // Each gate across the road or path it stands on (a gate is mapped as a point on the way it
+  // closes): turned square to it, and as wide as it, posts at its edges
+  for (const g of gates) {
+    let best: { d: number; dir: number; width: number } | null = null;
+    for (const l of items) {
+      if (l.type !== "line" || !(l.kind === "road" || l.kind === "path" || l.kind === "walk")) continue;
+      for (let k = 1; k < l.points.length; k++) {
+        const a = l.points[k - 1], b = l.points[k], d = nearestOnSegment(g, a, b).distance;
+        if (d <= 12 && (!best || d < best.d)) best = { d, dir: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI, width: l.width ?? LINE_KINDS[l.kind].width };
+      }
+    }
+    if (!best) continue;
+    g.rotation = Math.round(best.dir);
+    g.width = Math.round(Math.min(60, Math.max(4, best.width + 2)));
   }
   return { items, counts, parks };
 };
@@ -713,7 +772,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     ...(opts.osm ? ["osm" as const, "buildings" as const] : []),
     ...(wantsPhotoTrees ? ["photoTrees" as const] : []),
     ...(wantsGov ? ["gov" as const] : []),
-    ...(opts.trees ? ["seasons" as const] : [])
+    ...(opts.trees || opts.lidar ? ["seasons" as const] : [])
   ];
   const progress = new Progress(opts, ids, satellite ? "satellite photo" : "map");
   const layer = (l: ImportLayer) => { if (!signal?.aborted) opts.onLayer?.(l); };
@@ -775,7 +834,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       // (the survey's ground checked against 3DEP's, when that's what the elevation is: awaited only
       // once the points are in, so both still download at once)
       const dem = elevationJob.then(e => (e && e.elev.source.startsWith("USGS") ? { values: e.elev.values, samplesX, samplesY } : null)).catch(() => null);
-      const got = cached("lidar", here, report => fetchLidar(ref, report, { dem, signal }), { signal, onProgress: f => progress.set("lidar", { fraction: f }) });
+      const got = cached("lidar", here, report => fetchLidar(ref, report, { dem, signal, calm: opts.calm }), { signal, onProgress: f => progress.set("lidar", { fraction: f }) });
       const lidar = await untilAborted(got.value, signal);
       if (!lidar) { progress.set("lidar", { state: "not-here", cached: got.hit }); return null; }
       const g = groundOnGrid(lidar.measured, width, height, grid);
@@ -803,7 +862,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       // under a bare photo, the best one of the site's taken in leaf, only to find them on)
       const bare = !!measured?.lidar.trees.length && measured.lidar.measured.leafOn !== true;
       const leafToo = bare && opts.summerFill !== false && summerFills(measured.lidar.measured.leafOn, map.photo?.season);
-      const inLeaf = bare && !leafToo ? map.choices?.find(c => c.season === "leaf-on" && c.nir) ?? map.choices?.find(c => c.season === "leaf-on") : undefined;
+      const inLeaf = bare && !leafToo && opts.summerFill !== false ? map.choices?.find(c => c.season === "leaf-on" && c.nir) ?? map.choices?.find(c => c.season === "leaf-on") : undefined;
       return soft("photoTrees", async () => {
         progress.set("photoTrees", { state: "coming", fraction: 0 });
         const got = cached("nature", `${map.sourceLabel}|${here}|${waterOnly ? (leafToo ? "water+leaf" : "water") : "all"}`, report => natureFromPhoto(map.url, width, height, (text, f) => { progress.step = text; report(f); }, { signal, waterOnly, canopy: leafToo, nir: map.nir, date: map.photo?.date, lat: location.lat }), { signal, onProgress: f => progress.set("photoTrees", { fraction: f }) });
@@ -845,7 +904,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     // (the rest given 45 s at most: one that stalls doesn't hold OpenStreetMap up)
     // The satellite's seasons, for the brush (Sentinel-2: how green each spot is in winter, spring
     // and summer)
-    const seasonsJob = !opts.trees ? Promise.resolve(null) : soft("seasons", async () => {
+    const seasonsJob = !(opts.trees || opts.lidar) ? Promise.resolve(null) : soft("seasons", async () => {
       progress.set("seasons", { state: "coming" });
       const got = cached("seasons", here, () => seasonsFromSpace(bounds, signal), { signal });
       const s = await untilAborted(got.value, signal);
@@ -867,6 +926,10 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     const [map, ground, measured, traced, nature, osm, gov, seasons] = await untilAborted(Promise.all([photoJob, elevationJob, lidarJob, tracedJob, natureJob, osmJob, govJob, seasonsJob]), signal);
 
     // ------------------------------------------------------------ put together
+    // (in pieces, the page given a moment between them: whatever is drawing meanwhile, the site
+    // being built in front of you say, keeps moving; the same work in the same order)
+    if (opts.beforeSort) await untilAborted(opts.beforeSort(), signal);
+    await breath(signal);
     const background = map?.url ?? null;
     if (map?.partial) notes.push("Some map tiles were missing.");
     if (opts.imagery !== "none" && !map) notes.push(satellite ? "Couldn't download the satellite photo or the street map, so there's plain ground under the course." : "Couldn't download the street map, so there's plain ground under the course.");
@@ -973,6 +1036,14 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       const set = withoutSlabs(all, measured.lidar.measured);
       all = withMeasuredHeights(set.items, measured.lidar.measured, signed);
       if (set.dropped) notes.push(`${set.dropped} ${set.dropped === 1 ? "building" : "buildings"} on the maps left out: the survey shows flat ground there (a slab, a deck or a pool).`);
+      // (lamp posts and power poles among them, left out: see postsAmong)
+      {
+        const posts = postsAmong(lidar.trees, measured.lidar.measured, all);
+        if (posts.size) {
+          lidar = { ...lidar, trees: lidar.trees.filter((_, k) => !posts.has(k)) };
+          notes.push(`${posts.size} lamp ${posts.size === 1 ? "post or pole" : "posts or poles"} beside the roads and parking left out of the trees.`);
+        }
+      }
       // (the trees a bare survey couldn't pick out, from the summer photo's canopy: after the
       // measured ones, so the list of those stays as it was)
       const summer = "leaf" in found && found.leaf ? treesFromSummer(lidar.trees, measured.lidar.measured, found.leaf, width, height, treeFree(all)) : [];
@@ -1020,6 +1091,7 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     // Where brush grows: the chance of it in each 10 ft block, from the survey and the satellite's
     // seasons (the areas themselves made as the import's How much and How thick ask)
     const m = measured?.lidar.measured;
+    await breath(signal);
     const underbrush = underbrushChance(width, height, measured?.lidar.undergrowth ?? null, seasons, {
       areas: all.filter((i): i is AreaItem => i.type === "area" && i.kind === "water").map(i => i.points),
       lines: all.filter(i => i.type === "line" && i.kind === "stream").map(i => (i as { points: P[] }).points)

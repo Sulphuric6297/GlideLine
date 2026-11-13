@@ -233,8 +233,11 @@ plain("OpenStreetMap answers: ways, multipolygon outlines joined from their piec
   plainExpect(found.map(f => `${f.geom}:${f.kind}`)).toEqual(["area:water", "area:water", "line:road", "line:stream"]);
   const lake = found[0];
   plainExpect(lake.name).toBe("Lake");
-  plainExpect(lake.points).toHaveLength(4);
-  plainExpect(new Set(lake.points.map(q => `${q.lat},${q.lon}`))).toEqual(new Set(["0,0", "0,1", "1,1", "1,0"]));
+  // (its island cut out of it: still one outline, round the lake's corners and the island's, the island land)
+  plainExpect(new Set(lake.points.map(q => `${q.lat},${q.lon}`))).toEqual(new Set(["0,0", "0,1", "1,1", "1,0", "0.4,0.4", "0.4,0.6", "0.6,0.6"]));
+  const inLake = (lat: number, lon: number) => { let c = false; const r = lake.points; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const a = r[i], b = r[j]; if (a.lat > lat !== b.lat > lat && lon < ((b.lon - a.lon) * (lat - a.lat)) / (b.lat - a.lat) + a.lon) c = !c; } return c; };
+  plainExpect(inLake(0.2, 0.8)).toBe(true);
+  plainExpect(inLake(0.45, 0.52)).toBe(false);
   // The query asks for multipolygons too
   plainExpect(overpassQuery({ south: 1, west: 2, north: 3, east: 4 } as any)).toContain('relation["type"="multipolygon"]["natural"');
 });
