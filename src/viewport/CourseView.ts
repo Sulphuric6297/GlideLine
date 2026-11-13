@@ -3886,6 +3886,23 @@ export class CourseView {
           const geo = drapedPolygon(a.points, surface, cell / 2, 0), pa = geo.attributes.position, depth = new Float32Array(pa.count);
           for (let i = 0; i < pa.count; i++) depth[i] = Math.min(9, distanceToPolygon({ x: pa.getX(i), y: pa.getZ(i) }, a.points) * 0.5);
           geo.setAttribute("aDepth", new THREE.BufferAttribute(depth, 1));
+          // (land inside its outline: an island the map leaves out of a lake's outline, a shore
+          // drawn too wide. Where the ground stands well clear of the water's level there's no
+          // water: it doesn't climb over the land)
+          {
+            const dry = new Uint8Array(pa.count);
+            let any = false;
+            for (let i = 0; i < pa.count; i++) {
+              if (pa.getY(i) <= lowest + 3) continue;
+              const x = pa.getX(i), y = pa.getZ(i);
+              if (cellTop(x, y) > bankLevel(x, y) + 3) { dry[i] = 1; any = true; }
+            }
+            if (any) {
+              const idx = geo.index ? Array.from(geo.index.array as ArrayLike<number>) : Array.from({ length: pa.count }, (_, i) => i), wet: number[] = [];
+              for (let t = 0; t + 2 < idx.length; t += 3) if (dry[idx[t]] + dry[idx[t + 1]] + dry[idx[t + 2]] < 2) wet.push(idx[t], idx[t + 1], idx[t + 2]);
+              geo.setIndex(wet);
+            }
+          }
           const shore = this.waterShore(a.points), bottom = `#${new THREE.Color(c).multiplyScalar(0.8).lerp(new THREE.Color(doc.groundColor), 0.2).getHexString()}`;
           const pond = new THREE.Mesh(geo, waterMaterial(c, ...shore, { bottom }));
           pond.userData.water = true;

@@ -96,7 +96,9 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
         if (done) courseStore.getState().commit();
       },
       onHover: setHover,
-      onPose: pose => useEditor.getState().set({ view: pose === "top" ? "2d" : "3d" }),
+      // (not while a site is built in front of you: the build's own swoop from straight down would
+      // have the whole screen drawn again part-way through it, and a frame held)
+      onPose: pose => { const st = (window as { __dgImportShow?: { state?: string } }).__dgImportShow?.state; if (st === "waiting" || st === "playing") return; useEditor.getState().set({ view: pose === "top" ? "2d" : "3d" }); },
       onTeeView: id => useEditor.getState().set({ teeView: id }),
       onContextMenu: i => menuRef.current(i),
       // (a walk ended near another hole: on that hole now, still looking the same way)

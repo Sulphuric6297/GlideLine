@@ -220,6 +220,8 @@ class ImportShow {
   private lid: SVGPathElement | null = null; private lidEdge: SVGPathElement | null = null;
   private revealAt: number | undefined;
   private photoAt: number | undefined;
+  private photoAsked: number | undefined;
+  private photoSent = false;
   private grounded = true;
   private groundAt: number | undefined;
   /** A part being let in: the picture comes to rest, the part goes into the course, its things are held back. */
@@ -595,11 +597,15 @@ class ImportShow {
   /** A site coming in: the next part let in once the step in hand is done, the picture at rest. */
   private liveTick(t: number) {
     const L = this.live!;
+    // (the photo, asked for: eased in once the graphics card has it and the frames come evenly)
+    // (handed to the graphics card while it's still unseen: not as it begins to show)
+    if (this.photoAsked !== undefined && !this.photoSent && this.v.ground.photo?.image) { this.photoSent = true; try { this.v.renderer.initTexture(this.v.ground.photo); } catch { /* sent when it's first drawn */ } this.even = 0; }
+    if (this.photoAsked !== undefined && this.photoAt === undefined && ((this.photoSent && this.even >= 8 && t >= this.photoAsked + 0.3) || t >= this.photoAsked + 4)) { this.photoAt = t + 0.1; if (this.revealAt === undefined) this.revealAt = t + 0.3; }
     // (the import's own short pieces of work: let through while nothing is moving)
     if (L.waiters.length && (this.grounded ? !this.pending && t >= this.steps[this.steps.length - 1].to + 0.1 : this.groundAt === undefined || this.even < 4)) { const w = L.waiters.shift()!; w(); }
     // (the photo: laid on the ground the moment it's here, before anything moves; once the site
     // is moving it waits its turn like any other part, for a moment the picture is at rest)
-    if (!this.grounded) { const pi = L.queue.findIndex(q => q.kind === "photo"); if (pi >= 0) { L.queue.splice(pi, 1)[0].apply(); if (this.revealAt === undefined) this.revealAt = t + 0.55; if (this.photoAt === undefined) this.photoAt = t + 0.2; } }
+    if (!this.grounded) { const pi = L.queue.findIndex(q => q.kind === "photo"); if (pi >= 0) { L.queue.splice(pi, 1)[0].apply(); this.photoAsked = t; this.even = 0; } }
     if (!this.grounded) {
       // (before the ground: the photo laid down as soon as it's here, then the ground, which starts it all)
       const v = this.v;
@@ -607,13 +613,14 @@ class ImportShow {
       const gi = this.groundAt === undefined ? L.queue.findIndex(q => q.kind === "ground") : -1;
       if (gi >= 0) { L.queue.splice(gi, 1)[0].apply(); this.groundAt = t; if (this.revealAt === undefined) this.revealAt = t + 0.35; }
       const inNow = this.groundAt !== undefined && t >= this.groundAt + 0.4 && ((Object.keys(getDoc().terrainHeights).length > 0 && (v.slowQueue?.size ?? 0) === 0 && v.doc?.heights === v.heightsRef) || t >= this.groundAt + 2.8);
+      // (its height lines worked out now, while nothing moves: not as the rise begins)
+      if (inNow && !this.contours && !this.contoursTried) { this.contoursTried = true; this.makeContours(); this.even = 0; }
       if ((inNow && (this.even >= 8 || t >= this.groundAt! + 3.2)) || (this.groundAt === undefined && L.queue.some(q => q.kind === "final"))) {
         const hs = Object.values(getDoc().terrainHeights ?? {}) as number[];
         let lo = 0, hi = 0; for (const h of hs) { if (h < lo) lo = h; if (h > hi) hi = h; }
         this.T.groundClick = t + 0.2; this.T.swoop = [t + 0.3, t + 3.8]; this.T.rise = [t + 0.5, t + 2.5];
         const g = this.steps[0]; g.click = t + 0.2; g.from = this.T.rise[0]; g.to = this.T.rise[1]; g.val = `${Math.round(hi - lo)} ft of climb`;
         this.grounded = true;
-        this.makeContours();
         say("playing", { steps: this.steps.map(s => s.id), seconds: this.T.end });
       }
       return;
@@ -654,7 +661,7 @@ class ImportShow {
     if (kind === "photo") {
       const d = this.realDoc;
       this.photoReal = d.background?.url ? (d.background.opacity ?? 1) : 0;
-      if (this.photoAt === undefined) this.photoAt = t + 0.45;
+      if (this.photoAt === undefined && this.photoAsked === undefined) { this.photoAsked = t; this.even = 0; }
     } else if (!HAND && kind !== "ground") {
       // (each part built on its own: what was built before stays whole)
       // (held back at once; its steps begin a moment on, when the graphics card has what it needs
@@ -779,7 +786,7 @@ class ImportShow {
       }
       if (v.haze) { v.haze.density = 0.00021 * k * (1 - home); const hz = v.skyBox?.material?.uniforms?.uHaze?.value; if (hz) v.haze.color.copy(hz); }
       // the photo on the ground through the swoop, the course's own ground while it's built, the photo back at the end
-      const x = HAND ? Math.max((1 - io((t - T.rise[0] - 0.7) / (T.rise[1] - T.rise[0] - 0.2))) * this.photoReal, home * this.photoReal) : this.photoReal * (this.photoAt === undefined ? 1 : io((t - this.photoAt) / 0.9)), g = v.ground, mat = g.mapPlane?.material;
+      const x = HAND ? Math.max((1 - io((t - T.rise[0] - 0.7) / (T.rise[1] - T.rise[0] - 0.2))) * this.photoReal, home * this.photoReal) : this.photoReal * (this.photoAt === undefined ? (this.photoAsked === undefined ? 1 : 0) : io((t - this.photoAt) / 0.9)), g = v.ground, mat = g.mapPlane?.material;
       if (Math.abs(x - this.photoNow) > 0.0005 || this.frameN === 1) { this.photoNow = x; g.bgOpacity = x; if (mat && g.photo && !g.painted) { mat.opacity = x; mat.visible = x > 0.001; } }
     }
     // (the sun home for the last time, the build done: a chime, as the music dims)
@@ -949,6 +956,7 @@ class ImportShow {
   private instDone = false;
   private sounded = new Set<Step>();
   private swooped = false;
+  private contoursTried = false;
   private contours: { lines: THREE.LineSegments; mat: THREE.ShaderMaterial } | null = null;
   private dawn = 0;
   /** A point of light at the head of each path as it's drawn. */

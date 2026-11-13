@@ -15,6 +15,10 @@ const MUSIC_VOLUME = 0.12, MUSIC_DIMMED = 0.05;
  * music, never over it). */
 const FX = { [TREES]: { from: 0.3, gain: 0.11 }, [CHIME]: { from: 0.42, gain: 1.0 } };
 
+/** How many of each sound have been asked for, for tests. */
+const made: Record<string, number> = {};
+const count = (k: string) => { made[k] = (made[k] ?? 0) + 1; };
+
 export const importSoundOn = () => { try { return localStorage.getItem(KEY) !== "off"; } catch { return true; } };
 
 /** A sound's loudness eased to `to` over `ms` (one easing at a time for each sound). */
@@ -83,6 +87,7 @@ export const stopImportMusic = (ms = 3000) => {
 /** The build's end: a chime, as the music dims (it plays on, quieter, while the site is looked over). */
 export const playImportChime = () => {
   if (!importSoundOn()) return;
+  count("chime");
   if (music && !leaving) fade(music, MUSIC_DIMMED, 2800);
   // (the note itself, then quickly away: the recording has people talking behind it as it rings on)
   play(CHIME, 1.4, 1.8);
@@ -93,6 +98,7 @@ let rush: object | null = null;
  * sounding). */
 export const playTreesSound = (seconds: number) => {
   if (rush && sounding.has(rush as never)) return;
+  count("trees");
   // (fading over the last of their growing: silent as the last tree is up)
   const out = Math.min(0.8, seconds * 0.4);
   rush = play(TREES, Math.max(0.1, seconds - out), out);
@@ -160,6 +166,7 @@ export const playImportNote = (i: number) => {
   const to = mix();
   if (!ctx || !to || ctx.currentTime - lastNote < 0.1) return;
   lastNote = ctx.currentTime;
+  count("note");
   const hz = NOTES[i % NOTES.length], t0 = ctx.currentTime + 0.01;
   tone(to, t0, hz, 0.014, 0.006, 0.8); tone(to, t0, hz * 2, 0.0035, 0.006, 0.42);
 };
@@ -172,6 +179,7 @@ export const playImportFx = (part: "photo" | "ground" | "water" | "paths" | "bui
   const to = mix();
   if (!ctx || !to) return;
   const t0 = ctx.currentTime + 0.02, len = Math.max(0.6, seconds);
+  count(part);
   if (part === "photo") {
     for (const [hz, k] of [[659.25, 0], [783.99, 1], [1046.5, 2]] as const) tone(to, t0 + k * 0.12, hz, 0.005, 0.5, 1.5);
   } else if (part === "ground") {
@@ -188,3 +196,5 @@ export const playImportFx = (part: "photo" | "ground" | "water" | "paths" | "bui
     for (let i = 0; i < k; i++) { const at = t0 + (len * 0.8 * i) / k; tone(to, at, NOTES[i], 0.014, 0.006, 0.75); tone(to, at, NOTES[i] * 2, 0.0035, 0.006, 0.4); }
   }
 };
+
+if (typeof window !== "undefined") (window as unknown as { __dgImportSound: unknown }).__dgImportSound = () => ({ made: { ...made }, music: music ? { volume: Math.round(music.volume * 1000) / 1000, paused: music.paused, leaving } : null, effectsReady: ready.size, sounding: sounding.size });
