@@ -103,5 +103,77 @@ export const setImportSound = (on: boolean) => {
   try { localStorage.setItem(KEY, on ? "on" : "off"); } catch { /* no storage */ }
   if (on) { startImportMusic(); return; }
   if (music) { leaving = false; stopImportMusic(350); }
+  if (bus && ctx) { const b = bus; b.gain.setValueAtTime(0, ctx.currentTime); window.setTimeout(() => { b.gain.value = 1; }, 3000); }
   for (const one of sounding) { try { one.gain.gain.cancelScheduledValues(0); one.gain.gain.value = 0; one.src.stop(); } catch { /* ended already */ } }
+};
+
+// --- the other parts' sounds: made here, not recorded (nothing to fetch, each as long as its part
+// takes), in the music's own key (C major), all of them under it
+
+let bus: GainNode | null = null, hiss: AudioBuffer | null = null;
+/** Where the made sounds go: straight out, and through a soft, long echo of a room. */
+const mix = () => {
+  if (!ctx) return null;
+  if (!bus) {
+    bus = ctx.createGain(); bus.gain.value = 1; bus.connect(ctx.destination);
+    const n = Math.floor(ctx.sampleRate * 2.6), room = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) { const d = room.getChannelData(c); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n) ** 3.4; }
+    const echo = ctx.createConvolver(), wet = ctx.createGain();
+    echo.buffer = room; wet.gain.value = 0.5;
+    bus.connect(echo); echo.connect(wet); wet.connect(ctx.destination);
+  }
+  return bus;
+};
+const air = () => {
+  if (!hiss && ctx) { const n = ctx.sampleRate * 2; hiss = ctx.createBuffer(1, n, ctx.sampleRate); const d = hiss.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; }
+  return hiss;
+};
+/** A loudness that rises to `peak`, holds, and falls away. */
+const swell = (g: GainNode, t0: number, peak: number, up: number, hold: number, down: number) => {
+  g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(peak, t0 + up); g.gain.setValueAtTime(peak, t0 + up + hold); g.gain.linearRampToValueAtTime(0, t0 + up + hold + down);
+};
+/** Air through a filter, from `t0` for `len` seconds. */
+const breath = (to: AudioNode, t0: number, len: number, peak: number, type: BiquadFilterType, f0: number, f1: number, q = 0.8) => {
+  const c = ctx!, src = c.createBufferSource(), flt = c.createBiquadFilter(), g = c.createGain();
+  src.buffer = air(); src.loop = true; flt.type = type; flt.Q.value = q;
+  flt.frequency.setValueAtTime(f0, t0); flt.frequency.exponentialRampToValueAtTime(f1, t0 + len);
+  swell(g, t0, peak, len * 0.35, len * 0.2, len * 0.45);
+  src.connect(flt); flt.connect(g); g.connect(to);
+  src.start(t0); src.stop(t0 + len + 0.05);
+  return flt;
+};
+/** A plain tone, from `t0`: up in `up`, away over `down`. */
+const tone = (to: AudioNode, t0: number, hz: number, peak: number, up: number, down: number, hz1 = hz) => {
+  const c = ctx!, o = c.createOscillator(), g = c.createGain();
+  o.type = "sine"; o.frequency.setValueAtTime(hz, t0); if (hz1 !== hz) o.frequency.exponentialRampToValueAtTime(hz1, t0 + up + down);
+  g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(peak, t0 + up); g.gain.exponentialRampToValueAtTime(0.0001, t0 + up + down);
+  o.connect(g); g.connect(to);
+  o.start(t0); o.stop(t0 + up + down + 0.05);
+};
+// (C major's five easy notes, low to high)
+const NOTES = [392, 523.25, 587.33, 659.25, 783.99, 880, 1046.5];
+
+/** A part's own sound as it comes in, for about as long as it takes (`n`: how many buildings):
+ * the photo a far shimmer, the ground a low swell, the water a wash with a few drops, the paths a
+ * stroke of air, the buildings a soft note each. */
+export const playImportFx = (part: "photo" | "ground" | "water" | "paths" | "build", seconds: number, n = 0) => {
+  if (!importSoundOn()) return;
+  const to = mix();
+  if (!ctx || !to) return;
+  const t0 = ctx.currentTime + 0.02, len = Math.max(0.6, seconds);
+  if (part === "photo") {
+    for (const [hz, k] of [[659.25, 0], [783.99, 1], [1046.5, 2]] as const) tone(to, t0 + k * 0.12, hz, 0.005, 0.5, 1.5);
+  } else if (part === "ground") {
+    breath(to, t0, len, 0.03, "lowpass", 140, 330);
+    tone(to, t0, 130.81, 0.012, len * 0.45, len * 0.55); tone(to, t0, 196, 0.008, len * 0.5, len * 0.5);
+  } else if (part === "water") {
+    const flt = breath(to, t0, len, 0.014, "bandpass", 1100, 1700, 0.9), lfo = ctx.createOscillator(), depth = ctx.createGain();
+    lfo.frequency.value = 0.7; depth.gain.value = 380; lfo.connect(depth); depth.connect(flt.frequency); lfo.start(t0); lfo.stop(t0 + len + 0.05);
+    for (let k = 0; k < 3; k++) tone(to, t0 + len * (0.18 + 0.27 * k), 1568 - k * 140, 0.007, 0.012, 0.22, 1046.5 - k * 90);
+  } else if (part === "paths") {
+    breath(to, t0, len, 0.013, "bandpass", 520, 2300, 1.3);
+  } else {
+    const k = Math.max(1, Math.min(NOTES.length, n || 1));
+    for (let i = 0; i < k; i++) { const at = t0 + (len * 0.8 * i) / k; tone(to, at, NOTES[i], 0.014, 0.006, 0.75); tone(to, at, NOTES[i] * 2, 0.0035, 0.006, 0.4); }
+  }
 };

@@ -9,7 +9,7 @@ import { forestDetail } from "../three/treeKit";
 import { getView } from "../state/view";
 import { changeDoc, getDoc, useEditor } from "../state/course";
 import { isImported, type ImportLayer } from "../lib/importSite";
-import { playImportChime, playTreesSound } from "../lib/importSound";
+import { playImportChime, playImportFx, playTreesSound } from "../lib/importSound";
 
 type P = { x: number; y: number };
 const cl = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x));
@@ -737,8 +737,9 @@ class ImportShow {
     const hold = !!this.pending;
     const ts = this.step("trees"), tp = hold ? -1 : ts ? (t - ts.from) / (ts.to - ts.from) : 2, span = 0.13;
     const growing = tp > -0.05 && tp < 1.05;
-    // (a rush of air as they come up)
-    if (!HAND && !hold && ts && ts !== this.rushFor && t >= ts.from && t < ts.to) { this.rushFor = ts; playTreesSound((ts.to - ts.from) / this.speed); }
+    // (each part's own sound as it begins: a rush of air for the trees, the others made to their length)
+    if (!HAND && !hold) for (const s of this.steps) if (!this.sounded.has(s) && t >= s.from && t < s.to) { this.sounded.add(s); const sec = (s.to - s.from) / this.speed; if (s.id === "trees") playTreesSound(sec); else playImportFx(s.id, sec, this.built.length); }
+    if (!HAND && this.photoAt !== undefined && t >= this.photoAt && !this.photoSounded) { this.photoSounded = true; playImportFx("photo", 1.6); }
     if (growing || this.frameN === 1 || this.treeKick || (tp >= 1.05 && this.trees[0]?.s !== 1 && this.trees.length)) {
       for (const tr of this.trees) { const s = out((tp - tr.at * (1 - span)) / span); if (s === tr.s) continue; tr.s = s; tr.o.visible = s > 0.001; tr.o.scale.set(0.35 + 0.65 * s, Math.max(0.0001, s), 0.35 + 0.65 * s); tr.o.updateMatrixWorld(true); }
     }
@@ -863,7 +864,8 @@ class ImportShow {
     v.dirty = true;
   }
   private instDone = false;
-  private rushFor: Step | null = null;
+  private sounded = new Set<Step>();
+  private photoSounded = false;
   private chimed = false;
   /** How many frames in a row came on time (the graphics card done with what it had to make ready). */
   private even = 0;
