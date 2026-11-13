@@ -3949,7 +3949,10 @@ export class CourseView {
           for (let i = 0; i < pa.count; i++) {
             const x = pa.getX(i), y = pa.getZ(i), p = { x, y }, d = distanceToPath(p, closed), inside = i < ip.length / 3 || pointInPolygon(p, ring);
             const gap = pa.getY(i) - this.h(x, y);
-            depth[i] = Math.max(-3, Math.min(9, inside ? Math.max(gap, d * 0.5) : gap));
+            // (inside its outline, deep a foot every 2 ft from the edge, where it lies over the ground;
+            // where the ground comes up to it, only as deep as it is over the ground, so it clears there too)
+            const over = Math.min(1, Math.max(0, (gap - 0.05) / 0.15));
+            depth[i] = Math.max(-3, Math.min(9, inside ? gap + (Math.max(gap, d * 0.5) - gap) * over : gap));
             reach[i] = inside ? d : -d;
           }
           geo.setAttribute("aDepth", new THREE.BufferAttribute(depth, 1));
