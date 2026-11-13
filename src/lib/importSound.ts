@@ -10,9 +10,10 @@
 const KEY = "dg-import-sound";
 const MUSIC = `${import.meta.env.BASE_URL}zz-import-music.mp3`, TREES = `${import.meta.env.BASE_URL}sound/import-trees.mp3`;
 const CHIME = `${import.meta.env.BASE_URL}zz-import-chime.mp3`;
-const MUSIC_VOLUME = 0.16, MUSIC_DIMMED = 0.07;
-/** Each effect: where its sound begins in its file (s), and how loud (both files are quiet ones). */
-const FX = { [TREES]: { from: 0.3, gain: 2.0 }, [CHIME]: { from: 0.42, gain: 2.4 } };
+const MUSIC_VOLUME = 0.12, MUSIC_DIMMED = 0.05;
+/** Each effect: where its sound begins in its file (s), and how loud (all of it subtle: under the
+ * music, never over it). */
+const FX = { [TREES]: { from: 0.3, gain: 0.45 }, [CHIME]: { from: 0.42, gain: 1.0 } };
 
 export const importSoundOn = () => { try { return localStorage.getItem(KEY) !== "off"; } catch { return true; } };
 
