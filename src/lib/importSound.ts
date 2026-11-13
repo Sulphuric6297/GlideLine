@@ -1,16 +1,20 @@
 // The import's sound: music played softly from the moment a site is asked for till it's brought
 // in (quieter once the build is done, fading out as Design begins), a rush of air as the trees
 // come up, and a chime as the build ends. Off with one switch, remembered. A sound that isn't
-// there (the music and the chime are kept out of the public code: see public/sound/README.md) is
-// simply not played.
+// there (the chime is kept out of the public code: see public/sound/README.md) is simply not
+// played.
 //
-// The music is a file played as it loads. The two effects are fetched and made ready at the
+// The music is a file played as it loads, from past its slow opening (MUSIC_FROM), faded in
+// slowly; near its own ending it goes round to that spot again, never through the quiet at its end. The two effects are fetched and made ready at the
 // import's press, so each sounds the instant it's asked for (and from where its sound begins, past
 // the silence at its start).
 const KEY = "dg-import-sound";
-const MUSIC = `${import.meta.env.BASE_URL}zz-import-music.mp3`, TREES = `${import.meta.env.BASE_URL}sound/import-trees.mp3`;
+const MUSIC = `${import.meta.env.BASE_URL}sound/import-music.mp3`, TREES = `${import.meta.env.BASE_URL}sound/import-trees.mp3`;
 const CHIME = `${import.meta.env.BASE_URL}zz-import-chime.mp3`;
 const MUSIC_VOLUME = 0.12, MUSIC_DIMMED = 0.05;
+/** Where the music starts (s: just past its slow build, at the quiet before it swells), where it
+ * goes round to that spot (as its ending fades, already quiet), and how slowly it comes in (ms). */
+const MUSIC_FROM = 88, MUSIC_ROUND = 250, MUSIC_IN = 8000;
 /** Each effect: where its sound begins in its file (s), and how loud (all of it subtle: under the
  * music, never over it). */
 const FX = { [TREES]: { from: 0.3, gain: 0.11 }, [CHIME]: { from: 0.42, gain: 1.0 } };
@@ -23,12 +27,12 @@ export const importSoundOn = () => { try { return localStorage.getItem(KEY) !== 
 
 /** A sound's loudness eased to `to` over `ms` (one easing at a time for each sound). */
 const fades = new WeakMap<HTMLAudioElement, number>();
-const fade = (el: HTMLAudioElement, to: number, ms: number, then?: () => void) => {
+const fade = (el: HTMLAudioElement, to: number, ms: number, then?: () => void, ease = false) => {
   window.clearInterval(fades.get(el));
   const from = el.volume, t0 = performance.now();
   const id = window.setInterval(() => {
     const u = Math.min(1, (performance.now() - t0) / Math.max(1, ms));
-    el.volume = Math.max(0, Math.min(1, from + (to - from) * u));
+    el.volume = Math.max(0, Math.min(1, from + (to - from) * (ease ? u * u : u)));
     if (u >= 1) { window.clearInterval(id); then?.(); }
   }, 40);
   fades.set(el, id);
@@ -75,7 +79,7 @@ const play = (url: string, hold?: number, out = 1.6) => {
 };
 
 // --- the music
-let music: HTMLAudioElement | null = null, leaving = false;
+let music: HTMLAudioElement | null = null, leaving = false, musicTo = MUSIC_VOLUME;
 /** The music, from quiet, round and round, and the effects made ready (asked for from a press, as
  * browsers want). */
 export const startImportMusic = () => {
@@ -83,9 +87,18 @@ export const startImportMusic = () => {
   prepare();
   if (music && !leaving) return;
   if (music) { window.clearInterval(fades.get(music)); music.pause(); }
-  const el = new Audio(MUSIC);
-  el.loop = true; el.volume = 0; leaving = false; music = el;
-  void el.play().then(() => fade(el, MUSIC_VOLUME, 2600)).catch(() => { if (music === el) music = null; });
+  // (the start as a media fragment: honoured before the file has loaded, as currentTime isn't)
+  const el = new Audio(`${MUSIC}#t=${MUSIC_FROM}`);
+  el.volume = 0; leaving = false; music = el; musicTo = MUSIC_VOLUME;
+  const round = () => {
+    if (music !== el || leaving) return;
+    el.volume = 0; el.currentTime = MUSIC_FROM;
+    if (el.paused) void el.play().catch(() => undefined);
+    fade(el, musicTo, MUSIC_IN, undefined, true);
+  };
+  el.addEventListener("timeupdate", () => { if (el.currentTime >= MUSIC_ROUND) round(); });
+  el.addEventListener("ended", round);
+  void el.play().then(() => fade(el, MUSIC_VOLUME, MUSIC_IN, undefined, true)).catch(() => { if (music === el) music = null; });
 };
 /** The music faded away over `ms` (asked for again while it's fading: left to fade as it is). */
 export const stopImportMusic = (ms = 3000) => {
@@ -99,7 +112,7 @@ export const stopImportMusic = (ms = 3000) => {
 export const playImportChime = () => {
   if (!importSoundOn()) return;
   count("chime");
-  if (music && !leaving) fade(music, MUSIC_DIMMED, 2800);
+  if (music && !leaving) { musicTo = MUSIC_DIMMED; fade(music, MUSIC_DIMMED, 2800); }
   // (the note itself, then quickly away: the recording has people talking behind it as it rings on)
   play(CHIME, 1.4, 1.8);
 };
@@ -210,4 +223,4 @@ export const playImportFx = (part: "photo" | "ground" | "water" | "paths" | "bui
   }
 };
 
-if (typeof window !== "undefined") (window as unknown as { __dgImportSound: unknown }).__dgImportSound = () => ({ made: { ...made }, music: music ? { volume: Math.round(music.volume * 1000) / 1000, paused: music.paused, leaving } : null, effectsReady: ready.size, sounding: sounding.size });
+if (typeof window !== "undefined") (window as unknown as { __dgImportSound: unknown }).__dgImportSound = () => ({ made: { ...made }, music: music ? { volume: Math.round(music.volume * 1000) / 1000, at: Math.round(music.currentTime), paused: music.paused, leaving } : null, effectsReady: ready.size, sounding: sounding.size });
