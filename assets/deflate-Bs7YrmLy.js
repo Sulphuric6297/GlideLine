@@ -1,0 +1,1 @@
+import{i as r}from"./App-Djhko8uH.js";import{B as o}from"./geotiff-Dq8n5Bug.js";import"./index-gSUJUdua.js";import"./exports-C1_ueMAB.js";import"./pace-C3Or6iMQ.js";import"./raster-BHnIlySC.js";import"./useRelief-C0v5siif.js";class c extends o{decodeBlock(e){return r(new Uint8Array(e)).buffer}}export{c as default};
