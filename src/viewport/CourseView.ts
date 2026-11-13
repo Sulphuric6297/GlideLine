@@ -3885,9 +3885,15 @@ export class CourseView {
           // (land inside its outline, an island or a shore drawn too wide: where the ground stands
           // well clear of the water's level the water lies at its own level under it, so the
           // ground's own slope is the shore, and it doesn't climb over the land)
+          // (out in the water it rides over the survey's bumps; near its edge it lies flat at its own
+          // level, so the ground itself says where the shore is, not the map's straight lines)
+          const edgeLine = [...a.points, a.points[0]];
           const surface = (x: number, y: number) => {
             const level = bankLevel(x, y) + 0.2, top = cellTop(x, y) + 0.3, over = top - level;
-            return over <= 1.5 ? Math.max(level, top) : over >= 3.5 ? level : level + (top - level) * (1 - (over - 1.5) / 2);
+            const ride = over <= 1.5 ? Math.max(level, top) : over >= 3.5 ? level : level + (top - level) * (1 - (over - 1.5) / 2);
+            if (ride <= level) return level;
+            const k = Math.min(1, Math.max(0, (distanceToPath({ x, y }, edgeLine) - 10) / 14));
+            return level + (ride - level) * k;
           };
           // (its depth: shelving from the bank, a foot every 2 ft out, to 9 ft; the survey
           // can't see under water, so the ground there is only the water's own level)

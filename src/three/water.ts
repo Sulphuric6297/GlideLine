@@ -144,9 +144,9 @@ export const waterMaterial = (color: string, shore = "#2a3a24", rise = 0.08, opt
           #ifdef DG_DEPTH
           // A thin lace of foam where it laps at the bank, broken up by the ripples
           {
-            float lap = smoothstep( 0.04, 0.16, vDepth ) * ( 1.0 - smoothstep( 0.22, 0.75, vDepth ) );
+            float lap = smoothstep( 0.04, 0.14, vDepth ) * ( 1.0 - smoothstep( 0.18, 0.45, vDepth ) );
             float n = texture2D( uRipples, vWaterXZ / 9.0 + vec2( 0.013, -0.009 ) * uTime * uWind ).z;
-            outgoingLight = mix( outgoingLight, vec3( 0.86, 0.9, 0.86 ), lap * smoothstep( 0.35, 0.75, n ) * 0.45 );
+            outgoingLight = mix( outgoingLight, vec3( 0.8, 0.85, 0.8 ), lap * smoothstep( 0.55, 0.85, n ) * 0.22 );
           }
           #endif
           // The sun's glitter: where a ripple tilts the sun's mirror image right at the eye
