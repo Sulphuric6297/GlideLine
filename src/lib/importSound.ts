@@ -1,23 +1,23 @@
 // The import's sound: music played softly from the moment a site is asked for till it's brought
 // in (quieter once the build is done, fading out as Design begins), a rush of air as the trees
-// come up, and a chime as the build ends. Off with one switch, remembered. A sound that isn't
-// there (the chime is kept out of the public code: see public/sound/README.md) is simply not
-// played.
+// come up, and a chime as the build ends. Off with one switch, remembered. A sound that can't be
+// had is simply not played.
 //
 // The music is a file played as it loads, from past its slow opening (MUSIC_FROM), faded in
-// slowly; near its own ending it goes round to that spot again, never through the quiet at its end. The two effects are fetched and made ready at the
+// slowly; near its own ending it goes round to that spot again, never through the quiet at its
+// end. The two effects are fetched and made ready at the
 // import's press, so each sounds the instant it's asked for (and from where its sound begins, past
 // the silence at its start).
 const KEY = "dg-import-sound";
 const MUSIC = `${import.meta.env.BASE_URL}sound/import-music.mp3`, TREES = `${import.meta.env.BASE_URL}sound/import-trees.mp3`;
-const CHIME = `${import.meta.env.BASE_URL}zz-import-chime.mp3`;
+const CHIME = `${import.meta.env.BASE_URL}sound/import-chime.mp3`;
 const MUSIC_VOLUME = 0.12, MUSIC_DIMMED = 0.05;
 /** Where the music starts (s: just past its slow build, at the quiet before it swells), where it
  * goes round to that spot (as its ending fades, already quiet), and how slowly it comes in (ms). */
 const MUSIC_FROM = 88, MUSIC_ROUND = 250, MUSIC_IN = 8000;
 /** Each effect: where its sound begins in its file (s), and how loud (all of it subtle: under the
  * music, never over it). */
-const FX = { [TREES]: { from: 0.3, gain: 0.11 }, [CHIME]: { from: 0.42, gain: 1.0 } };
+const FX = { [TREES]: { from: 0.3, gain: 0.11 }, [CHIME]: { from: 0, gain: 0.5 } };
 
 /** How many of each sound have been asked for, for tests. */
 const made: Record<string, number> = {};
@@ -113,8 +113,8 @@ export const playImportChime = () => {
   if (!importSoundOn()) return;
   count("chime");
   if (music && !leaving) { musicTo = MUSIC_DIMMED; fade(music, MUSIC_DIMMED, 2800); }
-  // (the note itself, then quickly away: the recording has people talking behind it as it rings on)
-  play(CHIME, 1.4, 1.8);
+  // (a C major chord, the music's own notes, left to ring away by itself)
+  play(CHIME);
 };
 
 let rush: object | null = null;
