@@ -398,28 +398,32 @@ test("3D woods planted again only once a drag ends, and only the woods near what
   expect(await page.evaluate(([x, y]) => (window as any).__dgView.treesNear(x, y, 8), [basket.x, basket.y])).toBe(0);
 });
 
-test("3D water: a pond on sloping ground lies level but never under the ground, and reflects (water material)", async ({ page }) => {
+test("3D water: a pond on sloping ground lies level, never under the ground out in it, and meets its banks where the ground rises out of it, clear there (water material)", async ({ page }) => {
   await importSite(page);
   await page.keyboard.press("3");
   const check = () => page.evaluate(() => {
     const v = (window as any).__dgView;
-    let ponds = 0, below = 0, vertices = 0;
+    let ponds = 0, below = 0, vertices = 0, shoreUnder = 0, shoreUnderSeen = 0;
     v.scene.traverse((o: any) => {
       if (!o.isMesh || !String(o.material?.customProgramCacheKey?.()).startsWith("dg-water")) return;
       ponds++;
-      const pos = o.geometry.getAttribute("position");
+      const pos = o.geometry.getAttribute("position"), depth = o.geometry.getAttribute("aDepth"), reach = o.geometry.getAttribute("aShore");
       for (let i = 0; i < pos.count; i++) {
         vertices++;
-        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-        if (y < v.groundHeight(x, z) - 0.05) below++;
+        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), under = y < v.groundHeight(x, z) - 0.05;
+        // (out in it, past its shore: always over the ground)
+        if (under && reach.getX(i) > 24) below++;
+        // (at its shore it may lie under the bank, the ground hiding it: and it's clear there)
+        if (under && reach.getX(i) <= 24) { shoreUnder++; if (depth.getX(i) > 0.05) shoreUnderSeen++; }
       }
     });
-    return { ponds, below, vertices };
+    return { ponds, below, vertices, shoreUnder, shoreUnderSeen };
   });
   await expect.poll(async () => (await check()).ponds, { timeout: 30_000 }).toBeGreaterThan(0);
   const r = await check();
   expect(r.vertices).toBeGreaterThan(10);
   expect(r.below).toBe(0);
+  expect(r.shoreUnderSeen).toBe(0);
 });
 
 test("the map view rests while the Design step's page covers it, and draws the changes when it comes back", async ({ page }) => {
