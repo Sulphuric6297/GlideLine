@@ -153,6 +153,17 @@ const tone = (to: AudioNode, t0: number, hz: number, peak: number, up: number, d
 // (C major's five easy notes, low to high)
 const NOTES = [392, 523.25, 587.33, 659.25, 783.99, 880, 1046.5];
 
+let lastNote = 0;
+/** One building's note, the next one up the scale each time (never two at once). */
+export const playImportNote = (i: number) => {
+  if (!importSoundOn()) return;
+  const to = mix();
+  if (!ctx || !to || ctx.currentTime - lastNote < 0.1) return;
+  lastNote = ctx.currentTime;
+  const hz = NOTES[i % NOTES.length], t0 = ctx.currentTime + 0.01;
+  tone(to, t0, hz, 0.014, 0.006, 0.8); tone(to, t0, hz * 2, 0.0035, 0.006, 0.42);
+};
+
 /** A part's own sound as it comes in, for about as long as it takes (`n`: how many buildings):
  * the photo a far shimmer, the ground a low swell, the water a wash with a few drops, the paths a
  * stroke of air, the buildings a soft note each. */

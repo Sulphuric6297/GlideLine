@@ -328,7 +328,17 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
   const steps = STEPS.filter(s => s.id !== "brush" || !!brush);
   const [at, setAt] = useState(0), [dir, setDir] = useState(1);
   const step = steps[Math.min(at, steps.length - 1)], last = at >= steps.length - 1, next = steps[at + 1];
-  const go = (k: number) => { const n = Math.max(0, Math.min(steps.length - 1, k)); if (n === at) return; setDir(n > at ? 1 : -1); setAt(n); if (mode !== "all") setMode("all"); setArea(false); };
+  // (each step shows its own: the view eases to the tilt that suits it, where it is and as near as it is)
+  const TILT: Record<string, number> = { photo: 0.9, trees: 1.14, brush: 0.4, things: 0.78, bring: 1.0 };
+  const tap = (ms: number) => { if (phone) { try { navigator.vibrate?.(ms); } catch { /* not this device */ } } };
+  const go = (k: number) => {
+    const n = Math.max(0, Math.min(steps.length - 1, k));
+    if (n === at) return;
+    setDir(n > at ? 1 : -1); setAt(n); if (mode !== "all") setMode("all"); setArea(false);
+    tap(8);
+    if (!(typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches)) (getView() as { easeTilt?: (p: number) => void } | null)?.easeTilt?.(TILT[steps[n].id]);
+  };
+  const bringIn = () => { tap(16); onBring(); };
   stepRef.current = step.id;
   useEffect(() => {
     if (step.id !== "trees" || seen(SEEN_COLORS)) return;
@@ -337,8 +347,10 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
     const turns: [number, TreeLook3d | null][] = [[900, by("early")], [2300, by("autumn")], [3700, null]];
     setTurning(true);
     const ts = turns.map(([ms, l]) => window.setTimeout(() => { if (!stopTurn.current) lookRef.current(l); }, ms));
-    ts.push(window.setTimeout(() => { setTurning(false); markSeen(SEEN_COLORS); }, 4600));
-    return () => { ts.forEach(t => window.clearTimeout(t)); setTurning(false); };
+    let through = false;
+    ts.push(window.setTimeout(() => { through = true; setTurning(false); markSeen(SEEN_COLORS); }, 4600));
+    // (left part-way, the step moved on: the trees back as they were, not left in another season)
+    return () => { ts.forEach(t => window.clearTimeout(t)); setTurning(false); if (!through) { markSeen(SEEN_COLORS); if (!stopTurn.current) lookRef.current(null); } };
   }, [step.id]);
 
   const undoBtn = hist.current.length > 0 && <button className="ml-auto shrink-0 inline-flex items-center gap-1 text-[#a2cf6a] font-semibold" onClick={undo} data-testid="review-undo"><Undo2 size={13} />Undo</button>;
@@ -441,7 +453,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
         <div className="dg-compact fixed inset-x-0 top-0 z-[60] pointer-events-none" style={{ bottom: Math.max(0, window.innerHeight - navTop) }}>
           {area && <button className="absolute right-3 top-[max(76px,env(safe-area-inset-top))] pointer-events-auto glass rounded-full h-11 px-4 text-[14px] font-semibold text-zinc-100" onClick={() => setArea(false)}>Cancel</button>}
           {!area && <GlassBar remember={`import-review-${step.id}`} testid="import-review" pill={{ name: step.short ?? step.title, small: `${at + 1} of ${steps.length}`, back: at > 0 ? () => go(at - 1) : onBack }} pillMenu={menu} settings={settings}
-            line={prompt} lineAbove onDone={last ? onBring : () => go(at + 1)} doneLabel={last ? (again ? "Bring it in again" : "Bring it in") : `Next: ${next.short ?? next.title}`} doneText={last ? (again ? "Bring it in again" : "Bring it in") : undefined} doneIcon={last ? undefined : <ArrowRight size={24} strokeWidth={2.8} />} doneTestid={last ? "review-bring" : "review-next"} />}
+            line={prompt} lineAbove onDone={last ? bringIn : () => go(at + 1)} doneLabel={last ? (again ? "Bring it in again" : "Bring it in") : `Next: ${next.short ?? next.title}`} doneText={last ? (again ? "Bring it in again" : "Bring it in") : undefined} doneIcon={last ? undefined : <ArrowRight size={24} strokeWidth={2.8} />} doneTestid={last ? "review-bring" : "review-next"} />}
         </div>
       </>
     );
@@ -531,7 +543,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
         <div className="sticky -bottom-4 -mx-4 -mb-4 px-4 pb-3.5 pt-2.5 rounded-b-[22px] bg-[rgba(22,31,21,0.94)] backdrop-blur-md flex flex-col gap-2">
           <div className="flex gap-2">
             <button className="h-11 px-4 rounded-[14px] bg-white/[0.1] hover:bg-white/[0.14] active:scale-[0.98] transition text-[14px] font-semibold text-zinc-200" onClick={at > 0 ? () => go(at - 1) : onBack} data-testid={at > 0 ? "review-prev" : "review-back"}>Back</button>
-            <button className={`group flex-1 h-11 rounded-[14px] bg-[#a2cf6a] hover:bg-[#b3db80] active:bg-[#93c05c] active:scale-[0.985] transition text-zinc-950 text-[15px] font-bold inline-flex items-center justify-center gap-1.5 ${last ? "dg-step-ready" : ""}`} onClick={last ? onBring : () => go(at + 1)} data-testid={last ? "review-bring" : "review-next"}>
+            <button className={`group flex-1 h-11 rounded-[14px] bg-[#a2cf6a] hover:bg-[#b3db80] active:bg-[#93c05c] active:scale-[0.985] transition text-zinc-950 text-[15px] font-bold inline-flex items-center justify-center gap-1.5 ${last ? "dg-step-ready" : ""}`} onClick={last ? bringIn : () => go(at + 1)} data-testid={last ? "review-bring" : "review-next"}>
               <span key={step.id} className="dg-appear">{last ? (again ? "Bring it in again" : "Bring it in") : `Next: ${next.short ?? next.title}`}</span>
               {!last && <ArrowRight size={17} strokeWidth={2.6} className="transition-transform group-hover:translate-x-[3px]" />}
             </button>

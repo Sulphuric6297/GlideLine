@@ -788,6 +788,23 @@ export class CourseView {
   private brushTint = false;
   /** Underbrush shown tinted and outlined whatever the tool (a site being looked over). */
   private brushShown = false;
+  /** The view tilted, gently, to `polar` (0: straight down): a step of the import showing its own. */
+  easeTilt(polar: number) {
+    const c = this.controls, was = c.smoothTime;
+    c.smoothTime = 0.75;
+    void c.rotatePolarTo(clamp(polar, c.minPolarAngle, c.maxPolarAngle), true);
+    window.setTimeout(() => { c.smoothTime = was; }, 1800);
+    this.invalidate();
+  }
+  /** The underbrush's tint and outlines eased in (shown at once, they'd pop). */
+  private fadeTintIn() {
+    const mats: { m: THREE.Material & { opacity: number }; to: number }[] = [];
+    for (const [k, e] of this.shapes) if (k.startsWith("area:")) e.obj.traverse(o => { const to = o.userData.tint as number | undefined, m = (o as THREE.Mesh).material as (THREE.Material & { opacity: number }) | undefined; if (to !== undefined && m && !Array.isArray(m)) { m.transparent = true; m.opacity = 0; mats.push({ m, to }); } });
+    if (!mats.length) return;
+    const t0 = performance.now();
+    const step = () => { const u = Math.min(1, (performance.now() - t0) / 800), e = u * u * (3 - 2 * u); for (const q of mats) q.m.opacity = q.to * e; this.invalidate(); if (u < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
   /** Underbrush shown that way as a setting of the view's (View's Underbrush outlines). */
   private brushLayer = false;
   setBrushLayer(on: boolean) {
@@ -800,9 +817,11 @@ export class CourseView {
   private brushPicked: string | null = null;
   setBrushShown(on: boolean, picked: string | null = null) {
     if (on === this.brushShown && picked === this.brushPicked) return;
+    const came = on && !this.brushShown && !this.brushTint;
     this.brushShown = on; this.brushPicked = picked;
     this.brushTint = on || this.brushLayer || !!this.paintKind()?.brush;
     if (this.doc) this.syncShapes();
+    if (came && !(typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches)) this.fadeTintIn();
     this.invalidate();
   }
   /** What the brush paints: the area being reshaped's kind, or the tool's (a stand of bushes is
@@ -3828,7 +3847,7 @@ export class CourseView {
           g.add(mesh);
           g.add(this.fatLine(this.drapeLine(a.points, LIFT + 0.1, true), hot ? "#ffffff" : tc, hot ? 3.5 : 2, { order: hot ? 6 : 5 }));
           // (seen through the trees: underbrush lies under them, and it has to be plain where it is)
-          g.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m && !Array.isArray(m)) { m.depthTest = false; o.renderOrder = 40 + tinted + (hot ? 5 : 0); } });
+          g.traverse(o => { const m = (o as THREE.Mesh).material as (THREE.Material & { opacity?: number }) | undefined; if (m && !Array.isArray(m)) { m.depthTest = false; o.renderOrder = 40 + tinted + (hot ? 5 : 0); o.userData.tint = m.opacity ?? 1; } });
         }
         const fill = photo ? meta.fill : Math.min(0.9, meta.fill + 0.35);
         const rule = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo";

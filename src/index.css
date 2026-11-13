@@ -495,3 +495,8 @@ select {
   .dg-step-next, .dg-step-prev, .dg-step-row, .dg-step-ready, .dg-step-card { animation: none; }
   .dg-step-fill, .dg-step-height { transition: none; }
 }
+
+/* A building's soft light as it rises while a site is built. */
+@keyframes dgbuildglow { 0% { opacity: 0; transform: scale(0.3); } 22% { opacity: 1; } 100% { opacity: 0; transform: scale(2); } }
+.dg-build-glow { position: fixed; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; pointer-events: none; z-index: 9996;
+  background: radial-gradient(circle, rgba(243, 255, 217, 0.8) 0%, rgba(162, 207, 106, 0.4) 34%, rgba(162, 207, 106, 0) 70%); animation: dgbuildglow 1.15s ease-out forwards; }

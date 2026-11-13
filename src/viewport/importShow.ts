@@ -9,7 +9,8 @@ import { forestDetail } from "../three/treeKit";
 import { getView } from "../state/view";
 import { changeDoc, getDoc, useEditor } from "../state/course";
 import { isImported, type ImportLayer } from "../lib/importSite";
-import { playImportChime, playImportFx, playTreesSound } from "../lib/importSound";
+import { playImportChime, playImportFx, playImportNote, playTreesSound } from "../lib/importSound";
+import { contoursOf } from "../lib/relief";
 
 type P = { x: number; y: number };
 const cl = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x));
@@ -38,6 +39,14 @@ type Step = { id: "ground" | "trees" | "water" | "paths" | "build"; tool: string
 
 /** Whether a hand acts the build out with the app's tools (off: each part comes in on its own). */
 const HAND = typeof window !== "undefined" && (window as any).__dgShowHand === true;
+
+/** What the import is doing, in a few words (its own say names every source still to come). */
+const shortly = (s: string) => {
+  const m = /^Bringing in the ([^,…]+?)(?:,| and |…|$)/.exec(s);
+  return m ? `Fetching the ${m[1]}…` : /traced/.test(s) ? "Looking for buildings…" : s || "Fetching the rest…";
+};
+/** Up to full size and a touch past it, then settled: a thing that has just grown. */
+const settle = (x: number) => { const u = cl(x) - 1; return 1 + 2.3 * u * u * u + 1.3 * u * u; };
 
 /** How fast the build plays: with no hand acting it out, a quarter slower than its own timings. */
 const PACE = HAND ? 1 : 0.8;
@@ -179,7 +188,7 @@ class ImportShow {
   private trees: { o: THREE.Object3D; x: number; y: number; at: number; s: number }[] = [];
   private inst: { m: THREE.InstancedMesh; base: Float32Array; n: number; at: Float32Array }[] = [];
   private shapes: { o: THREE.Object3D; x: number; y: number; pts: P[]; water: boolean; struct: boolean; at: number; way: P[]; rev: { line?: boolean; geo: any; max?: number; n?: number }[]; mats: { m: any; op: number; tr: boolean }[]; p: number }[] = [];
-  private built: { o: THREE.Object3D; x: number; y: number; pts?: P[]; out?: SVGPathElement; e: number }[] = [];
+  private built: { o: THREE.Object3D; x: number; y: number; pts?: P[]; out?: SVGPathElement; e: number; lit?: boolean }[] = [];
   private treePath: P[] = []; private waterPath: P[] = []; private pathPath: P[] = [];
   /** The paths the hand draws itself: where each begins and ends along its way. */
   private traced = new Map<object, [number, number]>();
@@ -297,7 +306,7 @@ class ImportShow {
       // (called 3D from the start: the app's own change of that, part-way through the swoop, would hold a frame)
       this.tipped = true; useEditor.getState().set({ view: "3d" } as any);
       this.T = { cover: 0.01, groundClick: BIG, swoop: [BIG, BIG + 3.5], rise: [BIG, BIG + 2], sunClick: BIG, sun: [BIG, BIG + 3.3], sunClose: BIG + 4, back: BIG + 5, end: BIG + 7 };
-      this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Shaping the ground", val: "", click: BIG, from: BIG, to: BIG + 2 });
+      this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Raising the ground", val: "", click: BIG, from: BIG, to: BIG + 2 });
       this.live!.reveal?.(); shield.style.display = ""; skip.style.display = "";
       v.dirty = true;
     } else {
@@ -335,7 +344,7 @@ class ImportShow {
       L.reveal?.(); shield.style.display = ""; skip.style.display = ""; this.cover.style.display = "grid"; this.cover.textContent = "";
       const d = getDoc() as any, hs = Object.values(d.terrainHeights ?? {}) as number[];
       let lo = 0, hi = 0; for (const h of hs) { if (h < lo) lo = h; if (h > hi) hi = h; }
-      this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Shaping the ground", val: `${Math.round(hi - lo)} ft of climb`, click: this.T.groundClick, from: this.T.rise[0], to: this.T.rise[1] });
+      this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Raising the ground", val: `${Math.round(hi - lo)} ft of climb`, click: this.T.groundClick, from: this.T.rise[0], to: this.T.rise[1] });
       this.T.sunClick = BIG; this.T.sun = [BIG, BIG + 3.3]; this.T.sunClose = BIG + 4; this.T.back = BIG + 5; this.T.end = BIG + 7;
     } else {
       this.gather();
@@ -363,6 +372,37 @@ class ImportShow {
       };
       requestAnimationFrame(tick);
     });
+  }
+
+  /** The ground's height lines, in light: a wave of them out from the middle as it rises, then gone. */
+  private makeContours() {
+    const v = this.v, d = getDoc(), W = this.W, H = this.H;
+    const segs = contoursOf(d.terrainHeights, d.gridSize, W, H).segments;
+    if (!segs.length || segs.length > 400000) return;
+    const pos = new Float32Array(segs.length * 6), far = new Float32Array(segs.length * 2), reach = Math.hypot(W, H) / 2;
+    segs.forEach((s, k) => {
+      pos.set([s.x1, v.h(cl(s.x1, 0, W), cl(s.y1, 0, H)) + 1.5, s.y1, s.x2, v.h(cl(s.x2, 0, W), cl(s.y2, 0, H)) + 1.5, s.y2], k * 6);
+      far[k * 2] = Math.hypot(s.x1 - W / 2, s.y1 - H / 2) / reach; far[k * 2 + 1] = Math.hypot(s.x2 - W / 2, s.y2 - H / 2) / reach;
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("far", new THREE.BufferAttribute(far, 1));
+    const mat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending,
+      uniforms: { uWave: { value: -0.2 }, uFade: { value: 1 } },
+      vertexShader: "attribute float far; varying float vFar; void main() { vFar = far; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+      fragmentShader: "uniform float uWave; uniform float uFade; varying float vFar; void main() { float seen = smoothstep(uWave, uWave - 0.22, vFar); float front = exp(-pow((vFar - uWave) / 0.07, 2.0)); gl_FragColor = vec4(0.82, 0.95, 0.62, uFade * (0.2 * seen + 0.75 * front)); }"
+    });
+    const lines = new THREE.LineSegments(geo, mat);
+    lines.frustumCulled = false; lines.renderOrder = 30; lines.raycast = () => {};
+    v.ground.group.add(lines);
+    this.contours = { lines, mat };
+    this.undo.push(() => this.dropContours());
+  }
+  private dropContours() {
+    const c = this.contours;
+    if (!c) return;
+    this.contours = null;
+    c.lines.removeFromParent(); c.lines.geometry.dispose(); c.mat.dispose();
   }
 
   /** What the show holds back and lets in: the trees, the water, paths and other shapes, the buildings. */
@@ -453,6 +493,12 @@ class ImportShow {
     const R = span * 0.1;
     for (const t of this.trees) t.at = cl(reach(this.treePath, t.x, t.y, R) + (rnd(t.x, t.y) - 0.5) * 0.07);
     for (const q of this.inst) for (let i = 0; i < q.n; i++) { const x = q.base[i * 16 + 12], y = q.base[i * 16 + 14]; q.at[i] = cl(reach(this.treePath, x, y, R) + (rnd(x, y) - 0.5) * 0.07); }
+    // (with no hand to follow: out from the middle of the site, like a breath)
+    if (!HAND) {
+      const far = Math.hypot(W, H) / 2, wave = (x: number, y: number) => cl(0.92 * (Math.hypot(x - W / 2, y - H / 2) / far) + (rnd(x, y) - 0.5) * 0.1);
+      for (const t of this.trees) t.at = wave(t.x, t.y);
+      for (const q of this.inst) for (let i = 0; i < q.n; i++) q.at[i] = wave(q.base[i * 16 + 12], q.base[i * 16 + 14]);
+    }
     for (const s of this.shapes) s.at = s.water ? 0 : reach(this.pathPath, s.x, s.y, span * 0.12);
     // drawn along their length: a line's pieces in order, a surface's triangles sorted along its way
     const along = (path: P[], x: number, y: number) => { let bi = 0, bd = Infinity; for (let i = 0; i < path.length; i++) { const dd = (path[i].x - x) ** 2 + (path[i].y - y) ** 2; if (dd < bd) { bd = dd; bi = i; } } return bi; };
@@ -496,10 +542,10 @@ class ImportShow {
     const want: [Step["id"], string, string, string, string, string, number, boolean][] = [
       ["trees", "trees", "Trees", "planting", "Planting the trees", nTrees.toLocaleString(), !HAND ? 2.4 : this.phone ? 4.0 : 4.65, this.trees.length + this.inst.length > 0],
       ["water", "water", "Water", "filling", "Filling the water", String(waters), HAND ? 1.3 : 0.8, waters > 0],
-      ["paths", "paths", "Paths, roads and more", "drawing", "Drawing paths and roads", String(others), HAND ? 3.0 : 0.9, others > 0],
-      ["build", "build", "Buildings and more", "placing", "Setting down the buildings", String(this.built.length), !HAND ? Math.min(1.4, 0.6 + structs * 0.25) : structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
+      ["paths", "paths", "Paths, roads and more", "drawing", "Drawing the paths", String(others), HAND ? 3.0 : 0.9, others > 0],
+      ["build", "build", "Buildings and more", "placing", "Placing the buildings", String(this.built.length), !HAND ? Math.min(1.4, 0.6 + structs * 0.25) : structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
     ];
-    this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Shaping the ground", val: `${Math.round(hi - lo)} ft of climb`, click: this.T.groundClick, from: this.T.rise[0], to: this.T.rise[1] });
+    this.steps.push({ id: "ground", tool: "ground", name: "Ground", doing: "shaping", now: "Raising the ground", val: `${Math.round(hi - lo)} ft of climb`, click: this.T.groundClick, from: this.T.rise[0], to: this.T.rise[1] });
     let t = HAND ? this.T.swoop[1] : this.T.rise[1];
     for (const [id, tool, name, doing, now, val, len, has] of want) {
       if (!has) continue;
@@ -528,8 +574,8 @@ class ImportShow {
     const def: Record<string, [string, string, string, string, string, number, boolean]> = {
       trees: ["trees", "Trees", "planting", "Planting the trees", nTrees.toLocaleString(), 4.65, this.trees.length + this.inst.length > 0],
       water: ["water", "Water", "filling", "Filling the water", String(waters), HAND ? 1.3 : 0.8, waters > 0],
-      paths: ["paths", "Paths, roads and more", "drawing", "Drawing paths and roads", String(others), HAND ? 3.0 : 0.9, others > 0],
-      build: ["build", "Buildings and more", "placing", "Setting down the buildings", String(this.built.length), !HAND ? Math.min(1.4, 0.6 + structs * 0.25) : structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
+      paths: ["paths", "Paths, roads and more", "drawing", "Drawing the paths", String(others), HAND ? 3.0 : 0.9, others > 0],
+      build: ["build", "Buildings and more", "placing", "Placing the buildings", String(this.built.length), !HAND ? Math.min(1.4, 0.6 + structs * 0.25) : structs ? Math.min(3.4, 1.0 + structs * 0.6) : 1.1, this.built.length > 0]
     };
     const [tool, name, doing, now, val0, len0, has] = def[id];
     if (!has) return;
@@ -567,6 +613,7 @@ class ImportShow {
         this.T.groundClick = t + 0.2; this.T.swoop = [t + 0.3, t + 3.8]; this.T.rise = [t + 0.5, t + 2.5];
         const g = this.steps[0]; g.click = t + 0.2; g.from = this.T.rise[0]; g.to = this.T.rise[1]; g.val = `${Math.round(hi - lo)} ft of climb`;
         this.grounded = true;
+        this.makeContours();
         say("playing", { steps: this.steps.map(s => s.id), seconds: this.T.end });
       }
       return;
@@ -643,6 +690,7 @@ class ImportShow {
     this.ring = document.createElementNS(NS, "polygon");
     this.ring.setAttribute("style", "fill:rgba(255,255,255,.07);stroke:#fff;stroke-width:1.6;stroke-opacity:.85;opacity:0");
     svg.appendChild(this.ring);
+    if (!HAND) for (let k = 0; k < 10; k++) { const c = document.createElementNS(NS, "circle"); c.setAttribute("r", "3.2"); c.setAttribute("style", "fill:#f3ffd9;opacity:0;filter:drop-shadow(0 0 6px #a2cf6a) drop-shadow(0 0 2px #fff)"); svg.appendChild(c); this.sparks.push(c); }
     if (this.noCover) {
       const vb = this.v.container.getBoundingClientRect(), inView = document.createElementNS(NS, "svg");
       for (const [k, val] of [["x", vb.left], ["y", vb.top], ["width", vb.width], ["height", vb.height]] as const) inView.setAttribute(k, String(val));
@@ -716,11 +764,19 @@ class ImportShow {
     // the sun: a low morning light while it's built, across the sky, then back to the course's own
     {
       const u = io((t - T.sun[0]) / (T.sun[1] - T.sun[0])), home = io((t - T.back) / (T.end - T.back - 0.3));
-      const bearing = lerp(lerp(104, 256, u), this.sunReal.azimuth, home), alt = lerp(lerp(21, 11, u) + 30 * Math.sin(Math.PI * u), this.sunReal.altitude, home);
-      if (!this.sunSet || Math.abs(bearing - this.sunSet.azimuth) > 0.02 || Math.abs(alt - this.sunSet.altitude) > 0.02) shade = true;
+      // (with no hand: first light in the east, the sun climbing toward the course's own as the
+      // site comes in; moved a little at a time, as each move draws the shadows again)
+      const want = this.live ? (this.live.finalDone ? 0.82 : cl(this.live.fraction) * 0.78) : cl(t / Math.max(1, T.end - 1.5)) * 0.82;
+      this.dawn += (want - this.dawn) * 0.02;
+      const bearing = HAND ? lerp(lerp(104, 256, u), this.sunReal.azimuth, home) : lerp(lerp(97, this.sunReal.azimuth, this.dawn), this.sunReal.azimuth, home);
+      const alt = HAND ? lerp(lerp(21, 11, u) + 30 * Math.sin(Math.PI * u), this.sunReal.altitude, home) : lerp(lerp(10, this.sunReal.altitude, this.dawn), this.sunReal.altitude, home);
+      const fine = HAND || home > 0 ? 0.02 : 0.2;
+      if (this.sunSet && Math.abs(bearing - this.sunSet.azimuth) <= fine && Math.abs(alt - this.sunSet.altitude) <= fine) { /* as it is */ } else {
+      shade = true;
       this.sunSet = { azimuth: bearing, altitude: alt, shadows: lerp(0.62, this.sunReal.shadows, home) };
       v.doc = { ...v.doc, sun: { ...(v.doc.sun ?? {}), ...this.sunSet } };
       v.placeSun();
+      }
       if (v.haze) { v.haze.density = 0.00021 * k * (1 - home); const hz = v.skyBox?.material?.uniforms?.uHaze?.value; if (hz) v.haze.color.copy(hz); }
       // the photo on the ground through the swoop, the course's own ground while it's built, the photo back at the end
       const x = HAND ? Math.max((1 - io((t - T.rise[0] - 0.7) / (T.rise[1] - T.rise[0] - 0.2))) * this.photoReal, home * this.photoReal) : this.photoReal * (this.photoAt === undefined ? 1 : io((t - this.photoAt) / 0.9)), g = v.ground, mat = g.mapPlane?.material;
@@ -728,7 +784,16 @@ class ImportShow {
     }
     // (the sun home for the last time, the build done: a chime, as the music dims)
     if (!HAND && !this.chimed && T.end < BIG && t >= T.end - 0.4) { this.chimed = true; playImportChime(); }
+    // (called 3D again once the swoop is over: looking straight down at its start had the app call it 2D)
+    if (this.noCover && !this.swooped && t >= T.swoop[1] + 0.1) { this.swooped = true; useEditor.getState().set({ view: "3d" } as any); }
     if (!this.tipped && k > 0.45) { this.tipped = true; useEditor.getState().set({ view: "3d" } as any); }
+    // its height lines: a wave out from the middle as it comes up, gone a moment after
+    if (this.contours) {
+      this.contours.mat.uniforms.uWave.value = lerp(-0.15, 1.35, io((t - T.rise[0]) / (T.rise[1] - T.rise[0] + 0.5)));
+      const left = 1 - io((t - T.rise[1] - 0.6) / 1.5);
+      this.contours.mat.uniforms.uFade.value = left;
+      if (left <= 0.001) this.dropContours();
+    }
     // the ground comes up
     const rise = 0.0001 + 0.9999 * io((t - T.rise[0]) / (T.rise[1] - T.rise[0]));
     if (v.ground.group.scale.y !== rise) { v.ground.group.scale.y = rise; v.ground.group.updateMatrixWorld(true); shade = true; }
@@ -738,15 +803,15 @@ class ImportShow {
     const ts = this.step("trees"), tp = hold ? -1 : ts ? (t - ts.from) / (ts.to - ts.from) : 2, span = 0.13;
     const growing = tp > -0.05 && tp < 1.05;
     // (each part's own sound as it begins: a rush of air for the trees, the others made to their length)
-    if (!HAND && !hold) for (const s of this.steps) if (!this.sounded.has(s) && t >= s.from && t < s.to) { this.sounded.add(s); const sec = (s.to - s.from) / this.speed; if (s.id === "trees") playTreesSound(sec); else playImportFx(s.id, sec, this.built.length); }
+    if (!HAND && !hold) for (const s of this.steps) if (!this.sounded.has(s) && t >= s.from && t < s.to) { this.sounded.add(s); const sec = (s.to - s.from) / this.speed; if (s.id === "trees") playTreesSound(sec); else if (s.id !== "build") playImportFx(s.id, sec); }
     if (!HAND && this.photoAt !== undefined && t >= this.photoAt && !this.photoSounded) { this.photoSounded = true; playImportFx("photo", 1.6); }
     if (growing || this.frameN === 1 || this.treeKick || (tp >= 1.05 && this.trees[0]?.s !== 1 && this.trees.length)) {
-      for (const tr of this.trees) { const s = out((tp - tr.at * (1 - span)) / span); if (s === tr.s) continue; tr.s = s; tr.o.visible = s > 0.001; tr.o.scale.set(0.35 + 0.65 * s, Math.max(0.0001, s), 0.35 + 0.65 * s); tr.o.updateMatrixWorld(true); }
+      for (const tr of this.trees) { const s = (HAND ? out : settle)((tp - tr.at * (1 - span)) / span); if (s === tr.s) continue; tr.s = s; tr.o.visible = s > 0.001; tr.o.scale.set(0.35 + 0.65 * s, Math.max(0.0001, s), 0.35 + 0.65 * s); tr.o.updateMatrixWorld(true); }
     }
     if (growing || this.frameN === 1 || this.treeKick || (tp >= 1.05 && !this.instDone)) {
       for (const q of this.inst) {
         const arr = q.m.instanceMatrix.array as Float32Array;
-        for (let i = 0; i < q.n; i++) { const s = Math.max(0.0001, out((tp - q.at[i] * (1 - span)) / span)), w2 = s < 0.001 ? 0.0001 : 0.35 + 0.65 * s, o = i * 16;
+        for (let i = 0; i < q.n; i++) { const s = Math.max(0.0001, (HAND ? out : settle)((tp - q.at[i] * (1 - span)) / span)), w2 = s < 0.001 ? 0.0001 : 0.35 + 0.65 * s, o = i * 16;
           for (let c = 0; c < 12; c++) arr[o + c] = q.base[o + c] * (c >= 4 && c < 8 ? s : w2); }
         q.m.instanceMatrix.needsUpdate = true;
       }
@@ -766,6 +831,16 @@ class ImportShow {
       for (const r of s.rev) { if (r.line) r.geo.instanceCount = Math.max(0, Math.round((r.max ?? 0) * p)); else r.geo.setDrawRange(0, 3 * Math.round((r.n ?? 0) * p)); }
       for (const q of s.mats) { q.m.transparent = p < 1 ? true : q.tr; q.m.opacity = q.op * p; }
     }
+    if (this.sparks.length) {
+      let n = 0;
+      for (const s of this.shapes) {
+        if (n >= this.sparks.length) break;
+        if (s.water || s.struct || s.way.length < 2 || !(s.p > 0.02 && s.p < 0.985)) continue;
+        const at = onPath(s.way, s.p), c = this.screenOf(at.x, at.y, 2), el = this.sparks[n++];
+        el.setAttribute("cx", c.x.toFixed(1)); el.setAttribute("cy", c.y.toFixed(1)); el.style.opacity = "0.95";
+      }
+      for (; n < this.sparks.length; n++) this.sparks[n].style.opacity = "0";
+    }
     // buildings: each drawn on the ground by its outline, then lifted; what stands beside them after
     const bs = this.step("build"), bp = hold ? -1 : bs ? (t - bs.from) / (bs.to - bs.from) : 2;
     let drawing: { s: ImportShow["built"][number]; line: number } | null = null, acc = 0;
@@ -773,6 +848,14 @@ class ImportShow {
     for (const s of this.built) {
       const w2 = wOf(s), q = (bp * (total + 0.5) - acc) / w2, line = s.pts ? cl(q / 0.5) : 1, e = out((q - (s.pts ? 0.5 : 0)) / 0.8); acc += w2;
       if (e !== s.e) { s.e = e; s.o.visible = e > 0.001; s.o.scale.set(1, Math.max(0.0001, e), 1); s.o.updateMatrixWorld(true); shade = true; }
+      // (as each begins to rise: a soft light where it stands, and its note)
+      if (!HAND && !hold && !s.lit && q > 0 && bp < 1.05) {
+        s.lit = true;
+        const c = this.screenOf(s.x, s.y, 6), g = document.createElement("div");
+        g.className = "dg-build-glow"; g.style.left = `${c.x}px`; g.style.top = `${c.y}px`;
+        document.body.appendChild(g); window.setTimeout(() => g.remove(), 1300);
+        if (s.pts) playImportNote(this.noteN++);
+      }
       if (s.out) { const on2 = HAND && q > 0 && e < 1; s.out.style.opacity = on2 ? String(1 - cl((e - 0.5) / 0.5)) : "0"; if (on2) { s.out.setAttribute("d", "M" + s.pts!.map(p => { const c = this.screenOf(p.x, p.y, 1.5); return `${c.x.toFixed(1)} ${c.y.toFixed(1)}`; }).join("L") + "Z"); s.out.setAttribute("stroke-dasharray", `${line} 1`); s.out.style.fillOpacity = line >= 1 ? "1" : "0"; } }
       if (q > 0 && q < 1 && !drawing) drawing = { s, line };
     }
@@ -851,7 +934,7 @@ class ImportShow {
     c.style.display = this.scene.open && !this.scene.shut ? "none" : "";
     const curStep = this.steps.find(s => t < s.to);
     q("ttl").textContent = `Bringing in ${name}`;
-    q("now").textContent = done ? (HAND ? "The light through the day" : "Putting it together") : curStep && t >= curStep.from ? curStep.now : this.live && (!curStep || !HAND) ? this.live.text || "Fetching the rest…" : "…";
+    q("now").textContent = done ? (HAND ? "The light through the day" : "Putting it together") : curStep && t >= curStep.from ? curStep.now : !HAND && this.photoAt !== undefined && t >= this.photoAt - 0.2 && t < this.photoAt + 1.3 ? "Laying the photo" : this.live && (!curStep || !HAND) ? (HAND ? this.live.text || "Fetching the rest…" : shortly(this.live.text)) : "…";
     q("bar").style.width = `${(this.live && !this.live.finalDone ? cl(this.live.fraction) * 0.85 : cl((t - T.cover) / (lastStep.to - T.cover))) * 100}%`; q("barbox").style.display = done ? "none" : "";
     c.querySelectorAll<HTMLElement>("[data-row]").forEach(row => { const ss = this.steps.filter(x => x.id === row.dataset.row);
       if (!ss.length) return;
@@ -865,6 +948,12 @@ class ImportShow {
   }
   private instDone = false;
   private sounded = new Set<Step>();
+  private swooped = false;
+  private contours: { lines: THREE.LineSegments; mat: THREE.ShaderMaterial } | null = null;
+  private dawn = 0;
+  /** A point of light at the head of each path as it's drawn. */
+  private sparks: SVGCircleElement[] = [];
+  private noteN = 0;
   private photoSounded = false;
   private chimed = false;
   /** How many frames in a row came on time (the graphics card done with what it had to make ready). */
