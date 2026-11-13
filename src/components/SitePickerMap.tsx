@@ -179,6 +179,10 @@ export function SitePickerMap({
     const map = mapRef.current;
     if (!map) return;
     map.getContainer().style.cursor = drawing ? "crosshair" : "";
+    // (drawing: a finger or the mouse draws the frame, and the map stays where it is under it;
+    // two fingers still zoom)
+    if (drawing) { map.dragging.disable(); map.getContainer().style.touchAction = "pinch-zoom"; }
+    else { map.dragging.enable(); map.getContainer().style.touchAction = ""; }
   }, [drawing]);
 
   // "Select this view": the visible map minus a margin.
@@ -264,15 +268,19 @@ export function SitePickerMap({
     rectRef.current = frame as unknown as L.Rectangle;
     const topMid = () => { const q = turn({ x: 0, y: live.hh }, live.a); return toLL({ x: live.c.x + q.x, y: live.c.y + q.y }); };
     const knob = () => {
-      // (past the top edge by about 34 px on screen)
+      // (past the top edge on screen, clear of the handle that moves it: 58 px for a finger, 46 for a mouse)
       const z = map.getZoom(), mPerPx = (156543.03 * Math.cos((lat0 * Math.PI) / 180)) / 2 ** z;
-      const q = turn({ x: 0, y: live.hh + 34 * mPerPx }, live.a);
+      const q = turn({ x: 0, y: live.hh + (touch ? 58 : 46) * mPerPx }, live.a);
       return toLL({ x: live.c.x + q.x, y: live.c.y + q.y });
     };
     const setLabel = () => {
       frame.unbindTooltip();
       const b = boundsOfLive();
-      frame.bindTooltip(dimsLabel(b), { permanent: true, direction: "top", className: "site-picker-tooltip", offset: [0, -22] }).openTooltip(topMid());
+      // (past the edge across from the handles that move and turn it: nothing covers them, however
+      // the frame is turned)
+      const z2 = map.getZoom(), perPx = (156543.03 * Math.cos((lat0 * Math.PI) / 180)) / 2 ** z2;
+      const far = turn({ x: 0, y: -(live.hh + 24 * perPx) }, live.a);
+      frame.bindTooltip(dimsLabel(b), { permanent: true, direction: "center", className: "site-picker-tooltip" }).openTooltip(toLL({ x: live.c.x + far.x, y: live.c.y + far.y }));
     };
     /** The frame as it is (not turned): its box round its middle. */
     const boundsOfLive = (): GeoBounds => {
@@ -316,7 +324,7 @@ export function SitePickerMap({
     mover.on("drag", () => { const p = toXY(mover.getLatLng()); live = { ...live, c: { x: from.x + p.x - grab.x, y: from.y + p.y - grab.y } }; refresh(mover); });
     mover.on("dragend", done);
     markers.push(mover);
-    const turner = L.marker(knob(), { icon: turnIcon, draggable: true, keyboard: false, zIndexOffset: 1000, title: "Drag to turn the area" }).addTo(map);
+    const turner = L.marker(knob(), { icon: turnIcon, draggable: true, keyboard: false, zIndexOffset: 1200, title: "Drag to turn the area" }).addTo(map);
     turner.on("drag", () => {
       const p = toXY(turner.getLatLng());
       // (the way from the middle to the pointer, by compass; to the degree)
@@ -330,7 +338,7 @@ export function SitePickerMap({
     handlesRef.current = markers;
     refresh();
     // (the knob stays the same distance off the edge on screen as the map zooms)
-    const onZoom = () => markers[5]?.setLatLng(knob());
+    const onZoom = () => { markers[5]?.setLatLng(knob()); setLabel(); };
     map.on("zoomend", onZoom);
     return () => { map.off("zoomend", onZoom); };
   }, [selection, angle]);

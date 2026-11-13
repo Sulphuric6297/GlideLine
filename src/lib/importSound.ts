@@ -172,7 +172,7 @@ export const playImportNote = (i: number) => {
 };
 
 /** A part's own sound as it comes in, for about as long as it takes (`n`: how many buildings):
- * the photo a far shimmer, the ground a low swell, the water a wash with a few drops, the paths a
+ * the photo a far shimmer, the ground a low swell, the water a soft wash, the paths a
  * stroke of air, the buildings a soft note each. */
 export const playImportFx = (part: "photo" | "ground" | "water" | "paths" | "build", seconds: number, n = 0) => {
   if (!importSoundOn()) return;
@@ -188,7 +188,8 @@ export const playImportFx = (part: "photo" | "ground" | "water" | "paths" | "bui
   } else if (part === "water") {
     const flt = breath(to, t0, len, 0.014, "bandpass", 1100, 1700, 0.9), lfo = ctx.createOscillator(), depth = ctx.createGain();
     lfo.frequency.value = 0.7; depth.gain.value = 380; lfo.connect(depth); depth.connect(flt.frequency); lfo.start(t0); lfo.stop(t0 + len + 0.05);
-    for (let k = 0; k < 3; k++) tone(to, t0 + len * (0.18 + 0.27 * k), 1568 - k * 140, 0.007, 0.012, 0.22, 1046.5 - k * 90);
+    // (no drops: falling notes that short sound like a bird)
+    breath(to, t0 + len * 0.15, len * 0.85, 0.008, "lowpass", 420, 300, 0.7);
   } else if (part === "paths") {
     breath(to, t0, len, 0.013, "bandpass", 520, 2300, 1.3);
   } else {
