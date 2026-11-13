@@ -15,7 +15,7 @@ import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp } from "../constants";
 import { FAIRWAY_STATIONS, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine } from "../lib/course";
-import { boundsOf, centroid, dist, distanceToPath, distanceToPolygon, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
+import { boundsOf, centroid, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
 import { heightAt } from "../lib/terrainGrid";
 import { conifersOf, treeMixOf } from "../lib/landscapes";
@@ -98,6 +98,8 @@ const SELECT = "#22d3ee";
 type Rect = { x: number; y: number; width: number; height: number };
 /** A picture on screen: the camera it's drawn with, and where (the container's pixels). */
 type Eye = { cam: THREE.PerspectiveCamera; rect: Rect };
+/** How far water goes on past its map outline, at its own level, to meet the ground (ft). */
+const SHORE_FT = 26;
 const LIFT = 0.45;
 
 type Drag = { move: (e: PointerEvent) => void; end: (e: PointerEvent) => void };
@@ -3889,9 +3891,63 @@ export class CourseView {
           };
           // (its depth: shelving from the bank, a foot every 2 ft out, to 9 ft; the survey
           // can't see under water, so the ground there is only the water's own level)
-          const geo = drapedPolygon(a.points, surface, cell / 2, 0), pa = geo.attributes.position, depth = new Float32Array(pa.count);
-          for (let i = 0; i < pa.count; i++) depth[i] = Math.min(9, distanceToPolygon({ x: pa.getX(i), y: pa.getZ(i) }, a.points) * 0.5);
+          // The shore: the map's outline is only roughly where the water ends, so the water goes on
+          // past it at its own level, a band SHORE_FT wide, and ends where the ground rises out of
+          // it (the ground hides it there, along the ground's own lie); where the ground stays low it
+          // thins away. Each point's depth from the ground under it (and, inside the outline, a foot
+          // every 2 ft from the edge: the survey can't see under water) says how clear it is.
+          const inner = drapedPolygon(a.points, surface, cell / 2, 0);
+          const W2 = doc.canvas.width, H2 = doc.canvas.height, SHORE = SHORE_FT;
+          const ring = a.points;
+          const level = (x: number, y: number) => bankLevel(x, y) + 0.2;
+          const band: number[] = [];
+          const onEdge = (p: P) => p.x < 0.5 || p.y < 0.5 || p.x > W2 - 0.5 || p.y > H2 - 0.5;
+          const m = ring.length;
+          // (each corner's way out: the two edges' outward normals together)
+          const outs = ring.map((p, k) => {
+            const q0 = ring[(k + m - 1) % m], q1 = ring[(k + 1) % m];
+            const n0 = { x: p.y - q0.y, y: q0.x - p.x }, n1 = { x: q1.y - p.y, y: p.x - q1.x };
+            const l0 = Math.hypot(n0.x, n0.y) || 1, l1 = Math.hypot(n1.x, n1.y) || 1;
+            const nx = n0.x / l0 + n1.x / l1, ny = n0.y / l0 + n1.y / l1, l = Math.hypot(nx, ny) || 1;
+            // (out of the water, whichever way round its outline runs)
+            const o = { x: nx / l, y: ny / l };
+            return pointInPolygon({ x: p.x + o.x * 1.5, y: p.y + o.y * 1.5 }, ring) ? { x: -o.x, y: -o.y } : o;
+          });
+          const RINGS = [0, 0.2, 0.45, 0.72, 1];
+          for (let k = 0; k < m; k++) {
+            const p = ring[k], q = ring[(k + 1) % m];
+            // (not past the site's own edge)
+            if (onEdge(p) && onEdge(q)) continue;
+            const steps = Math.max(1, Math.ceil(Math.hypot(q.x - p.x, q.y - p.y) / 8));
+            for (let s = 0; s < steps; s++) for (let r = 0; r + 1 < RINGS.length; r++) {
+              const at = (u: number, w: number) => {
+                const o = { x: outs[k].x + (outs[(k + 1) % m].x - outs[k].x) * u, y: outs[k].y + (outs[(k + 1) % m].y - outs[k].y) * u };
+                const ol = Math.hypot(o.x, o.y) || 1;
+                const x = Math.max(0, Math.min(W2, p.x + (q.x - p.x) * u + (o.x / ol) * SHORE * w)), y = Math.max(0, Math.min(H2, p.y + (q.y - p.y) * u + (o.y / ol) * SHORE * w));
+                return [x, level(x, y), y];
+              };
+              const u0 = s / steps, u1 = (s + 1) / steps, w0 = RINGS[r], w1 = RINGS[r + 1];
+              const A = at(u0, w0), B = at(u1, w0), C = at(u1, w1), D = at(u0, w1);
+              band.push(...A, ...C, ...B, ...A, ...D, ...C);
+            }
+          }
+          const ip = inner.attributes.position.array as Float32Array, all = new Float32Array(ip.length + band.length);
+          all.set(ip); all.set(band, ip.length);
+          inner.dispose();
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute("position", new THREE.BufferAttribute(all, 3));
+          geo.computeVertexNormals();
+          const pa = geo.attributes.position, depth = new Float32Array(pa.count), reach = new Float32Array(pa.count);
+          // (how far from its outline's edge: inside or out)
+          const closed = [...ring, ring[0]];
+          for (let i = 0; i < pa.count; i++) {
+            const x = pa.getX(i), y = pa.getZ(i), p = { x, y }, d = distanceToPath(p, closed), inside = i < ip.length / 3 || pointInPolygon(p, ring);
+            const gap = pa.getY(i) - this.h(x, y);
+            depth[i] = Math.max(-3, Math.min(9, inside ? Math.max(gap, d * 0.5) : gap));
+            reach[i] = inside ? d : -d;
+          }
           geo.setAttribute("aDepth", new THREE.BufferAttribute(depth, 1));
+          geo.setAttribute("aShore", new THREE.BufferAttribute(reach, 1));
           const shore = this.waterShore(a.points), bottom = `#${new THREE.Color(c).multiplyScalar(0.8).lerp(new THREE.Color(doc.groundColor), 0.2).getHexString()}`;
           const pond = new THREE.Mesh(geo, waterMaterial(c, ...shore, { bottom }));
           pond.userData.water = true;
