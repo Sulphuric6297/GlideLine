@@ -2,8 +2,8 @@
 // the view, on a phone the one glass bar. The satellite photo lies under the model (a switch), the
 // trees' colour can be picked (shown once, turning through the seasons, the first time), and what
 // isn't wanted is left out at any size: a whole group, one source, one thing (pick it), or
-// everything inside a box dragged on the view. It only decides what's in and what's out; changing
-// a thing is Design's work, after.
+// everything inside a box dragged on the view. A thing moved or reshaped in the view meanwhile
+// comes in as it was left (see lib/importHand); the rest of changing things is Design's work, after.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Vector3 } from "three";
 import { ArrowRight, BoxSelect, Undo2, Volume2, VolumeX } from "lucide-react";
