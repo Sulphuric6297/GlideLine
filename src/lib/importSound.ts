@@ -13,7 +13,7 @@ const CHIME = `${import.meta.env.BASE_URL}zz-import-chime.mp3`;
 const MUSIC_VOLUME = 0.12, MUSIC_DIMMED = 0.05;
 /** Each effect: where its sound begins in its file (s), and how loud (all of it subtle: under the
  * music, never over it). */
-const FX = { [TREES]: { from: 0.3, gain: 0.45 }, [CHIME]: { from: 0.42, gain: 1.0 } };
+const FX = { [TREES]: { from: 0.3, gain: 0.16 }, [CHIME]: { from: 0.42, gain: 1.0 } };
 
 export const importSoundOn = () => { try { return localStorage.getItem(KEY) !== "off"; } catch { return true; } };
 
@@ -84,7 +84,8 @@ export const stopImportMusic = (ms = 3000) => {
 export const playImportChime = () => {
   if (!importSoundOn()) return;
   if (music && !leaving) fade(music, MUSIC_DIMMED, 2800);
-  play(CHIME);
+  // (the note itself, then quickly away: the recording has people talking behind it as it rings on)
+  play(CHIME, 0.75, 0.8);
 };
 
 let rush: object | null = null;
