@@ -397,7 +397,7 @@ export const createDropZone = () => {
   return g;
 };
 
-export const createAmenity = (kind: AmenityKind) => {
+export const createAmenity = (kind: AmenityKind, width?: number) => {
   const g = new THREE.Group();
   const wood = std("#8b6a4a", 0.9);
   const dark = std("#3f3f46", 0.7, 0.3);
@@ -527,11 +527,15 @@ export const createAmenity = (kind: AmenityKind) => {
       break;
     }
     case "gate": {
-      // Two posts and a barred gate between them
+      // Two posts and a barred gate between them, as wide as it's set (a road's: two leaves meeting
+      // at a middle post)
       const steel = std("#3f4549", 0.5, 0.5);
-      [-3, 3].forEach(z => g.add(box(0.4, 5, 0.4, steel, 0, 2.5, z)));
-      [0.6, 4.2].forEach(y => g.add(box(0.12, 0.12, 5.6, steel, 0, y, 0)));
-      for (let k = 0; k <= 7; k++) g.add(box(0.08, 3.6, 0.08, steel, 0, 2.4, -2.8 + (k * 5.6) / 7));
+      const w = Math.max(6, Math.min(60, width ?? 6)), half = w / 2, leaves = w > 16 ? 2 : 1;
+      [-half, half].forEach(z => g.add(box(0.45, 5, 0.45, steel, 0, 2.5, z)));
+      if (leaves === 2) g.add(box(0.3, 4.6, 0.3, steel, 0, 2.3, 0));
+      [0.6, 4.2].forEach(y => g.add(box(0.12, 0.12, w - 0.4, steel, 0, y, 0)));
+      const bars = Math.max(7, Math.round(w / 0.8));
+      for (let k = 0; k <= bars; k++) g.add(box(0.08, 3.6, 0.08, steel, 0, 2.4, -half + 0.2 + (k * (w - 0.4)) / bars));
       break;
     }
   }

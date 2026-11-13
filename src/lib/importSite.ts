@@ -354,6 +354,8 @@ export const osmFeatureItems = (features: OsmFeature[], ref: GeoBounds & { width
     const radius = t?.crownM ? clamp((t.crownM / 2) * FEET_PER_METER, 4, 40) : fallback.radius;
     return { ...createTree(at, { radius: Math.round(radius * 2) / 2, height: Math.round(t?.heightM ? clamp(t.heightM * FEET_PER_METER, 8, 150) : fallback.height), treeType: t?.conifer ? "conifer" : "deciduous" }), importSource: "osm" as const } as TreeItem;
   };
+  // (gates: turned across the road or path they stand on, and as wide, once all of it is in)
+  const gates: AmenityItem[] = [];
   for (const f of features) {
     if (f.kind === "dgCourse" || f.kind === "dgHole" || f.kind === "dgTee" || f.kind === "dgBasket" || f.kind === "dgHint") continue;
     if (f.geom === "point") {
@@ -366,6 +368,7 @@ export const osmFeatureItems = (features: OsmFeature[], ref: GeoBounds & { width
         if (f.name) a.label = f.name;
         items.push(a);
         count(said);
+        if (f.amenity === "gate") gates.push(a);
       } else if (f.kind === "tree") {
         items.push(osmTreeItem(at, f.tree, { radius: 12, height: 35 }));
         count("tree");
@@ -447,6 +450,21 @@ export const osmFeatureItems = (features: OsmFeature[], ref: GeoBounds & { width
       if (pieces && f.kind !== "fence") count(f.kind, pieces);
       if (pieces && f.kind === "fence" && f.park) countPark(f.park);
     }
+  }
+  // Each gate across the road or path it stands on (a gate is mapped as a point on the way it
+  // closes): turned square to it, and as wide as it, posts at its edges
+  for (const g of gates) {
+    let best: { d: number; dir: number; width: number } | null = null;
+    for (const l of items) {
+      if (l.type !== "line" || !(l.kind === "road" || l.kind === "path" || l.kind === "walk")) continue;
+      for (let k = 1; k < l.points.length; k++) {
+        const a = l.points[k - 1], b = l.points[k], d = nearestOnSegment(g, a, b).distance;
+        if (d <= 12 && (!best || d < best.d)) best = { d, dir: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI, width: l.width ?? LINE_KINDS[l.kind].width };
+      }
+    }
+    if (!best) continue;
+    g.rotation = Math.round(best.dir);
+    g.width = Math.round(Math.min(60, Math.max(4, best.width + 2)));
   }
   return { items, counts, parks };
 };

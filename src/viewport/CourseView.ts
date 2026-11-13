@@ -14,7 +14,7 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp } from "../constants";
-import { FAIRWAY_STATIONS, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine } from "../lib/course";
+import { FAIRWAY_STATIONS, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
 import { boundsOf, centroid, clipPolygonToRect, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
 import { heightAt } from "../lib/terrainGrid";
@@ -100,6 +100,8 @@ type Rect = { x: number; y: number; width: number; height: number };
 type Eye = { cam: THREE.PerspectiveCamera; rect: Rect };
 /** How far water goes on past its map outline, at its own level, to meet the ground (ft). */
 const SHORE_FT = 26;
+/** How long the view eases into place after a move (s): quick, so a wheel's turn stops when it does. */
+const SMOOTH = 0.16;
 const LIFT = 0.45;
 
 type Drag = { move: (e: PointerEvent) => void; end: (e: PointerEvent) => void };
@@ -548,13 +550,13 @@ export class CourseView {
     c.touches.three = ACTION.TOUCH_TRUCK;
     c.minPolarAngle = 0;
     c.maxPolarAngle = MAX_TILT;
-    c.smoothTime = 0.16;
+    c.smoothTime = SMOOTH;
     c.draggingSmoothTime = 0.06;
     c.azimuthRotateSpeed = 0.7;
     c.polarRotateSpeed = 0.7;
     c.dollyToCursor = true;
     c.addEventListener("controlend", () => this.snapNorth());
-    c.addEventListener("controlstart", () => { this.posePinned = false; this.autoFit = null; this.onUserMove?.(); });
+    c.addEventListener("controlstart", () => { if (c.smoothTime !== SMOOTH) { window.clearTimeout(this.easeTimer); c.smoothTime = SMOOTH; } this.posePinned = false; this.autoFit = null; this.onUserMove?.(); });
     c.addEventListener("rest", () => { this.posePinned = false; });
 
     this.ground = new Ground(this.renderer, () => this.invalidate(true));
@@ -792,12 +794,15 @@ export class CourseView {
   private brushShown = false;
   /** The view tilted, gently, to `polar` (0: straight down): a step of the import showing its own. */
   easeTilt(polar: number) {
-    const c = this.controls, was = c.smoothTime;
+    const c = this.controls;
     c.smoothTime = 0.75;
     void c.rotatePolarTo(clamp(polar, c.minPolarAngle, c.maxPolarAngle), true);
-    window.setTimeout(() => { c.smoothTime = was; }, 1800);
+    // (back to the view's own easing after, always to that, however many came close together)
+    window.clearTimeout(this.easeTimer);
+    this.easeTimer = window.setTimeout(() => { c.smoothTime = SMOOTH; }, 1800);
     this.invalidate();
   }
+  private easeTimer = 0;
   /** The underbrush's tint and outlines eased in (shown at once, they'd pop). */
   private fadeTintIn() {
     const mats: { m: THREE.Material & { opacity: number }; to: number }[] = [];
@@ -3299,7 +3304,7 @@ export class CourseView {
       case "mando": return item.side;
       case "dropzone": return "dz";
       case "tree": return getTreeSignature(item as TreeItem) + item.id + (this.doc ? `|${this.doc.course.style.trees}|${this.doc.course.style.landscape ?? ""}|${this.doc.course.style.treeMix?.join() ?? ""}` : "");
-      case "amenity": return item.kind;
+      case "amenity": return `${item.kind}|${item.width ?? ""}`;
       default: return "";
     }
   }
@@ -3312,7 +3317,7 @@ export class CourseView {
       case "mando": return createMando(item.side);
       case "dropzone": return createDropZone();
       case "tree": { const st = doc.course.style; return create3dTree(item, { color: st.trees, mix: treeMixOf(st) }); }
-      case "amenity": return createAmenity(item.kind);
+      case "amenity": return createAmenity(item.kind, item.width);
       default: return null;
     }
   }
@@ -4730,6 +4735,9 @@ export class CourseView {
           }
           return el;
         }, at(b, 2), 0);
+      } else if (item.type === "amenity" && !sel && !amenityMarked(item as AmenityItem)) {
+        // (its mark not shown: the thing itself is there in 3D, and picked there)
+        continue;
       } else if (item.type === "mando" || item.type === "dropzone" || item.type === "amenity") {
         // The same symbols as the printed map (the mando's arrow and line are drawn on the ground)
         const isM = item.type === "mando", isDz = item.type === "dropzone";
@@ -7770,6 +7778,8 @@ export class CourseView {
 
   private onWheel(e: WheelEvent) {
     e.preventDefault();
+    // (a wheel turned: the view's own quick easing at once, not a slow glide still under way)
+    if (this.controls.smoothTime !== SMOOTH) { window.clearTimeout(this.easeTimer); this.controls.smoothTime = SMOOTH; }
     this.glide = null;
     this.lookGlide = null;
     e.stopPropagation();

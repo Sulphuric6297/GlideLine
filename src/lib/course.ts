@@ -463,6 +463,8 @@ export const createDropZone = (at: P, holeId?: string): DropZoneItem => ({ id: g
 export const createTree = (at: P, over: Partial<TreeItem> = {}): TreeItem => ({
   id: generateId(), type: "tree", x: at.x, y: at.y, rotation: 0, radius: 14, height: 40, treeType: "deciduous", color: TREE_COLORS[0], ...over
 });
+/** Whether an amenity's mark shows on the map and over it in 3D (unless switched off, it does). */
+export const amenityMarked = (a: { kind: AmenityKind; mark?: boolean }) => a.mark ?? true;
 export const createAmenity = (at: P, kind: AmenityKind): AmenityItem => ({ id: generateId(), type: "amenity", kind, x: at.x, y: at.y, rotation: 0 });
 export const createLabel = (at: P, text = "Label"): LabelItem => ({ id: generateId(), type: "label", text, fontSize: 14, color: "#ffffff", x: at.x, y: at.y, rotation: 0 });
 export const createArea = (kind: AreaKind, points: P[], holeId?: string): AreaItem => {

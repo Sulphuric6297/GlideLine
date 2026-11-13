@@ -106,6 +106,10 @@ export interface AmenityItem extends BaseItem {
   label?: string;
   /** Brought in from OpenStreetMap (replaced on re-import). */
   importSource?: "osm";
+  /** Its mark shown on the map and in 3D (unset: shown). */
+  mark?: boolean;
+  /** How far it spans, ft (a gate: across the road or path it closes). */
+  width?: number;
 }
 
 export interface LabelItem extends BaseItem {

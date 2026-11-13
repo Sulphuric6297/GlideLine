@@ -11,7 +11,7 @@ import { GOV_CREDITS } from "./geo/usgov";
 import { latitudeOf, sunFromOf } from "./mapLook";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, FIELD_KINDS, FT_PER_M, LINE_KINDS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER } from "../constants";
 import type { AmenityItem, AreaItem, BasketItem, CourseDoc, DropZoneItem, LabelItem, LineItem, MandoItem, MapStyle, MapTheme, P, PageElementId, PageElementStyle, PaperSize, StructureItem, StructureKind, TeeItem, TreeItem } from "../types";
-import { activeLayout, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, taglineOf, titleFontOf } from "./course";
+import { activeLayout, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, taglineOf, titleFontOf, amenityMarked } from "./course";
 import { boundsOf, dist, offsetPath, pathLength, pointAlong, pointInPolygon, polygonArea, rectCorners, rotatePoint, smoothPath, subPath } from "./geom";
 import { courseTotals, holeStats, isOb, isOutOfPlay, playsOf, type HoleStats } from "./holeStats";
 import { forestCanvas, forestCanvasAsync, paintedFrom, paintedLine, paintsAgain, paintsFromPhoto, treesOverOf, type CanopyGrid } from "./forest";
@@ -672,7 +672,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
   for (const dz of items.filter(i => i.type === "dropzone") as DropZoneItem[]) sym.push(`<g opacity="${dim(dz.holeId)}">${dropZoneSymbol(toScreen(dz), 1.15 * ts)}</g>`);
 
   // Amenities
-  for (const am of items.filter(i => i.type === "amenity") as AmenityItem[]) sym.push(amenitySymbol(am.kind, toScreen(am), 0.85 * ts));
+  for (const am of items.filter(i => i.type === "amenity") as AmenityItem[]) if (amenityMarked(am)) sym.push(amenitySymbol(am.kind, toScreen(am), 0.85 * ts));
 
   // Tees and baskets, then hole numbers
   const mainTees = new Set(layers.stats.map(st => st.teeId));
@@ -1673,7 +1673,7 @@ const legend = (doc: CourseDoc, x: number, y: number, w: number, ts: number, pal
     entries.push({ sym: `<g transform="translate(0 ${n((sh - h) / 2)})">${structureLegend(kd, sw, h, ts * 0.55, structureInk(s.theme), `lg-${kd}`)}</g>`, text: STRUCTURE_KINDS[kd].label });
   }
   if (s.contours) entries.push({ sym: `<path d="M0 ${n(sh * 0.7)}Q${n(sw / 2)} ${n(-sh * 0.2)} ${n(sw)} ${n(sh * 0.7)}" fill="none" stroke="${pal.contourMajor === "rgba(255,255,255,.6)" ? "#666" : pal.contourMajor}" stroke-width="${n(1 * ts)}"/>`, text: "Contour line" });
-  const kinds = new Set(doc.items.filter(i => i.type === "amenity").map(i => (i as AmenityItem).kind));
+  const kinds = new Set(doc.items.filter(i => i.type === "amenity" && amenityMarked(i as AmenityItem)).map(i => (i as AmenityItem).kind));
   kinds.forEach(kd => {
     entries.push({ sym: amenitySymbol(kd, { x: sw / 2, y: sh / 2 }, kd === "here" ? sh / 19 : (sh * 1.15) / 13.2), text: kd === "here" ? "You are here" : AMENITY_KINDS[kd].label });
   });

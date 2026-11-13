@@ -5,7 +5,7 @@ import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES } from "../constants";
-import { areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries } from "../lib/course";
+import { areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries, amenityMarked } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
 import { BUILDING_LOOKS, boxOutline, gazeboOutline, structureHeight, structurePath, structureRoof, structureWidth, turnShape } from "../lib/structures";
 import { amenitySymbol, STRUCTURE_INK, structureLegend, symbolSvg } from "../lib/symbols";
@@ -965,6 +965,8 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
             <ChipPick label="Amenity kind" value={item.kind} onChange={v => set({ kind: v as AmenityKind })} options={kinds.map(k => ({ value: k, label: AMENITY_KINDS[k].pick ?? AMENITY_KINDS[k].label, icon: amenityIcon(k) }))} />
           </Field>
           <Field label="Name (optional)"><TextInput label="Amenity name" value={item.label ?? ""} onChange={v => set({ label: v || undefined }, false)} onDone={commit} /></Field>
+          <Toggle label="Mark on the map" checked={amenityMarked(item)} onChange={v => set({ mark: v })} />
+          {item.kind === "gate" && <Slider label="Width" min={4} max={60} step={1} value={item.width ?? 6} format={v => fmtDist(v, doc.units)} onChange={v => set({ width: v }, false)} onDone={commit} />}
           <TurnButtons item={item} />
         </>
       );
