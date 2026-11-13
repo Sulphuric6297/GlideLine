@@ -93,7 +93,9 @@ let rush: object | null = null;
  * sounding). */
 export const playTreesSound = (seconds: number) => {
   if (rush && sounding.has(rush as never)) return;
-  rush = play(TREES, Math.max(1.2, seconds + 0.9), 1.8);
+  // (fading over the last of their growing: silent as the last tree is up)
+  const out = Math.min(0.8, seconds * 0.4);
+  rush = play(TREES, Math.max(0.1, seconds - out), out);
 };
 
 /** The import's sound on or off, remembered; off, whatever is sounding stops. */
