@@ -8,6 +8,8 @@ GeoJSON and CSV can hold everything below. KML can too, with each placemark's pr
 ExtendedData. GPX only has names, so a GPX brings in tees, baskets and lines, and the rest comes
 from what each name says.
 
+The help guide's Course file format has the same list, with these examples to download.
+
 A GeoJSON exported from GlideLine Studio (Export, GPS and spreadsheets) is already in this format,
 with a line for each layout and for each tee no layout plays, so a course exported and opened again
 comes back with all of it.
@@ -57,7 +59,7 @@ read as `hole_name`).
 | Key | Values | Notes |
 |---|---|---|
 | `tee` | A tee color | Which tee the line starts from. A hole can have a line from each tee. |
-| `par` | `2` to `7` | That tee's par. |
+| `par` | `2` to `7` | That tee's par. On a tee's own point or row, that tee's par too. |
 | `name` | Any text | On a hole's line: the hole's name, such as `The Long Way`. A name that only says the hole or tee (`Hole 3`, `Blue 3`) isn't used as one. |
 | `notes` | Any text | On a hole's line: the hole's notes and rules. |
 | `hole_name`, `hole_notes` | Any text | The same, on any point of the hole (in a CSV, any row). |
@@ -92,17 +94,17 @@ Coordinates are longitude, then latitude, as GeoJSON always has them.
     { "layout": "Short", "tee": "Red", "pin": "B" }
   ],
   "features": [
-    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-89.65012, 39.78021] },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-89.68112, 39.78021] },
       "properties": { "kind": "tee", "hole": 1, "tee": "Blue", "surface": "Turf" } },
-    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-89.64987, 39.78034] },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-89.68087, 39.78034] },
       "properties": { "kind": "tee", "hole": 1, "tee": "Red", "surface": "Natural" } },
-    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-89.64890, 39.78102] },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-89.67990, 39.78102] },
       "properties": { "kind": "basket", "hole": 1, "pin": "A", "model": "Springfield 24" } },
-    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-89.64861, 39.78085] },
+    { "type": "Feature", "geometry": { "type": "Point", "coordinates": [-89.67961, 39.78085] },
       "properties": { "kind": "basket", "hole": 1, "pin": "B", "model": "Springfield 24" } },
-    { "type": "Feature", "geometry": { "type": "LineString", "coordinates": [[-89.65012, 39.78021], [-89.64955, 39.78040], [-89.64890, 39.78102]] },
+    { "type": "Feature", "geometry": { "type": "LineString", "coordinates": [[-89.68112, 39.78021], [-89.68055, 39.78040], [-89.67990, 39.78102]] },
       "properties": { "kind": "hole", "hole": 1, "tee": "Blue", "par": 4, "name": "The Long Way", "notes": "OB left of the path." } },
-    { "type": "Feature", "geometry": { "type": "LineString", "coordinates": [[-89.64987, 39.78034], [-89.64890, 39.78102]] },
+    { "type": "Feature", "geometry": { "type": "LineString", "coordinates": [[-89.68087, 39.78034], [-89.67990, 39.78102]] },
       "properties": { "kind": "hole", "hole": 1, "tee": "Red", "par": 3 } }
   ]
 }
@@ -122,11 +124,11 @@ semicolons or tabs between the columns all work.
 
 ```csv
 hole,kind,tee,pin,surface,par,hole_name,hole_notes,model,layout,lat,lon
-1,tee,Blue,,Turf,4,The Long Way,OB left of the path.,,,39.78021,-89.65012
-1,tee,Red,,Natural,,,,,,39.78034,-89.64987
-1,basket,,A,,,,,Springfield 24,,39.78102,-89.64890
-1,basket,,B,,,,,Springfield 24,,39.78085,-89.64861
-1,bend,Blue,,,,,,,,39.78040,-89.64955
+1,tee,Blue,,Turf,4,The Long Way,OB left of the path.,,,39.78021,-89.68112
+1,tee,Red,,Natural,3,,,,,39.78034,-89.68087
+1,basket,,A,,,,,Springfield 24,,39.78102,-89.67990
+1,basket,,B,,,,,Springfield 24,,39.78085,-89.67961
+1,bend,Blue,,,,,,,,39.78040,-89.68055
 ,layout,Blue,A,,,,,,Long,,
 ,layout,Red,B,,,,,,Short,,
 ```

@@ -2,6 +2,7 @@
 // it as chapters, and search (Ctrl+K) finds any of it and takes you there.
 import type { Step } from "../state/course";
 import type { ToolMode } from "../types";
+import { EXAMPLE_CSV, EXAMPLE_GEOJSON } from "./courseFileExamples";
 
 export type GuideSection = "start" | "site" | "design" | "view" | "map" | "export" | "share" | "phone" | "keys";
 
@@ -34,6 +35,10 @@ export interface Topic {
   body: string;
   /** Steps, when it's something to do. */
   steps?: string[];
+  /** Words and what each means, in two columns (a file's columns, say). */
+  table?: [string, string][];
+  /** Files to download from it: examples to fill in. */
+  files?: { label: string; name: string; type: string; text: string }[];
   /** Other words people search with. */
   words?: string;
   /** The way there, as a path ("Map › Course map › Light and shadow"). */
@@ -420,8 +425,32 @@ export const TOPICS: Topic[] = [
   },
   {
     id: "gps-holes", section: "design", title: "Holes from a GPS file",
-    body: "If you have the course's tees and baskets in a GPS file, Holes from a GPS file brings them in as holes. It's on the Site step and under the list of holes. It reads GPX, KML and KMZ (Google Earth's), GeoJSON (such as an Overpass Turbo export from OpenStreetMap, or GlideLine Studio's own) and CSV (a spreadsheet with latitude and longitude columns).\n\nEach point's name says what it is: Hole 3 Tee, 3T, Basket 3, Target 3 or Pin 3, or a folder named Hole 3 with a tee and a basket in it. A hole with more than one basket keeps them all as its pin positions: 3A and 3B, or long and short, become pins A and B. More than one tee becomes tees of different colors, the longest at the back. A line from tee to basket brings its bends too. Points GlideLine Studio isn't sure of are under Check these: pick Tee, Basket or Leave out, and the hole. Then pick whether the file's holes replace the ones here or are added to them, and tap Bring in. Undo takes it all back in one step.\n\nA GeoJSON or CSV file can say more than names can. Give each point a kind (tee or basket), its hole and its tee color or pin, and it can also carry a tee's surface, a basket's model, a line for each tee with that tee's par, the hole's name and notes, and the course's layouts. GeoJSON exported from GlideLine Studio has all of it, so a course exported and opened again comes back whole. The full list of columns is in COURSE-FILES.md in the docs folder of GlideLine Studio's source code.\n\nWhere a hole has a line from each tee, the back tee's line gives the hole its bends and par, and any other tee whose line or par differs keeps its own. The course needs its site first, so the holes land in the right place. Without one, Find the park there opens Find your park where the file's points are. OpenStreetMap has no pin positions, so for those use a file, walk the course with Pin here, or place them by hand.",
+    body: "If you have the course's tees and baskets in a GPS file, Holes from a GPS file brings them in as holes. It's on the Site step and under the list of holes. It reads GPX, KML and KMZ (Google Earth's), GeoJSON (such as an Overpass Turbo export from OpenStreetMap, or GlideLine Studio's own) and CSV (a spreadsheet with latitude and longitude columns). To bring in more than tees and baskets, lay the file out as Course file format shows.\n\nEach point's name says what it is: Hole 3 Tee, 3T, Basket 3, Target 3 or Pin 3, or a folder named Hole 3 with a tee and a basket in it. A hole with more than one basket keeps them all as its pin positions: 3A and 3B, or long and short, become pins A and B. More than one tee becomes tees of different colors, the longest at the back. A line from tee to basket brings its bends too. Points GlideLine Studio isn't sure of are under Check these: pick Tee, Basket or Leave out, and the hole. Then pick whether the file's holes replace the ones here or are added to them, and tap Bring in. Undo takes it all back in one step.\n\nA GeoJSON or CSV file can say more than names can: each tee's color and surface, each basket's pin and model, a line and par for each tee, the hole's name and notes, and the course's layouts. Course file format lists every column and has example files to start from. GeoJSON exported from GlideLine Studio has all of it, so a course exported and opened again comes back whole.\n\nWhere a hole has a line from each tee, the back tee's line gives the hole its bends and par, and any other tee whose line or par differs keeps its own. The course needs its site first, so the holes land in the right place. Without one, Find the park there opens Find your park where the file's points are. OpenStreetMap has no pin positions, so for those use a file, walk the course with Pin here, or place them by hand.",
     words: "gps file gpx kml kmz geojson csv spreadsheet google earth overpass openstreetmap import holes tees baskets targets pins pin positions alternate surface basket model layouts hole name notes par bends format columns",
+    path: "Site › Holes from a GPS file",
+    where: { step: "site", find: "course-file" }
+  },
+  {
+    id: "course-file-format", section: "design", title: "Course file format",
+    body: "Holes from a GPS file opens any GPX, KML, KMZ, GeoJSON or CSV, but a GeoJSON or CSV laid out like the examples here brings in everything: tees with their color and surface, baskets with their pin and model, each tee's line and par, the hole's name and notes, and the course's layouts. Download an example, put your course's points in it, and open it with Holes from a GPS file. The examples are one hole in a made-up park.\n\nIn a CSV, each row is one point, with lat and lon columns. A bend row is a point the hole's line turns at: list them in order from the tee, with the tee's color to make them that tee's line. A layout row has no lat or lon, just layout, tee and pin. Commas, semicolons or tabs all work between columns.\n\nIn GeoJSON, tees and baskets are Points, and a hole's line is a LineString from the tee through each bend to the basket. Give the line its tee's color and par, and its name and notes become the hole's. The course's name and layouts sit beside the features.\n\nColumn names can be in any case, with spaces in place of underscores. Leave out what you don't have: a tee with no color gets one by how far back it is, and baskets with no pin become A, B and so on. The back tee's line gives the hole its bends and par, and another tee whose line or par differs keeps its own. KML can carry the same columns as ExtendedData. GPX has names only, so it brings in tees, baskets and lines. Mandos, drop zones and OB lines don't come in from a file.",
+    table: [
+      ["kind", "tee, basket or hole (a line from a tee to its basket). In a CSV, also bend or layout."],
+      ["hole", "The hole's number, 1 to 99."],
+      ["tee", "Gold, Blue, White, Red, Green or Purple. On a line or bend, the tee it starts from; on a layout, the tee it plays."],
+      ["surface", "A tee's surface: Concrete, Turf, Rubber, Pavers, Gravel or Natural (grass or dirt)."],
+      ["pin", "A basket's pin position, A to D. On a layout, the pin it plays."],
+      ["model", "A basket's maker and model."],
+      ["par", "That tee's par, 2 to 7."],
+      ["name, notes", "On a hole's line: the hole's name, and its notes and rules."],
+      ["hole_name, hole_notes", "The same, on any point of the hole."],
+      ["layout", "A layout's name."],
+      ["lat, lon", "In a CSV, where the point is."]
+    ],
+    files: [
+      { label: "Example CSV", name: "course-file-example.csv", type: "text/csv", text: EXAMPLE_CSV },
+      { label: "Example GeoJSON", name: "course-file-example.geojson", type: "application/geo+json", text: EXAMPLE_GEOJSON }
+    ],
+    words: "course file format columns properties template example spreadsheet csv geojson kml gpx kind hole tee color surface pin model par name notes layout lat lon latitude longitude bend line import",
     path: "Site › Holes from a GPS file",
     where: { step: "site", find: "course-file" }
   },

@@ -3,6 +3,7 @@
 // text-sm with zinc-400 for the quieter words, one orange button per view (dark words on it),
 // and a sky-blue ring where the keyboard focus is.
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Loader2 } from "lucide-react";
 import { TOPICS } from "../lib/guide";
 import { useEditor } from "../state/course";
@@ -94,8 +95,9 @@ export const HELP_EVENT = "dg-help";
 export const askHelp = (topic: string) => window.dispatchEvent(new CustomEvent(HELP_EVENT, { detail: topic }));
 
 /** A small ? beside a setting: a tip about it (the help guide's own words), and the way on to its
- * page in the guide. */
-export function HelpLink({ topic, label }: { topic: string; label: string }) {
+ * page in the guide. `over`: the tip is drawn over the whole page, for a ? in a box that scrolls
+ * (a dialog), which would cut it off. */
+export function HelpLink({ topic, label, over = false }: { topic: string; label: string; over?: boolean }) {
   const [at, setAt] = useState<{ x: number; y?: number; above?: number } | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
   const tip = useRef<HTMLDivElement>(null);
@@ -140,12 +142,12 @@ export function HelpLink({ topic, label }: { topic: string; label: string }) {
     <>
       <button ref={btn} type="button" aria-label={`Help: ${label}`} aria-expanded={!!at} data-testid={`help-${topic}`} onClick={open}
         className={`relative w-[18px] h-[18px] touch:w-7 touch:h-7 touch:before:content-[''] touch:before:absolute touch:before:-inset-2 shrink-0 rounded-full inline-flex items-center justify-center text-[11px] font-bold align-middle ${at ? "bg-orange-300 text-zinc-950" : "text-zinc-300 bg-white/[0.09] hover:bg-white/[0.16] hover:text-zinc-50"} ${FOCUS}`}>?</button>
-      {at && t && (
+      {at && t && (over ? createPortal : (n: ReactNode) => n)(
         <div ref={tip} role="dialog" aria-label={t.title} data-testid="help-tip" className="fixed z-[60] w-[288px] glass-solid rounded-[16px] shadow-xl shadow-black/40 ring-1 ring-white/10 p-3 text-left normal-case tracking-normal" style={{ left: at.x, top: at.y ?? 0 }}>
           <div className="text-[13px] font-bold text-zinc-50 mb-1">{t.title}</div>
           <p className="text-[12.5px] leading-relaxed text-zinc-300 font-normal">{text}</p>
           <button className="mt-2 text-[12.5px] font-semibold text-orange-300 hover:text-orange-200" onClick={() => { setAt(null); askHelp(topic); }} data-testid="help-tip-more">More in the help guide ›</button>
-        </div>
+        </div>, document.body
       )}
     </>
   );

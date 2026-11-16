@@ -505,7 +505,7 @@ const teeRank = (tag?: string) => { const i = (TEE_ORDER as string[]).indexOf(ta
  * The holes the file makes as it stands: each hole number with its tees and pins (every one, in the
  * file's order) and its bends from its line (with a line from each tee, the back tee's; another
  * tee whose line turns elsewhere keeps its own turns), its par (that line's, else the back tee's;
- * another tee's own where it differs), name and notes. Points that don't say what they are, or
+ * another tee's own, from its line or its own point, where it differs), name and notes. Points that don't say what they are, or
  * which hole, stay out until they're given both.
  */
 export const fileCourse = (file: CourseFile): MappedCourse & { left: FilePoint[] } => {
@@ -532,18 +532,21 @@ export const fileCourse = (file: CourseFile): MappedCourse & { left: FilePoint[]
     const par = line?.par ?? says.find(s => s.par)?.par;
     const name = says.find(s => s.holeName)?.holeName, notes = says.find(s => s.holeNotes)?.holeNotes;
     // (each other tee's own line: its turns, where they aren't the hole's still ahead of it, and its
-    // par, where it isn't the hole's)
+    // par, its line's or its own row's, where it isn't the hole's)
     const lineFrom = (t: FilePoint) => (t.tag ? ownLines.find(l => l.tag === t.tag) : undefined) ?? ownLines.find(l => metersApart(l.points[0], t.at) < SNAP_M);
     const own = (t: FilePoint) => {
       const l = lineFrom(t);
-      if (!l || l === line) return {};
+      if (l ? l === line : t === backTees[0]) return {};
+      const tp = l?.par ?? t.par;
+      const ownPar = tp && tp !== par ? { par: tp } : {};
+      if (!l) return ownPar;
       const turns = simplifyM(l.points, l.points.length > 8 ? BEND_M : 0.5).slice(1, -1);
       // (a tee with none of its own plays through the hole's turns still ahead of it)
       const end = l.points[l.points.length - 1];
       let ahead = doglegs;
       while (ahead.length && metersApart(t.at, ahead[1] ?? end) < metersApart(ahead[0], ahead[1] ?? end)) ahead = ahead.slice(1);
       const same = turns.length === ahead.length && turns.every((p, i) => metersApart(p, ahead[i]) < 1.5);
-      return { ...(same ? {} : { doglegs: turns }), ...(l.par && l.par !== par ? { par: l.par } : {}) };
+      return { ...(same ? {} : { doglegs: turns }), ...ownPar };
     };
     holes.push({
       ref: String(number), number, ...(par ? { par } : {}), ...(name ? { name } : {}), ...(notes ? { notes } : {}),

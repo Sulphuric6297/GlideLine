@@ -283,7 +283,7 @@ function SiteStep({ onFindSite }: { onFindSite: () => void }) {
         <Section>
           <div className="flex flex-col items-start gap-1.5">
             {!compact && !empty && <Button tone="primary" full onClick={onFindSite} testid="find-site"><MapPinned size={16} /> Find your park</Button>}
-            <CourseFileButton />
+            <span className="inline-flex items-center gap-1.5"><CourseFileButton /><HelpLink topic="gps-holes" label="Holes from a GPS file" /></span>
           </div>
         </Section>
       )}
@@ -309,7 +309,7 @@ function SiteStep({ onFindSite }: { onFindSite: () => void }) {
           {placed && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               <Button small onClick={onFindSite} testid="resize-site">Change the area</Button>
-              {!example && <CourseFileButton />}
+              {!example && <span className="inline-flex items-center gap-1.5"><CourseFileButton /><HelpLink topic="gps-holes" label="Holes from a GPS file" /></span>}
             </div>
           )}
           {offerLidar && (

@@ -144,7 +144,7 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
         {`${fileName}: ${holes.length} ${holes.length === 1 ? "hole" : "holes"}`}
         {multiPin ? `, ${multiPin} with more than one pin` : ""}{multiTee ? `${multiPin ? " and" : ","} ${multiTee} with more than one tee` : ""}.
         {file.layouts?.length ? ` ${file.layouts.length === 1 ? "Layout" : "Layouts"}: ${file.layouts.map(l => l.name).join(", ")}.` : ""}
-        {" "}<HelpLink topic="gps-holes" label="Holes from a GPS file" />
+        {" "}<HelpLink topic="gps-holes" label="Holes from a GPS file" over />
       </p>
       {!ref && (
         <div className="rounded-[16px] bg-orange-500/[0.12] ring-1 ring-orange-400/30 p-3 mb-3" data-testid="course-file-no-site">
@@ -179,7 +179,8 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
           ]} />
         </div>
       )}
-      <div className="flex gap-2 justify-end">
+      <div className="flex flex-wrap items-center gap-2 justify-end">
+        <span className="mr-auto inline-flex items-center gap-1.5 text-[12px] text-zinc-400" data-testid="course-file-format">What a file can hold <HelpLink topic="course-file-format" label="Course file format" over /></span>
         <Button small onClick={close}>Cancel</Button>
         <Button small tone="primary" disabled={!ref || !n} onClick={bring} testid="course-file-bring">{`Bring in ${n} ${n === 1 ? "hole" : "holes"}`}</Button>
       </div>
