@@ -1,5 +1,5 @@
 import { test as plain, expect as plainExpect, type Page } from "@playwright/test";
-import { test, expect, addHole, course, editorState, geoAt, importSite, noSurvey, SITE, STAND } from "./fixtures";
+import { test, expect, addHole, course, drag, editorState, geoAt, importSite, noSurvey, SITE, STAND } from "./fixtures";
 import { mappedCourse, osmFeaturesFrom, overpassQuery } from "../../src/lib/geo/osm";
 import { getGeoBounds } from "../../src/lib/geo/core";
 import { outlineFrom } from "../../src/lib/geo/parks";
@@ -755,4 +755,44 @@ test("looking first: a source switched off doesn't come in; the rest does", asyn
   const items = (await course(page)).items;
   expect(items.filter((i: any) => i.importSource === "fema")).toHaveLength(0);
   expect(items.some((i: any) => i.importSource === "osm")).toBe(true);
+});
+
+test("looked over in 3D: water reshaped by hand comes in as it was left, after a switch changes too, in one undo step", async ({ page }) => {
+  test.setTimeout(300_000);
+  // (drawn as with a graphics card, so the look-over is in the 3D view; no build played)
+  await page.evaluate(() => localStorage.setItem("hyzerlab-gpu", "1"));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  // (slower to start with the 3D view drawn in full on a machine without a graphics card)
+  await expect(page.getByTestId("welcome")).toBeVisible({ timeout: 60_000 });
+  const water = async () => (await course(page)).items.filter((i: any) => i.type === "area" && i.kind === "water");
+  let moved: { x: number; y: number }[] = [];
+  await importSite(page, { review: async p => {
+    await expect(p.getByTestId("review-at-photo")).toBeVisible({ timeout: 120_000 });
+    const pond0 = (await water())[0];
+    // Mill Pond picked and one corner dragged out, as in Design
+    await p.evaluate(id => { const w = window as any; w.__dgActions.select(id); w.__dgView.frame(id); }, pond0.id);
+    await p.waitForTimeout(1200);
+    // (the corner furthest right, clear of the look-over's card and the map's buttons)
+    const corners = await p.locator('[data-handle="corner"]').evaluateAll(els => els.map(e => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }).filter(q => q.x > 400 && q.x < innerWidth - 160 && q.y > 80 && q.y < innerHeight - 80));
+    expect(corners.length).toBeGreaterThan(0);
+    const c = corners.reduce((a, b) => (b.x > a.x ? b : a));
+    await drag(p, c, { x: c.x + 70, y: c.y + 30 }, 12);
+    await expect.poll(async () => JSON.stringify((await water())[0].points)).not.toBe(JSON.stringify(pond0.points));
+    moved = (await water())[0].points;
+    // The look-over built again (another tree colour): the change stays
+    const leaves = (await course(p)).style.look3d?.trees;
+    await p.getByTestId("review-step-trees").click();
+    await p.getByTestId("review-color-autumn").click();
+    await expect.poll(async () => (await course(p)).style.look3d?.trees).not.toBe(leaves);
+    expect((await water())[0].points).toEqual(moved);
+    await p.getByTestId("review-step-bring").click();
+  } });
+  // In the course as it was left: the one pond, reshaped, and nothing doubled
+  const ponds = await water();
+  expect(ponds).toHaveLength(1);
+  expect(ponds[0].points).toEqual(moved);
+  // (the site and the change one step: undo takes both back)
+  await page.evaluate(() => (window as any).__dgStore.getState().undo());
+  await expect.poll(async () => (await water()).length).toBe(0);
 });

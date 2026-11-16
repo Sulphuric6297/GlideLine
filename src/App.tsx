@@ -48,6 +48,7 @@ import { toast, useToasts } from "./state/toast";
 import { courseStats, holeStats } from "./lib/holeStats";
 import { STAND_HERE } from "./constants";
 import { freshOnly, fromMaps, isImported, reframeDesign, type ImportedSite } from "./lib/importSite";
+import { withHand, type HandEdits } from "./lib/importHand";
 import { geoRefOf, reframe } from "./lib/geoRef";
 import { Woods } from "./components/Woods";
 import type { CourseDoc, CourseItem, P } from "./types";
@@ -180,7 +181,7 @@ function saveByHand() {
 
 /** How a fetched site comes in: with the course mapped there, the frame's turn, the tree colours
  * picked while looking it over; `live`/`shown`: it was built in front of you already. */
-type SiteOpts = { course?: boolean; turn?: number; live?: boolean; shown?: boolean; look?: { trees: string; treeMix: string[] } };
+type SiteOpts = { course?: boolean; turn?: number; live?: boolean; shown?: boolean; look?: { trees: string; treeMix: string[] }; hand?: HandEdits };
 
 export default function App() {
   const ed = useEditor();
@@ -335,13 +336,17 @@ export default function App() {
     return { patch, carried, mappedCourse };
   };
   /** The site as it would come in, shown in the course while it's looked over (no undo step: the
-   * course as it was, `d0`, is put back if it isn't brought in). */
+   * course as it was, `d0`, is put back if it isn't brought in), with what was changed by hand
+   * meanwhile laid on. Gives back the course as it was built, before those changes. */
   const onPreview = (d0: CourseDoc, site: ImportedSite, opts?: SiteOpts) => {
-    useCourse.setState({ doc: { ...d0, ...siteInto(d0, site, opts).patch }, gestureStart: null });
+    const built = { ...d0, ...siteInto(d0, site, opts).patch };
+    useCourse.setState({ doc: opts?.hand ? withHand(built, opts.hand) : built, gestureStart: null });
+    return built;
   };
   const onImported = (site: ImportedSite, opts?: SiteOpts) => {
     const { patch, carried, mappedCourse } = siteInto(getDoc(), site, opts);
-    changeDoc(() => patch);
+    // (what was moved, reshaped or changed by hand while it was looked over comes in as it was left, in the same undo step)
+    changeDoc(d => (opts?.hand ? withHand({ ...d, ...patch }, opts.hand) : patch));
     setFindSite(false);
     setFindNear(undefined);
     useEditor.getState().set({ step: "design", tool: "select" });
