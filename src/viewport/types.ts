@@ -1,4 +1,4 @@
-import type { FieldKind, AreaKind, CourseDoc, CourseItem, LineKind, P, ToolMode, DrawShape, StructureKind, TreeKind, FieldPart } from "../types";
+import type { FieldKind, AreaKind, CourseDoc, CourseItem, LineKind, P, ToolMode, DrawShape, StructureKind, TreeKind, RockKind, FieldPart } from "../types";
 import type { HoleStats, SafetyIssue } from "../lib/holeStats";
 
 export type { P };
@@ -53,6 +53,8 @@ export type ViewTool = {
   dragSelect?: boolean;
   /** What the Tree tool plants (its preview is one). */
   treeKind?: TreeKind;
+  /** What the Rocks tool puts down. */
+  rockKind?: RockKind;
   /** The brush (the ground tool, and painting areas): its radius (ft), how strong, what it does to the ground. */
   brush?: { size: number; strength: number; ground: "raise" | "lower" | "flatten" | "smooth" | "restore" };
   /** A stand of this kind of tree drawn as woods (a stand of bushes: underbrush). */

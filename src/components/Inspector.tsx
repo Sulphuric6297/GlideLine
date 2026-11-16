@@ -6,7 +6,7 @@ import { PlaceByGps } from "./PlaceByGps";
 import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
-import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES } from "../constants";
+import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, ROCK_KINDS } from "../constants";
 import { activeLayout, basketFor, bendOwner, turnsAhead, areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries, AMENITY_ROLE } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
 import { BUILDING_LOOKS, boxOutline, gazeboOutline, structureHeight, structurePath, structureRoof, structureWidth, turnShape } from "../lib/structures";
@@ -27,6 +27,7 @@ import type { TeeItem, AmenityKind, AreaItem, CourseDoc, CourseItem, FenceStyle,
 import { fieldInks, fieldPlan, LEAGUE_ORDER, LEAGUES } from "../lib/fieldPlan";
 import { ElevationProfile } from "./ElevationProfile";
 import { TreeSettings } from "./TreeSettings";
+import { RockSettings, RockSurfaceSettings } from "./RockSettings";
 import { FlyoverRow } from "./FlyoverSettings";
 import { HoleChips } from "./ApplyToHoles";
 import { HoleSteps } from "./HoleSteps";
@@ -933,6 +934,7 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
             }}><Brush size={14} /> Reshape with the brush</Button>
           )}
           {(item.kind === "woods" || item.kind === "rough") && <WoodsSettings item={item} />}
+          {item.kind === "rock" && <RockSurfaceSettings item={item} set={(patch, history = true) => set(patch as Record<string, unknown>, history)} />}
           {hasObChoice(item) && <ObPick item={item} />}
           {item.kind === "ob" && holePicker("OB for", "All holes")}
           {(RULE_AREAS.has(item.kind) || (fk && item.outOfPlay)) && holePicker("Counts for", "All holes")}
@@ -1004,6 +1006,14 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
     case "tree":
       body = <TreeSettings item={item} set={(patch, history = true) => set(patch as Record<string, unknown>, history)} />;
       break;
+    case "rock":
+      body = (
+        <>
+          <RockSettings item={item} set={(patch, history = true) => set(patch as Record<string, unknown>, history)} />
+          <TurnButtons item={item} />
+        </>
+      );
+      break;
     case "amenity": {
       // (a bridge's or a shelter's sign is a course's from before: offered only to one that is one)
       const kinds = AMENITY_KINDS[item.kind].retired ? [...AMENITY_ORDER, item.kind] : AMENITY_ORDER;
@@ -1054,7 +1064,7 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
 
 /** What a selected item is called ("Blue tee", "OB area", "Bridge"…). */
 export function itemTitle(item: CourseItem) {
-  return item.type === "tee" ? `${TEE_LEVELS[item.level].label} tee` : item.type === "basket" ? `Pin ${item.position}` : item.type === "area" ? (item.kind === "field" ? FIELD_KINDS[fieldKindOf(item)].label : AREA_KINDS[item.kind].label) : item.type === "line" ? LINE_KINDS[item.kind].label : item.type === "amenity" ? AMENITY_KINDS[item.kind].pick ?? AMENITY_KINDS[item.kind].label : item.type === "structure" ? STRUCTURE_KINDS[item.kind].label : ITEM_LABELS[item.type];
+  return item.type === "tee" ? `${TEE_LEVELS[item.level].label} tee` : item.type === "basket" ? `Pin ${item.position}` : item.type === "area" ? (item.kind === "field" ? FIELD_KINDS[fieldKindOf(item)].label : AREA_KINDS[item.kind].label) : item.type === "line" ? LINE_KINDS[item.kind].label : item.type === "amenity" ? AMENITY_KINDS[item.kind].pick ?? AMENITY_KINDS[item.kind].label : item.type === "structure" ? STRUCTURE_KINDS[item.kind].label : item.type === "rock" ? ROCK_KINDS[item.kind].label : ITEM_LABELS[item.type];
 }
 
 /** How much of the map's left side is covered on Design while something is picked: the slim hole

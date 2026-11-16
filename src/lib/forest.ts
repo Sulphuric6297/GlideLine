@@ -6,12 +6,13 @@
 // things are drawn there too; the painting clears the trees from them and casts their shadows).
 import { timed } from "./perfLog";
 import { measuredStanding } from "./standing";
-import { CIRCLE_ONE_FT, LINE_KINDS, PATH_SURFACES } from "../constants";
-import type { AreaItem, CourseDoc, LineItem, MapStyle, P, PathSurface, ReliefLook, StructureItem, TreeItem } from "../types";
+import { CIRCLE_ONE_FT, LINE_KINDS, PATH_SURFACES, ROCK_LOOKS, ROCK_STONES } from "../constants";
+import { rockItemGeometry } from "../three/rocks";
+import type { AreaItem, CourseDoc, LineItem, MapStyle, P, PathSurface, ReliefLook, RockItem, StructureItem, TreeItem } from "../types";
 import { toUnits } from "./units";
 import { canopyMask } from "./geo/detect";
-import { boundsOf, corridor, dist, pathLength, pointInPolygon, smoothPath } from "./geom";
-import { autoWalks, drawnAreas, fairwayShiftAt, fairwayWidthAt, linePath, teeLines, widthAlong, widthFactors, widthVaries } from "./course";
+import { boundsOf, corridor, dist, distanceToPath, pathLength, pointInPolygon, smoothPath } from "./geom";
+import { areaPath, autoWalks, drawnAreas, fairwayShiftAt, fairwayWidthAt, linePath, teeLines, widthAlong, widthFactors, widthVaries } from "./course";
 import type { HoleStats } from "./holeStats";
 import { conifersOf, style3dOf, tallGrassOf, treeMixOf } from "./landscapes";
 import { reliefExaggeration } from "./relief";
@@ -522,6 +523,8 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       disc(CLEAR, i, 12);
     } else if (i.type === "amenity") {
       disc(CLEAR, i, 10);
+    } else if (i.type === "rock") {
+      if (!s.hideRocks) disc(CLEAR, i, Math.max(i.length, i.width) * 0.45 + 2);
     } else if (i.type === "area") {
       const a = i as AreaItem;
       if (a.kind === "fairway" || a.kind === "green") { poly(FAIR, a.points); poly(CLEAR, a.points); if (a.kind === "green") poly(MIDDLE, a.points); }
@@ -529,6 +532,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       else if (a.kind === "parking") { poly(ROAD, a.points); poly(CLEAR, a.points); }
       else if (a.kind === "building") { poly(BUILDING, a.points); poly(CLEAR, a.points); }
       else if (a.kind === "sand") { poly(SAND, a.points); poly(CLEAR, a.points); }
+      else if (a.kind === "rock") { if (!s.hideRocks) poly(CLEAR, a.points); }
       else if (a.kind === "rough") { poly(TALL, a.points); poly(CLEAR, a.points); }
       else if (a.kind === "nogo") poly(CLEAR, a.points);
       // (a field, court or play area: mown, no treetops over it; the map draws it on top)
@@ -589,7 +593,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     }
   }
   // (the masks depend on the course and the frame, not on the look: a look changed reuses them)
-  const maskKey = JSON.stringify([view, density, paintedFrom(doc), stats.map(st => [st.holeId, st.line, st.complete]), s.nextTee, s.walkWidth, doc.canvas, !!opts.under]);
+  const maskKey = JSON.stringify([view, density, paintedFrom(doc), stats.map(st => [st.holeId, st.line, st.complete]), s.nextTee, s.walkWidth, !!s.hideRocks, doc.canvas, !!opts.under]);
   const store: MaskStore = maskStores.get(maskKey) ?? { key: maskKey, reads: new Map() };
   maskStores.delete(maskKey);
   maskStores.set(maskKey, store);
@@ -1117,6 +1121,74 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       }
     }
   }
+  // Rocks: their real shapes (the same as in 3D) seen from above, each pixel's height on them, and
+  // which rock it is; they stand up out of the ground like built things and cast shadows
+  const rockTop = new Float32Array(W * H), rockOf = new Uint16Array(W * H), rocks: RockItem[] = [];
+  // (left off the map when the style hides them, and under the 3D view's own rocks)
+  const noRocks = !!opts.under || !!s.hideRocks;
+  for (const r of noRocks ? [] : (doc.items.filter(i => i.type === "rock") as RockItem[])) {
+    const c0 = toScreen(r), reach = (Math.hypot(r.length, r.width) / 2 + 1) * k;
+    if (c0.x < -reach || c0.y < -reach || c0.x > W + reach || c0.y > H + reach || reach < 1) continue;
+    rocks.push(r);
+    const id = rocks.length;
+    const geo = rockItemGeometry(r, reach > 70 ? 0.42 : 0.16);
+    const pos = geo.attributes.position, idx = geo.index;
+    const a = (r.rotation * Math.PI) / 180, ca = Math.cos(a), sa = Math.sin(a);
+    const n = pos.count, sx = new Float32Array(n), sy = new Float32Array(n), sz = new Float32Array(n);
+    for (let v = 0; v < n; v++) {
+      const lx = pos.getX(v), lz = pos.getZ(v), q = toScreen({ x: r.x + lx * ca - lz * sa, y: r.y + lx * sa + lz * ca });
+      sx[v] = q.x; sy[v] = q.y; sz[v] = pos.getY(v);
+    }
+    const tri = (i0: number, i1: number, i2: number) => {
+      if (sz[i0] <= 0 && sz[i1] <= 0 && sz[i2] <= 0) return;
+      const x0 = sx[i0], y0 = sy[i0], x1 = sx[i1], y1 = sy[i1], x2 = sx[i2], y2 = sy[i2];
+      const d = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+      if (Math.abs(d) < 1e-9) return;
+      for (let y = Math.max(0, Math.floor(Math.min(y0, y1, y2))); y <= Math.min(H - 1, Math.ceil(Math.max(y0, y1, y2))); y++) {
+        for (let x = Math.max(0, Math.floor(Math.min(x0, x1, x2))); x <= Math.min(W - 1, Math.ceil(Math.max(x0, x1, x2))); x++) {
+          const px0 = x + 0.5, py0 = y + 0.5;
+          const w0 = ((y1 - y2) * (px0 - x2) + (x2 - x1) * (py0 - y2)) / d, w1 = ((y2 - y0) * (px0 - x2) + (x0 - x2) * (py0 - y2)) / d, w2 = 1 - w0 - w1;
+          if (w0 < -1e-4 || w1 < -1e-4 || w2 < -1e-4) continue;
+          const z = w0 * sz[i0] + w1 * sz[i1] + w2 * sz[i2], i = y * W + x;
+          if (z > 0.02 && z > rockTop[i]) { rockTop[i] = z; rockOf[i] = id; }
+        }
+      }
+    };
+    if (idx) for (let t = 0; t < idx.count; t += 3) tri(idx.getX(t), idx.getX(t + 1), idx.getX(t + 2));
+    else for (let t = 0; t < n; t += 3) tri(t, t + 1, t + 2);
+    geo.dispose();
+  }
+  for (let i = 0; i < W * H; i++) if (rockTop[i] > 0) raise(i % W, (i / W) | 0, rockTop[i]);
+  // Rock surfaces: which one each pixel is in (its edge ragged, as rock breaks through turf)
+  const rockAreas = (noRocks ? [] : (doc.items.filter(i => i.type === "area" && i.kind === "rock") as AreaItem[])).map(a => ({ ...a, points: areaPath(a) }));
+  const rockIn = new Uint8Array(rockAreas.length ? W * H : 0), rockDeep = new Float32Array(rockAreas.length ? W * H : 0);
+  rockAreas.forEach((ar, j) => {
+    const b = boundsOf(ar.points.map(toScreen)), ring = [...ar.points, ar.points[0]], m = Math.ceil(2 * k) + 2;
+    for (let y = Math.max(0, Math.floor(b.minY - m)); y <= Math.min(H - 1, Math.ceil(b.maxY + m)); y++) {
+      for (let x = Math.max(0, Math.floor(b.minX - m)); x <= Math.min(W - 1, Math.ceil(b.maxX + m)); x++) {
+        const q = toPlan(x + 0.5, y + 0.5), inside = pointInPolygon(q, ar.points), d = distanceToPath(q, ring);
+        if (!inside && d > 2) continue;
+        rockIn[y * W + x] = j + 1;
+        rockDeep[y * W + x] = inside ? d : -d;
+      }
+    }
+  });
+  // (stones, cell by cell, fixed to the ground: a cell's nearest point, the gap to the next, its own tone)
+  const cellOf = (fx: number, fy: number) => {
+    const ix = Math.floor(fx), iy = Math.floor(fy);
+    let d1 = 9, d2 = 9, tone = 0, ox = 0, oy = 0;
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+      const cx = ix + i, cy = iy + j;
+      let h = (cx * 374761393 + cy * 668265263) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      const r1 = ((h >>> 0) % 1000) / 1000, r2 = (((h >>> 10) >>> 0) % 1000) / 1000, r3 = (((h >>> 20) >>> 0) % 1000) / 1000;
+      const px = cx + 0.15 + r1 * 0.7, py = cy + 0.15 + r2 * 0.7, dd = (fx - px) ** 2 + (fy - py) ** 2;
+      if (dd < d1) { d2 = d1; d1 = dd; tone = r3; ox = fx - px; oy = fy - py; } else if (dd < d2) d2 = dd;
+    }
+    return { gap: Math.sqrt(d2) - Math.sqrt(d1), tone, ox, oy };
+  };
+  const hexRgbOf = (h: string) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const stoneRgb = (st: string | undefined) => { const c = hexRgbOf((ROCK_STONES[st as keyof typeof ROCK_STONES] ?? ROCK_STONES.granite).color); return [c[0] * 0.55 + 186 * 0.45, c[1] * 0.55 + 172 * 0.45, c[2] * 0.55 + 152 * 0.45]; };
   yield;
   const sdx: number[] = [], sdy: number[] = [], sup: number[] = [];
   for (let d = 1.5; d < tallest / rise + 2 && d < 400; d *= 1.3) {
@@ -1529,6 +1601,44 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
               cr += (236 - cr) * sm2; cg += (228 - cg) * sm2; cb += (150 - cb) * sm2;
             } else lay(fair, fv, fa);
           }
+          // Rock surfaces: bare rock (bedrock, a cliff's ledges), broken stones or stony soil, in its
+          // stone's color, lit like the ground, grass coming through where it's set to
+          const ra0 = rockIn.length ? rockIn[i] : 0;
+          if (ra0 && !opts.under) {
+            const ar = rockAreas[ra0 - 1], lookId = ar.rockLook ?? "bedrock", look2 = ROCK_LOOKS[lookId];
+            const sxp = (x - W / 2) / k, syp = (y - H / 2) / k, PX = view.cx + sxp * cos + syp * sin, PY = view.cy - sxp * sin + syp * cos;
+            const deep = rockDeep[i] + (fbm(PX * 0.12 + 4, PY * 0.12) - 0.5) * 3 + (noise(PX * 0.6, PY * 0.6) - 0.5) * 0.8;
+            const grassK = ar.grassBetween ?? look2.grass;
+            const gate = fbm(x / pt * 0.045 + 30, y / pt * 0.045) + (noise(x / pt * 0.35, y / pt * 0.35) - 0.5) * 0.08;
+            const open = smooth(0.78 - grassK * 0.45, 0.84 - grassK * 0.45, gate);
+            const sc = stoneRgb(ar.stone);
+            let rv = (0.96 + (grain - 0.5) * 0.3 + mott * 0.12) * (0.55 + 0.45 * lit);
+            let tint = sc;
+            if (lookId === "cliff" || lookId === "bedrock") {
+              const fold = lookId === "cliff" ? (rh ? rh.elev / 9 : 0) + (fbm(x / pt * 0.03 + 70, y / pt * 0.03) - 0.5) * 2.2 : fbm(x / pt * 0.05 + 11, y / pt * 0.05) * 3;
+              const fr = fold - Math.floor(fold);
+              rv *= lookId === "cliff" ? 0.88 + 0.18 * smooth(0.1, 0.5, fr) - 0.16 * smooth(0.86, 1, fr) : 0.94 + 0.1 * smooth(0.2, 0.6, fr) - 0.06 * smooth(0.9, 1, fr);
+              // (bedrock's cracks: thin dark lines where the noise crosses its middle)
+              if (lookId === "bedrock") rv *= 1 - 0.3 * (1 - smooth(0.0, 0.012, Math.abs(fbm(x / pt * 0.06 + 5, y / pt * 0.06) - 0.5)));
+            } else {
+              // (broken rock: stones a foot or two across, each its own tone, lit on its sunny side, dark
+              // gaps between; rocky ground: brown earth with a stone here and there)
+              // (stones of mixed sizes: smaller in some places, bigger in others)
+              const size = (lookId === "broken" ? 1.7 : 1.1) * (0.7 + 0.6 * fbm(PX * 0.05 + 9, PY * 0.05));
+              const c = cellOf(PX / size, PY / size);
+              const lightSide = Math.max(-1, Math.min(1, (c.ox * L.x + c.oy * L.y) * 2.2));
+              const stone = lookId === "broken" ? 1 : smooth(0.62, 0.66, c.tone);
+              const soil = [104, 86, 64];
+              // (the gaps between: dark earth, wider here and there)
+              const inStone = stone * smooth(0.05, 0.12 + 0.1 * fbm(PX * 0.3, PY * 0.3), c.gap);
+              const sv = 0.72 + 0.38 * c.tone + 0.2 * lightSide;
+              tint = [soil[0] + (sc[0] - soil[0]) * inStone, soil[1] + (sc[1] - soil[1]) * inStone, soil[2] + (sc[2] - soil[2]) * inStone];
+              rv *= inStone > 0.5 ? sv : 0.72 + (GRIT[tr | (x & 511)] - 0.5) * 0.35;
+            }
+            const ra = (1 - open) * smooth(-0.3, 0.6, deep);
+            cr += (tint[0] * rv - cr) * ra; cg += (tint[1] * rv - cg) * ra; cb += (tint[2] * rv - cb) * ra;
+            px |= MIX.grass;
+          }
           const sa = S(c, 1) / 255;
           if (sa > 0.3) lay(sandPal, (0.6 + grain * 0.3) * lit, smooth(0.45, 0.55, sa));
           // Paths and roads, stacked in the order the style sets (unset: dirt under gravel, gravel
@@ -1690,6 +1800,29 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
                 cr += (40 - cr) * ln; cg += (34 - cg) * ln; cb += (24 - cb) * ln;
               }
             }
+          }
+          // Rocks: their shape lit by the map's sun (as the treetops are), shadowed by what stands
+          // between them and it, their stone's color, moss on their tops, a thin stone ink edge
+          const rt = rockTop[i];
+          if (rt > 0) {
+            const rk = rocks[rockOf[i] - 1];
+            const hAt = (j: number) => (rockOf[j] === rockOf[i] ? rockTop[j] : 0);
+            const gx = ((x < W - 1 ? hAt(i + 1) : rt) - (x > 0 ? hAt(i - 1) : rt)) * 0.5 * k, gy = ((y < H - 1 ? hAt(i + W) : rt) - (y > 0 ? hAt(i - W) : rt)) * 0.5 * k;
+            const lam = Math.max(0, (-gx * L.x - gy * L.y + L.z) / Math.sqrt(gx * gx + gy * gy + 1));
+            const up = 1 / Math.sqrt(gx * gx + gy * gy + 1);
+            const sunR = sunlit(x, y, rt * k * 0.85);
+            const sc = stoneRgb(rk.stone);
+            let v = (0.36 + 0.78 * lam) * (1 - shadowK * 0.7 * (1 - sunR)) * (0.86 + (grain - 0.5) * 0.4 + mott * 0.12);
+            let rr = sc[0] * v, rg = sc[1] * v, rb = sc[2] * v;
+            // (moss on what faces up, as much as the rock has)
+            const mossK = (rk.moss ?? 0.2) * 1.25;
+            const mo = smooth(0.78 - mossK * 0.4, 0.86 - mossK * 0.4, fbm(x / pt * 0.35 + 17, y / pt * 0.35) + (up - 0.9) * 1.2) * smooth(0.02, 0.1, mossK);
+            if (mo > 0) { const mv = (0.5 + 0.6 * lam) * (1 - shadowK * 0.6 * (1 - sunR)); rr += (70 * mv - rr) * mo; rg += (96 * mv - rg) * mo; rb += (34 * mv - rb) * mo; }
+            // (the edge inked, as the map draws walls: a pixel or so of dark stone)
+            const edge = (x > 0 && hAt(i - 1) <= 0) || (x < W - 1 && hAt(i + 1) <= 0) || (y > 0 && hAt(i - W) <= 0) || (y < H - 1 && hAt(i + W) <= 0);
+            if (edge) { rr = rr * 0.35 + 30; rg = rg * 0.35 + 26; rb = rb * 0.35 + 22; }
+            cr = rr; cg = rg; cb = rb;
+            px |= MIX.grass;
           }
         }
         // Relief in color, as on Swiss maps: slopes facing the sun a little warmer, slopes facing

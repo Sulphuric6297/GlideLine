@@ -4,18 +4,19 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Re
 import { create } from "zustand";
 import { Armchair, Brush, Mountain, Circle, CircleDot, Ellipsis, Fence, Footprints, House, LandPlot, MousePointer2, MousePointerClick, PenLine, RectangleHorizontal, Redo2, Route, Ruler, ShieldAlert, Shrub, Signpost, Spline, Sprout, Square, Tally2, Target, TreeDeciduous, Trees, Type, Undo2, UtilityPole, Waves, X } from "lucide-react";
 import { amenitySymbol, structureLegend, symbolSvg } from "../lib/symbols";
-import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, FIELD_KINDS, LINE_KINDS, PIN_POSITIONS, STRUCTURE_KINDS, TEE_LEVELS, TEE_ORDER } from "../constants";
+import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, FIELD_KINDS, LINE_KINDS, PIN_POSITIONS, ROCK_KINDS, ROCK_ORDER, STRUCTURE_KINDS, TEE_LEVELS, TEE_ORDER } from "../constants";
 import { FIELD_ORDER, fieldWord } from "../lib/fields";
 import { fieldIcon } from "./fieldIcons";
 import { getDoc, useCourse, useEditor } from "../state/course";
 import { getView } from "../state/view";
-import type { AmenityKind, AreaKind, CourseDoc, DrawShape, FieldKind, LineKind, StructureKind, TeeLevel, ToolMode, TreeKind } from "../types";
+import type { AmenityKind, AreaKind, CourseDoc, DrawShape, FieldKind, LineKind, StructureKind, TeeLevel, ToolMode, TreeKind, RockKind } from "../types";
 import { useTouch } from "./useLayout";
 import { fmtDist } from "../lib/units";
 import { HelpLink, PickRow } from "./ui";
 import { PANEL_INSET, useSelection } from "./Inspector";
 import { DrawBar } from "./DrawBar";
 import { TREE_KINDS } from "./TreeSettings";
+import { ROCK_ICONS, rocksToolIcon } from "./RockSettings";
 import { SPECIES } from "../three/ezShapes";
 
 /** A built thing's map symbol, small (for the tool's chips and the Features list). */
@@ -42,6 +43,7 @@ const tree = (k: TreeKind, label: string, icon: ReactNode): ToolChoice => ({
   id: `tree-kind-${k}`, label, mode: "add-tree", also: "draw-area", set: { treeKind: k }, icon,
   is: ed => ed.treeKind === k && (ed.tool === "add-tree" || (ed.tool === "draw-area" && ed.areaKind === "woods" && ed.standOf === k))
 });
+const rock = (k: RockKind): ToolChoice => ({ id: `rock-kind-${k}`, label: ROCK_KINDS[k].label, mode: "add-rock", set: { rockKind: k }, icon: ROCK_ICONS[k] });
 const field = (k: FieldKind): ToolChoice => ({ id: `field-kind-${k}`, label: FIELD_KINDS[k].label, mode: "add-field", also: "draw-area", set: { areaKind: "field", fieldKind: k }, icon: fieldIcon(k) });
 
 export const TOOLS: Tool[] = [
@@ -68,6 +70,10 @@ export const TOOLS: Tool[] = [
       line("hedge", "Hedge", <Shrub size={14} />)
     ]
   },
+  {
+    id: "rocks", mode: "add-rock", key: "J", label: "Rocks: boulders, blocks, ledges, outcrops, clusters, rock walls and rock surfaces", short: "Rocks", icon: rocksToolIcon, group: 3,
+    choices: [...ROCK_ORDER.map(rock), { ...area("rock"), color: undefined, swatch: undefined, icon: ROCK_ICONS.surface }]
+  },
   { id: "grass", mode: "draw-area", key: "U", label: "Grass: fairways, landing zones, tall grass, sand and dirt", short: "Grass", icon: <Sprout size={18} />, group: 3, choices: [area("fairway"), area("green"), area("rough"), area("sand")] },
   {
     id: "build", mode: "draw-structure", key: "S", label: "Build: buildings, shelters, decks, bridges, boardwalks, stairs, walls, fences, power lines", short: "Build", icon: <House size={18} />, group: 3,
@@ -85,7 +91,7 @@ export const CHOICE_KEYS: Record<string, string> = { M: "mando-kind-single", Z: 
 
 /** Each tool's page in the help guide (its ? beside the hint), and the choices with a page of their own. */
 const TOOL_HELP: Record<string, string> = {
-  select: "pointer", hole: "new-hole", tee: "tees-pins", pin: "tees-pins", rules: "ob", paths: "lines", water: "areas", trees: "trees",
+  select: "pointer", hole: "new-hole", tee: "tees-pins", pin: "tees-pins", rules: "ob", paths: "lines", water: "areas", trees: "trees", rocks: "rocks",
   grass: "areas", build: "build", park: "park", amenities: "amenities", label: "amenities", ground: "ground", measure: "measure"
 };
 const CHOICE_HELP: Record<string, string> = {
@@ -437,6 +443,7 @@ export function toolHint(ed: Editor, touch = false): string | undefined {
   if (ed.tool === "add-tree") return `${click} to plant ${TREE_PLURAL[ed.treeKind] ?? "trees"}`;
   if (ed.tool === "draw-area" && ed.areaKind === "woods" && ed.standOf) return `${click} the corners of the ${TREE_STAND[ed.standOf] ?? "stand of trees"}`;
   if (ed.tool === "add-amenity") return `${click} where the ${amenityName(ed.amenityKind)} goes`;
+  if (ed.tool === "add-rock") return `${click} where the ${ROCK_KINDS[ed.rockKind].label.toLowerCase()} goes`;
   if (ed.tool === "add-field") return `${click} where the ${fieldWord(ed.fieldKind)} goes`;
   if (ed.tool === "measure") return (ed.measureMode ?? "spot") === "path" ? `${click} along the path` : `${click} a start point`;
   if (ed.tool === "sculpt") return touch ? "Paint the ground with one finger · two fingers move the map" : `Drag over the ground to paint it · Space+drag ${ed.teeView ? "looks around" : "moves the map"}`;
@@ -446,8 +453,8 @@ export function toolHint(ed: Editor, touch = false): string | undefined {
 
 /** The tools a step is about; the rest wait under More (and come forward while in use). */
 export const STEP_TOOLS: Record<string, string[]> = {
-  site: ["select", "paths", "water", "trees", "grass", "build", "park", "ground", "measure"],
-  design: ["select", "hole", "tee", "pin", "rules", "paths", "water", "trees", "grass", "build", "park", "ground", "measure"],
+  site: ["select", "paths", "water", "trees", "rocks", "grass", "build", "park", "ground", "measure"],
+  design: ["select", "hole", "tee", "pin", "rules", "paths", "water", "trees", "rocks", "grass", "build", "park", "ground", "measure"],
   export: ["select"]
 };
 /** Under 1280 px wide, these wait under More too. */

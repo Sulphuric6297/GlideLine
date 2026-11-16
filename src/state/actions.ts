@@ -4,7 +4,7 @@ import { woodsCrownWidth } from "../three/treeKit";
 import { CIRCLE_ONE_FT, FIELD_KINDS, PIN_POSITIONS, TEE_ORDER, generateId } from "../constants";
 import { MARKED_FIELDS, createField, fieldHome, fieldKindOf, fieldOutline, isBallField } from "../lib/fields";
 import {
-  createAmenity, createArea, createBasket, createDropZone, createLabel, createLine, createMando, createStructure, createTee, createTree,
+  createAmenity, createArea, createBasket, createDropZone, createLabel, createLine, createMando, createStructure, createTee, createTree, createRock,
   insertHole, autoWalks, basketHoles, belongsTo, bendOwner, closestHole, holeBaskets, holeTees, itemHoleId, movedGroup, newHole, obPicked, obPieces, teeFor, wholeHoles, withoutStretch, holeLabel, fairwayShiftAt, fairwayWidthAt
 } from "../lib/course";
 import { centroid, nearestOnSegment, pathLength, pointAlong, simplify, smoothPath } from "../lib/geom";
@@ -240,6 +240,7 @@ export const placeAt = (mode: ToolMode, p: P) => {
     // (the species picked in the tool bar)
     if (species) item = { ...item, species } as CourseItem;
   } else if (mode === "add-amenity") item = createAmenity(p, ed.amenityKind);
+  else if (mode === "add-rock") item = createRock(p, ed.rockKind);
   else if (mode === "add-label") item = createLabel(p, "Label");
   else if (mode === "add-field") {
     // (at its usual size, north up; then picked, its panel open, as one drawn is)
