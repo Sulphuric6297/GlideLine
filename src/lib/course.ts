@@ -143,8 +143,10 @@ const signOfItem = (i: CourseItem) => {
 
 export const normalizeCourse = (raw: Partial<CourseDoc>): CourseDoc => {
   const base = createEmptyCourse();
-  // (a course's look is its own: an older one, saved without one, stays Classic)
+  // (a course's look is its own: an older one, saved without one, stays Classic, and one saved
+  // without bare rock on its steep ground has none)
   delete base.style.mapLook;
+  delete base.style.steepRock;
   const doc: CourseDoc = {
     ...base,
     ...raw,
