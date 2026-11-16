@@ -86,3 +86,32 @@ test("a rock's shape: its size as set, sunk as deep as it's buried, a drawn outl
   expect(reach(0)).toBeGreaterThan(4);
   expect(reach(Math.PI / 2)).toBeLessThan(2);
 });
+
+test("rocks hidden on the illustrated map from Rocks in its map style, and shown again", async ({ page }) => {
+  await blankCourse(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__dgEditor().set({ rockKind: "outcrop" }); w.__dgActions.placeAt("add-rock", { x: 500, y: 500 });
+    w.__dgEditor().set({ tool: "select" });
+  });
+  await page.getByRole("button", { name: "3 Map" }).click();
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__dgMapDiff), { timeout: 60_000 }).toBe("function");
+  // (Rocks is listed with the map's parts, shown to start with)
+  await expect(page.getByTestId("part-rocks")).toContainText("Shown");
+  await page.getByTestId("part-rocks").click();
+  await page.getByTestId("rocks-on-map-hidden").click();
+  await expect.poll(async () => (await course(page)).style.hideRocks).toBe(true);
+  await expect(page.getByTestId("part-rocks")).toContainText("Hidden");
+  // The painting without it: the ground under it as if it weren't there
+  const diff = await page.evaluate(async () => {
+    const w = window as any, doc = w.__dgCourse(), r = doc.items.find((i: any) => i.type === "rock");
+    return w.__dgMapDiff(doc, { ...doc.style, hideRocks: undefined }, doc.style, { cx: r.x, cy: r.y, rotation: 0, scale: 4, width: 120, height: 90 });
+  });
+  expect(diff).toBeGreaterThan(1);
+  // (still in the course, and in 3D)
+  expect((await rocks(page)).length).toBe(1);
+  // Reset shows it again
+  await page.getByTestId("part-reset").click();
+  await expect.poll(async () => (await course(page)).style.hideRocks).toBeUndefined();
+  await expect(page.getByTestId("part-rocks")).toContainText("Shown");
+});

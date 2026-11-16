@@ -75,8 +75,10 @@ function PathOrder({ s }: { s: MapStyle }) {
   );
 }
 
-type Part = LookPart | "light" | "elevation";
-const PART_LABEL: Record<Part, string> = { trees: "Trees", grass: "Grass", fairway: "Fairways", paths: "Paths and roads", water: "Water", light: "Light and shadow", elevation: "Elevation" };
+type Part = LookPart | "rocks" | "light" | "elevation";
+const PART_LABEL: Record<Part, string> = { trees: "Trees", grass: "Grass", fairway: "Fairways", paths: "Paths and roads", water: "Water", rocks: "Rocks", light: "Light and shadow", elevation: "Elevation" };
+/** Parts with no look of their own to pick, only shown or hidden. */
+const ownLook = (p: Part): p is LookPart => p !== "light" && p !== "elevation" && p !== "rocks";
 const PARTS = Object.keys(PART_LABEL) as Part[];
 /** The light's own settings and its tone: changed when set to anything but the course's default. */
 const DEF = defaultStyle();
@@ -154,6 +156,8 @@ export const openLookPart = (p: Part) => { wanted = p; };
 export function MapLookPanel() {
   const s = useCourse(c => c.doc.style);
   const hasBrush = useCourse(c => c.doc.items.some(i => i.type === "area" && brushOnly(i)));
+  // (Rocks listed only where the course has some)
+  const hasRocks = useCourse(c => !!c.doc.style.hideRocks || c.doc.items.some(i => i.type === "rock" || (i.type === "area" && i.kind === "rock")));
   // (the trees open to start with: the part most changed)
   const [open, setOpen] = useState<Part | null>(() => { const w = wanted; wanted = null; return w ?? "trees"; });
   // (asked for by search or the 3D view's light link while it's up)
@@ -172,17 +176,18 @@ export function MapLookPanel() {
   const resetPart = (part: Part) => {
     if (part === "light") { setStyle(LIGHT_RESET); return; }
     if (part === "elevation") { setStyle(ELEVATION_RESET); return; }
+    if (part === "rocks") { setStyle({ hideRocks: undefined }); return; }
     const own = { ...s.lookParts };
     delete own[part];
     setStyle({ lookParts: Object.keys(own).length ? own : undefined, ...(part === "paths" ? { pathOrder: undefined } : {}), ...(part === "trees" ? WOODS_RESET : {}) });
   };
   const pickTheme = (id: string) => setStyle({ mapLook: id === "classic" ? undefined : (id as MapStyle["mapLook"]), lookParts: undefined, lightMode: undefined, goldenSun: undefined });
   // (every part back to the style's own, in one undo step)
-  const resetAll = () => setStyle({ ...LIGHT_RESET, ...ELEVATION_RESET, ...WOODS_RESET, lookParts: undefined, pathOrder: undefined });
-  const current = (p: Part) => (p === "elevation" ? ELEVATION_LOOKS.find(l => l.id === relief)!.label : p === "light" ? LIGHT_MODES.find(m => m.id === lt.mode)!.label : (PART_CHOICES[p] as { id: string; label: string }[]).find(c => c.id === parts[p].style)?.label ?? "");
+  const resetAll = () => setStyle({ ...LIGHT_RESET, ...ELEVATION_RESET, ...WOODS_RESET, lookParts: undefined, pathOrder: undefined, hideRocks: undefined });
+  const current = (p: Part) => (p === "elevation" ? ELEVATION_LOOKS.find(l => l.id === relief)!.label : p === "light" ? LIGHT_MODES.find(m => m.id === lt.mode)!.label : p === "rocks" ? (s.hideRocks ? "Hidden" : "Shown") : (PART_CHOICES[p] as { id: string; label: string }[]).find(c => c.id === parts[p].style)?.label ?? "");
   const lightChanged = !!s.lightMode || s.goldenSun !== undefined || s.sunFrom !== undefined || LIGHT_KEYS.some(k => s[k] !== undefined && s[k] !== DEF[k]);
   const woodsChanged = s.conifers !== undefined || s.autumnVivid !== undefined || !!s.treeKinds || (s.treeCover ?? DEF.treeCover) !== DEF.treeCover || (s.forest ?? DEF.forest) !== DEF.forest;
-  const changed = (p: Part) => (p === "elevation" ? relief !== "shaded" || (s.reliefScale ?? 1) !== 1 : p === "light" ? lightChanged : partChanged(s, p) || (p === "paths" && !!s.pathOrder) || (p === "trees" && woodsChanged));
+  const changed = (p: Part) => (p === "elevation" ? relief !== "shaded" || (s.reliefScale ?? 1) !== 1 : p === "light" ? lightChanged : p === "rocks" ? !!s.hideRocks : partChanged(s, p) || (p === "paths" && !!s.pathOrder) || (p === "trees" && woodsChanged));
   // (the style card says Changed when any part shows its dot; Reset all takes every dot away)
   const mixed = PARTS.some(changed);
   const base = import.meta.env.BASE_URL;
@@ -208,16 +213,16 @@ export function MapLookPanel() {
         {mixed && <button className="text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1 touch:py-2.5 touch:-my-2.5" onClick={resetAll} title="Every part back to the map style's own"><RotateCcw size={12} /> Reset all</button>}
       </div>
       <div className="rounded-[16px] bg-white/[0.06] overflow-hidden">
-      {PARTS.map(p => {
+      {PARTS.filter(p => p !== "rocks" || hasRocks).map(p => {
         const isOpen = open === p;
-        const pic = p === "elevation" ? `${base}relief/${relief}.jpg` : p === "light" ? `${base}parts/light-${lt.mode}.jpg` : `${base}parts/${p}-${parts[p].style}.jpg`;
+        const pic = p === "elevation" ? `${base}relief/${relief}.jpg` : p === "light" ? `${base}parts/light-${lt.mode}.jpg` : p === "rocks" ? `${base}parts/rocks-${s.hideRocks ? "hidden" : "shown"}.jpg` : `${base}parts/${p}-${parts[p].style}.jpg`;
         return (
           <div key={p} className="relative before:absolute before:left-[52px] before:right-0 before:top-0 before:h-px before:bg-white/[0.07] first:before:hidden" data-testid={`look-part-${p}`}>
             <button className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-white/[0.04]" aria-expanded={isOpen} onClick={e => { keep(e.currentTarget); setOpen(isOpen ? null : p); }} data-testid={`part-${p}`}>
               <img src={pic} alt="" className="w-7 h-7 rounded-[8px] object-cover ring-1 ring-white/10" draggable={false} />
               <span className="text-[13.5px] font-medium text-zinc-100 flex-1">{PART_LABEL[p]}</span>
               {changed(p) && <span className="w-1.5 h-1.5 rounded-full bg-orange-400" aria-label="Changed" />}
-              {p !== "light" && p !== "elevation" && <span className="w-3 h-3 rounded-[4px] ring-1 ring-white/20" style={{ background: s[COLOR_FIELD[p]] }} />}
+              {ownLook(p) && <span className="w-3 h-3 rounded-[4px] ring-1 ring-white/20" style={{ background: s[COLOR_FIELD[p]] }} />}
               <span className="text-[12.5px] text-zinc-400">{current(p)}</span>
               <ChevronRight size={15} className={`text-zinc-500 transition-transform ${isOpen ? "rotate-90" : ""}`} />
             </button>
@@ -230,6 +235,14 @@ export function MapLookPanel() {
                     {/* (the Contours look draws its own lines) */}
                     {relief !== "contours" && <Toggle label="Contour lines" checked={s.contours} onChange={v => setStyle({ contours: v })} />}
                   </div>
+                ) : p === "rocks" ? (
+                  <>
+                    <Thumbs label="Rocks" testid="rocks-on-map" items={[
+                      { id: "shown", label: "Shown", img: `${base}parts/rocks-shown.jpg`, on: !s.hideRocks, pick: () => setStyle({ hideRocks: undefined }) },
+                      { id: "hidden", label: "Hidden", img: `${base}parts/rocks-hidden.jpg`, on: !!s.hideRocks, pick: () => setStyle({ hideRocks: true }) }
+                    ]} />
+                    <p className="text-[11.5px] text-zinc-400 leading-snug">Boulders, walls and rock surfaces. They stay in 3D.</p>
+                  </>
                 ) : p === "light" ? (
                   <>
                     <Thumbs label="Light" items={LIGHT_MODES.map(m => ({ id: m.id, label: m.label, img: `${base}parts/light-${m.id}.jpg`, on: lt.mode === m.id, pick: () => setStyle({ lightMode: m.id }) }))} />

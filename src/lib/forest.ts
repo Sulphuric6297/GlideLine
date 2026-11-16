@@ -524,7 +524,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     } else if (i.type === "amenity") {
       disc(CLEAR, i, 10);
     } else if (i.type === "rock") {
-      disc(CLEAR, i, Math.max(i.length, i.width) * 0.45 + 2);
+      if (!s.hideRocks) disc(CLEAR, i, Math.max(i.length, i.width) * 0.45 + 2);
     } else if (i.type === "area") {
       const a = i as AreaItem;
       if (a.kind === "fairway" || a.kind === "green") { poly(FAIR, a.points); poly(CLEAR, a.points); if (a.kind === "green") poly(MIDDLE, a.points); }
@@ -532,7 +532,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       else if (a.kind === "parking") { poly(ROAD, a.points); poly(CLEAR, a.points); }
       else if (a.kind === "building") { poly(BUILDING, a.points); poly(CLEAR, a.points); }
       else if (a.kind === "sand") { poly(SAND, a.points); poly(CLEAR, a.points); }
-      else if (a.kind === "rock") poly(CLEAR, a.points);
+      else if (a.kind === "rock") { if (!s.hideRocks) poly(CLEAR, a.points); }
       else if (a.kind === "rough") { poly(TALL, a.points); poly(CLEAR, a.points); }
       else if (a.kind === "nogo") poly(CLEAR, a.points);
       // (a field, court or play area: mown, no treetops over it; the map draws it on top)
@@ -593,7 +593,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     }
   }
   // (the masks depend on the course and the frame, not on the look: a look changed reuses them)
-  const maskKey = JSON.stringify([view, density, paintedFrom(doc), stats.map(st => [st.holeId, st.line, st.complete]), s.nextTee, s.walkWidth, doc.canvas, !!opts.under]);
+  const maskKey = JSON.stringify([view, density, paintedFrom(doc), stats.map(st => [st.holeId, st.line, st.complete]), s.nextTee, s.walkWidth, !!s.hideRocks, doc.canvas, !!opts.under]);
   const store: MaskStore = maskStores.get(maskKey) ?? { key: maskKey, reads: new Map() };
   maskStores.delete(maskKey);
   maskStores.set(maskKey, store);
@@ -1124,7 +1124,9 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
   // Rocks: their real shapes (the same as in 3D) seen from above, each pixel's height on them, and
   // which rock it is; they stand up out of the ground like built things and cast shadows
   const rockTop = new Float32Array(W * H), rockOf = new Uint16Array(W * H), rocks: RockItem[] = [];
-  for (const r of opts.under ? [] : (doc.items.filter(i => i.type === "rock") as RockItem[])) {
+  // (left off the map when the style hides them, and under the 3D view's own rocks)
+  const noRocks = !!opts.under || !!s.hideRocks;
+  for (const r of noRocks ? [] : (doc.items.filter(i => i.type === "rock") as RockItem[])) {
     const c0 = toScreen(r), reach = (Math.hypot(r.length, r.width) / 2 + 1) * k;
     if (c0.x < -reach || c0.y < -reach || c0.x > W + reach || c0.y > H + reach || reach < 1) continue;
     rocks.push(r);
@@ -1158,7 +1160,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
   }
   for (let i = 0; i < W * H; i++) if (rockTop[i] > 0) raise(i % W, (i / W) | 0, rockTop[i]);
   // Rock surfaces: which one each pixel is in (its edge ragged, as rock breaks through turf)
-  const rockAreas = (opts.under ? [] : (doc.items.filter(i => i.type === "area" && i.kind === "rock") as AreaItem[])).map(a => ({ ...a, points: areaPath(a) }));
+  const rockAreas = (noRocks ? [] : (doc.items.filter(i => i.type === "area" && i.kind === "rock") as AreaItem[])).map(a => ({ ...a, points: areaPath(a) }));
   const rockIn = new Uint8Array(rockAreas.length ? W * H : 0), rockDeep = new Float32Array(rockAreas.length ? W * H : 0);
   rockAreas.forEach((ar, j) => {
     const b = boundsOf(ar.points.map(toScreen)), ring = [...ar.points, ar.points[0]], m = Math.ceil(2 * k) + 2;

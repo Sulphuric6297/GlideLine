@@ -634,6 +634,8 @@ export interface MapStyle {
   reliefScale?: number;
   /** How the painted map draws the ground's shape when hill shading is on (unset: shaded). */
   reliefLook?: ReliefLook;
+  /** Rocks and rock surfaces left off the painted map (they stay in 3D). */
+  hideRocks?: boolean;
   /** Steep ground shows bare rock (as a cliff face) from this slope up, degrees (unset: 40; 90: none). */
   steepRock?: number;
   /** Where the legend (and hole table) panel sits on the course map: its top-left corner as a
