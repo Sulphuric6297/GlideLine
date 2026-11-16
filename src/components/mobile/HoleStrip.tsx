@@ -8,16 +8,16 @@ import { useRef, type ReactNode } from "react";
 import { Brush, Navigation, Plus, RotateCw, Scissors, Video } from "lucide-react";
 import { editFlyover } from "../FlyoverSettings";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint } from "../../constants";
-import { holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
+import { bendOwner, holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
 import { holeStats } from "../../lib/holeStats";
 import { MARKED_FIELDS, fieldKindOf, isBallField } from "../../lib/fields";
 import { structureHeight, structureWidth } from "../../lib/structures";
 import { standShape } from "../../lib/treeMix";
 import { fmtDist } from "../../lib/units";
 import { addHoleOb, nextHomeCorner, obChoiceOf, pinsFull, select, setFieldKind, setFieldPlay, setLineKind, setPinPosition, setTeeLevel, shareBasket, startAnotherPin, startAnotherTee, startHoleToBasket, teesFull } from "../../state/actions";
-import { updateHole, updateItem, useCourse, useEditor } from "../../state/course";
+import { setBends, updateHole, updateItem, useCourse, useEditor } from "../../state/course";
 import type { AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseItem, FieldKind, Hole, LabelItem, LineItem, LineKind, MandoItem, PathSurface, StructureItem, StructureKind, TeeItem, TeeSurface, TreeItem } from "../../types";
-import { BRUSH_LEVELS, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
+import { BRUSH_LEVELS, useTeeOwn, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
 import { HoleChips } from "../ApplyToHoles";
 import { OnSiteButton } from "../OnSite";
 import { useTouch } from "../useLayout";
@@ -90,6 +90,8 @@ const cap = (s: string) => `${s[0].toUpperCase()}${s.slice(1)}`;
 export function useHoleSettings(hole: Hole): BarSetting[] {
   const doc = useCourse(s => s.doc);
   const s = holeStats(doc, hole);
+  // (the played tee's own bends, when it has them, are the ones its line's rows change)
+  const owner = bendOwner(doc, hole, s.teeId);
   const u = doc.units;
   const tees = holeTees(doc, hole.id);
   const pins = holeBaskets(doc, hole.id);
@@ -114,9 +116,9 @@ export function useHoleSettings(hole: Hole): BarSetting[] {
         {hole.fairway && (hole.fairwayShape || hole.fairwayShift?.some(v => Math.abs(v) > 1e-3)) && <ActRow label="Even width" hint="One width all along, on the line" onClick={() => set({ fairwayShape: undefined, fairwayShift: undefined, fairwayStations: undefined })} />}
         {s.complete && <>
           <ActRow label="Plot the line" hint="Tap where it goes, turn by turn" onClick={() => useEditor.getState().set({ plotLine: hole.id, tool: "select" })} testid="plot-line" />
-          <ActRow label="Bend left" onClick={() => set({ doglegs: bendHole(s.line, -1) })} testid="bend-left" />
-          <ActRow label="Bend right" onClick={() => set({ doglegs: bendHole(s.line, 1) })} testid="bend-right" />
-          {hole.doglegs.length > 0 && <ActRow label="Straighten" onClick={() => set({ doglegs: [] })} />}
+          <ActRow label="Bend left" onClick={() => setBends(hole.id, owner?.id, bendHole(s.line, -1))} testid="bend-left" />
+          <ActRow label="Bend right" onClick={() => setBends(hole.id, owner?.id, bendHole(s.line, 1))} testid="bend-right" />
+          {(owner?.doglegs ?? hole.doglegs).length > 0 && <ActRow label="Straighten" onClick={() => setBends(hole.id, owner?.id, [])} />}
         </>}
       </div>
     ) },
@@ -172,6 +174,7 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
   const set = (patch: Record<string, unknown>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
   const live = (patch: Record<string, unknown>) => set(patch, false);
   const done = () => useCourse.getState().commit();
+  const own = useTeeOwn(item.type === "tee" ? item : null);
   const deg = (v: number) => `${Math.round(((v % 360) + 360) % 360)}°`;
   const out: BarSetting[] = [];
   const dial = (id: string, name: string, value: ReactNode, d: Parameters<typeof Dial>[0]) => out.push({ id, name, value, wide: true, control: <Dial {...d} /> });
@@ -203,11 +206,16 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     dial("length", "Length", fmtSize(t.padLength, u), { label: "Pad length", value: t.padLength, min: 4, max: 30, step: 0.5, format: v => `${fmtSize(v, u)} long`, onChange: v => live({ padLength: v }), onDone: done });
     dial("width", "Width", fmtSize(t.padWidth, u), { label: "Pad width", value: t.padWidth, min: 2, max: 20, step: 0.5, format: v => `${fmtSize(v, u)} wide`, onChange: v => live({ padWidth: v }), onDone: done });
     out.push({ id: "surface", name: "Surface", value: TEE_SURFACES[t.surface].label, control: <ChipPick label="Tee surface" value={t.surface} onChange={(v: TeeSurface) => set({ surface: v })} options={(Object.keys(TEE_SURFACES) as TeeSurface[]).map(k => ({ value: k, label: TEE_SURFACES[k].label, color: TEE_SURFACES[k].color }))} /> });
+    if (own) {
+      out.push({ id: "bends", name: "Bends", value: own.own ? "Its own" : "The hole's", control: <Segmented label="Bends" value={own.own ? "own" : "hole"} onChange={v => own.setOwn(v === "own")} options={own.bendOptions} /> });
+      out.push({ id: "teepar", name: "Par", value: t.par ?? own.parSaid, control: <Segmented label="Par from this tee" value={t.par ?? 0} onChange={own.setPar} options={own.parOptions} /> });
+    }
     if (t.aimFixed) out.push({ id: "aim", name: "Facing", value: "Down the hole", icon: <Navigation size={16} />, run: () => set({ aimFixed: false }) });
   } else if (item.type === "basket") {
     const b = item as BasketItem;
     out.push({ id: "pin", name: "Pin", value: b.position, control: <Segmented label="Pin position" value={b.position} onChange={v => setPinPosition(b.id, v)} options={PIN_POSITIONS.map(p => ({ value: p, label: `Pin ${p}` }))} /> });
     dial("raised", "Raised", b.raised ? fmtSize(b.raised, u) : "No", { label: "Raised above the ground", value: b.raised ?? 0, min: 0, max: 30, step: 0.5, format: v => (v ? `${fmtSize(v, u)} up` : "On the ground"), onChange: v => live({ raised: v || undefined }), onDone: done });
+    out.push({ id: "model", name: "Model", value: b.model ? (b.model.length > 14 ? `${b.model.slice(0, 13)}…` : b.model) : "None", wide: true, control: <div className="p-1.5"><TextInput label="Basket model" testid="basket-model" value={b.model ?? ""} placeholder="Maker and model" onChange={v => live({ model: v.trim() ? v : undefined })} onDone={done} /></div> });
   } else if (item.type === "mando" || item.type === "amenity" || item.type === "dropzone" || item.type === "label") {
     if (item.type === "label") {
       const l = item as LabelItem;

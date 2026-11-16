@@ -1,6 +1,8 @@
 import { test as plain, expect as plainExpect, type Page } from "@playwright/test";
 import { test, expect, addHole, blankCourse, course, geoAt, SITE } from "./fixtures";
-import { fileCourse, readCsv, readGeoJson, readName, settle } from "../../src/lib/courseFile";
+import { fileCourse, readCsv, readGeoJson, readName, readSurface, settle, withFileLayouts } from "../../src/lib/courseFile";
+import { bendOwner, createBasket, createEmptyCourse, createTee, defaultLayouts, newHole, teeLines } from "../../src/lib/course";
+import { holeStats } from "../../src/lib/holeStats";
 import { holeHints, mappedCourse, osmFeaturesFrom } from "../../src/lib/geo/osm";
 import { pinPositions, teeLevels } from "../../src/lib/importSite";
 
@@ -24,7 +26,7 @@ plain("a point's name says what it is: tee or basket, which hole, which pin (pur
   plainExpect(teeLevels([{ far: 100 }, { far: 250 }])).toEqual(["red", "blue"]);
 });
 
-plain("a CSV with a row a hole and two targets, as UDisc sends it; GeoJSON with OpenStreetMap's tags (pure logic)", () => {
+plain("a CSV with a row a hole and two targets; GeoJSON with OpenStreetMap's tags (pure logic)", () => {
   const csv = readCsv([
     "Hole,Par,Tee Latitude,Tee Longitude,Target A Latitude,Target A Longitude,Target B Latitude,Target B Longitude",
     "1,3,35.2900,-83.1800,35.2905,-83.1795,35.2907,-83.1792",
@@ -143,4 +145,129 @@ test("no site yet: Find the park there opens Find your park on the file's spot",
   await page.getByTestId("course-file-find-park").click();
   await expect(page.getByTestId("site-size")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("course-file-dialog")).toBeHidden();
+});
+
+// A whole course in a file (docs/COURSE-FILES.md): three tees on a hole, each with its own line,
+// surface, par, name and notes; a basket's model; the layouts.
+const g = (e: number, n: number) => { const p = geoAt(e, n); return [p.lon, p.lat]; };
+const wholeHole = () => JSON.stringify({ type: "FeatureCollection", name: "Springfield Park", layouts: [{ layout: "Long", tee: "Blue", pin: "A" }, { layout: "Short", tee: "red", pin: "A" }], features: [
+  { type: "Feature", properties: { kind: "tee", hole: 1, tee: "Blue", surface: "turf" }, geometry: { type: "Point", coordinates: g(0, 0) } },
+  { type: "Feature", properties: { kind: "tee", hole: 1, tee: "White", surface: "dirt" }, geometry: { type: "Point", coordinates: g(40, 10) } },
+  { type: "Feature", properties: { kind: "tee", hole: 1, tee: "Red", surface: "Concrete" }, geometry: { type: "Point", coordinates: g(90, 20) } },
+  { type: "Feature", properties: { kind: "basket", hole: 1, pin: "A", model: "Springfield 24" }, geometry: { type: "Point", coordinates: g(300, 160) } },
+  { type: "Feature", properties: { kind: "hole", hole: 1, tee: "Red", par: 3 }, geometry: { type: "LineString", coordinates: [g(90, 20), g(300, 160)] } },
+  { type: "Feature", properties: { kind: "hole", hole: 1, tee: "Blue", par: 4, name: "The Long Way", notes: "OB left of the path." }, geometry: { type: "LineString", coordinates: [g(0, 0), g(160, 40), g(300, 160)] } },
+  { type: "Feature", properties: { kind: "hole", hole: 1, tee: "White", par: 4 }, geometry: { type: "LineString", coordinates: [g(40, 10), g(120, 30), g(200, 90), g(300, 160)] } }
+] });
+
+plain("GeoJSON with every part: a line from each tee, the back tee's bends and par, surfaces, a basket's model, name, notes and layouts (pure logic)", () => {
+  const file = settle(readGeoJson(wholeHole()));
+  const c = fileCourse(file);
+  plainExpect(c.holes.length).toBe(1);
+  const h = c.holes[0];
+  plainExpect(h.tees?.map(t => [t.tag, t.surface])).toEqual([["blue", "turf"], ["white", "natural"], ["red", "concrete"]]);
+  plainExpect(h.baskets?.map(b => b.model)).toEqual(["Springfield 24"]);
+  plainExpect([h.par, h.name, h.notes, h.doglegs.length]).toEqual([4, "The Long Way", "OB left of the path.", 1]);
+  // (White's line turns twice: its own; Red's goes straight to a par 3: its own line and par)
+  plainExpect(h.tees?.map(t => [t.tag, t.doglegs?.length, t.par])).toEqual([["blue", undefined, undefined], ["white", 2, undefined], ["red", 0, 3]]);
+  plainExpect(file.layouts).toEqual([{ name: "Long", tee: "blue", pin: "A" }, { name: "Short", tee: "red", pin: "A" }]);
+  // (the layout every course starts with gives way to the file's; one of the same name is updated)
+  const mine = withFileLayouts(defaultLayouts(), "layout-main", file.layouts);
+  plainExpect(mine.layouts.map(l => l.name)).toEqual(["Long", "Short"]);
+  plainExpect(mine.activeLayout).toBe(mine.layouts[0].id);
+  const kept = withFileLayouts([{ id: "x", name: "short", tee: "white", pin: "B" }], "x", file.layouts);
+  plainExpect(kept.layouts.map(l => [l.name, l.tee, l.pin])).toEqual([["short", "red", "A"], ["Long", "blue", "A"]]);
+  plainExpect([readSurface("artificial_turf"), readSurface("Rubber mat"), readSurface("paving_stones"), readSurface("Grass or dirt"), readSurface("")]).toEqual(["turf", "rubber", "pavers", "natural", undefined]);
+});
+
+plain("CSV with a row a point: bends in order make each tee's line; a layout row; the hole list GlideLine Studio exports reads back (pure logic)", () => {
+  const ll = (e: number, n: number) => { const p = geoAt(e, n); return `${p.lat.toFixed(7)},${p.lon.toFixed(7)}`; };
+  const csv = readCsv([
+    "hole,kind,tee,pin,surface,par,hole_name,hole_notes,model,layout,lat,lon",
+    `1,tee,blue,,rubber,4,The Bend,Mando right of the oak.,,,${ll(0, 0)}`,
+    `1,tee,red,,gravel,,,,,,${ll(60, 30)}`,
+    `1,basket,,A,,,,,Springfield 24,,${ll(300, 160)}`,
+    `1,basket,,B,,,,,,,${ll(320, 120)}`,
+    `1,bend,blue,,,,,,,,${ll(120, 20)}`,
+    `1,bend,blue,,,,,,,,${ll(220, 80)}`,
+    `,layout,blue,B,,,,,,Long to B,,`
+  ].join("\n"));
+  const c = fileCourse(settle(csv));
+  const h = c.holes[0];
+  plainExpect([h.par, h.name, h.notes, h.doglegs.length]).toEqual([4, "The Bend", "Mando right of the oak.", 2]);
+  plainExpect(h.tees?.map(t => [t.tag, t.surface])).toEqual([["blue", "rubber"], ["red", "gravel"]]);
+  plainExpect(h.baskets?.map(b => [b.tag, b.model])).toEqual([["A", "Springfield 24"], ["B", undefined]]);
+  plainExpect(csv.layouts).toEqual([{ name: "Long to B", tee: "blue", pin: "B" }]);
+  // The app's own hole list: a row a hole and layout, the same tee and pin on each layout's row
+  const list = readCsv([
+    "hole,name,layout,tee,par,length_ft,tee_lat,tee_lon,basket_pin,basket_lat,basket_lon,notes",
+    `1,The Bend,Long,Blue,4,320,${ll(0, 0)},A,${ll(300, 160)},OB left.`,
+    `1,The Bend,Short,Red,3,250,${ll(60, 30)},A,${ll(300, 160)},OB left.`
+  ].join("\n"));
+  const l = fileCourse(settle(list)).holes[0];
+  plainExpect([l.name, l.notes, l.par, l.tees?.map(t => t.tag), l.baskets?.length]).toEqual(["The Bend", "OB left.", 4, ["blue", "red"], 1]);
+});
+
+test("a whole course file brought in: tee surfaces, a basket's model, the hole's name, notes and par, and the layouts", async ({ page }) => {
+  await blankCourse(page);
+  await page.keyboard.press("Escape");
+  await siteHere(page);
+  await open(page, "springfield.geojson", wholeHole());
+  await expect(page.getByTestId("course-file-summary")).toContainText("1 with more than one tee. Layouts: Long, Short.");
+  await page.getByTestId("course-file-bring").click();
+  await expect(page.getByTestId("course-file-dialog")).toBeHidden();
+  const c = await course(page);
+  const h = c.holes[0];
+  plainExpect([h.name, h.notes, h.par, h.doglegs.length]).toEqual(["The Long Way", "OB left of the path.", 4, 1]);
+  plainExpect(c.items.filter((i: any) => i.type === "tee").map((i: any) => [i.level, i.surface]).sort()).toEqual([["blue", "turf"], ["red", "concrete"], ["white", "natural"]]);
+  plainExpect(c.items.find((i: any) => i.type === "basket").model).toBe("Springfield 24");
+  const tee = (level: string) => c.items.find((i: any) => i.type === "tee" && i.level === level);
+  plainExpect([tee("blue").doglegs, tee("white").doglegs?.length, tee("red").doglegs, tee("red").par]).toEqual([undefined, 2, [], 3]);
+  plainExpect(c.layouts.map((l: any) => [l.name, l.tee, l.pin])).toEqual([["Long", "blue", "A"], ["Short", "red", "A"]]);
+  plainExpect(c.activeLayout).toBe(c.layouts[0].id);
+  // One undo step takes it all back, layouts too
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await course(page)).layouts.map((l: any) => l.name)).toEqual(["Main"]);
+});
+
+plain("a tee's own bends and par: its line, its fairway, the par a layout playing it gets, and whose bends editing changes (pure logic)", () => {
+  const hole = newHole({ doglegs: [{ x: 100, y: 0 }], par: 4 });
+  const blue = createTee(hole.id, { x: 0, y: 0 }, "blue");
+  const red = { ...createTee(hole.id, { x: 60, y: 40 }, "red"), doglegs: [], par: 3 };
+  const doc = { ...createEmptyCourse(), holes: [hole], items: [blue, red, createBasket(hole.id, { x: 200, y: 100 })] };
+  const play = (tee: "blue" | "red") => holeStats(doc, hole, { id: tee, name: tee, tee, pin: "A" });
+  plainExpect([play("blue").par, play("red").par]).toEqual([4, 3]);
+  plainExpect([play("blue").line.length, play("red").line.length]).toEqual([3, 2]);
+  // (the red tee's fairway runs straight, the blue's through the hole's turn)
+  plainExpect(teeLines(doc, hole, play("blue").line, blue.id).map(l => l.length)).toEqual([3, 2]);
+  plainExpect([bendOwner(doc, hole, red.id)?.id, bendOwner(doc, hole, blue.id)]).toEqual([red.id, null]);
+});
+
+test("a tee's own bends and par, set in its panel: the line and par follow, and Same as the hole puts them back", async ({ page }) => {
+  await blankCourse(page);
+  const hole = await addHole(page, { x: 300, y: 300 }, { x: 700, y: 300 });
+  await page.evaluate(id => (window as any).__dgActions.hole(id, { doglegs: [{ x: 500, y: 200 }] }), hole.id);
+  const tee = (await course(page)).items.find((i: any) => i.type === "tee" && i.holeId === hole.id);
+  await page.evaluate(id => { (window as any).__dgEditor().set({ tool: "select" }); (window as any).__dgActions.select(id); }, tee.id);
+  await page.getByRole("radiogroup", { name: "Bends" }).getByRole("radio", { name: "Its own" }).click();
+  await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === tee.id).doglegs).toEqual([{ x: 500, y: 200 }]);
+  await page.getByRole("radiogroup", { name: "Par from this tee" }).getByRole("radio", { name: "5" }).click();
+  await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === tee.id).par).toBe(5);
+  // (the hole's turn moved: this tee keeps its own)
+  await page.evaluate(id => (window as any).__dgActions.hole(id, { doglegs: [{ x: 500, y: 400 }] }), hole.id);
+  plainExpect((await course(page)).items.find((i: any) => i.id === tee.id).doglegs).toEqual([{ x: 500, y: 200 }]);
+  await page.getByRole("radiogroup", { name: "Bends" }).getByRole("radio", { name: "The hole's" }).click();
+  await page.getByRole("radiogroup", { name: "Par from this tee" }).getByRole("radio", { name: /^(Hole's|Auto) / }).click();
+  await expect.poll(async () => { const t = (await course(page)).items.find((i: any) => i.id === tee.id); return [t.doglegs, t.par]; }).toEqual([undefined, undefined]);
+});
+
+plain("a tee past one of the hole's turns skips it: its line, length and the way its pad faces (pure logic)", () => {
+  const hole = newHole({ doglegs: [{ x: 100, y: 0 }, { x: 200, y: 100 }] });
+  const blue = createTee(hole.id, { x: 0, y: 0 }, "blue");
+  const red = createTee(hole.id, { x: 150, y: 40 }, "red");
+  const doc = { ...createEmptyCourse(), holes: [hole], items: [blue, red, createBasket(hole.id, { x: 300, y: 100 })] };
+  const play = (tee: "blue" | "red") => holeStats(doc, hole, { id: tee, name: tee, tee, pin: "A" });
+  plainExpect(play("blue").line.length).toBe(4);
+  plainExpect(play("red").line.map(p => [p.x, p.y])).toEqual([[150, 40], [200, 100], [300, 100]]);
+  plainExpect(play("red").length).toBeLessThan(play("blue").length);
 });

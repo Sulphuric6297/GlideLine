@@ -518,19 +518,27 @@ export const basketFor = (doc: Pick<CourseDoc, "items">, holeId: string, pin?: P
 
 export const activeLayout = (doc: Pick<CourseDoc, "layouts" | "activeLayout">) => doc.layouts.find(l => l.id === doc.activeLayout) ?? doc.layouts[0];
 
-/** The throw line of a hole: tee, its doglegs, basket. */
-export const throwLine = (hole: Hole, tee: P | null, basket: P | null): P[] => {
+/** The throw line of a hole: tee, its doglegs (the tee's own, where it has them, else the hole's
+ * still ahead of it), basket. */
+export const throwLine = (hole: Hole, tee: (P & { doglegs?: P[] }) | null, basket: P | null): P[] => {
   const pts: P[] = [];
   if (tee) pts.push({ x: tee.x, y: tee.y });
-  pts.push(...hole.doglegs.map(p => ({ ...p })));
+  pts.push(...(tee?.doglegs ?? (tee && basket ? turnsAhead(hole, tee, basket) : hole.doglegs)).map(p => ({ ...p })));
   if (basket) pts.push({ x: basket.x, y: basket.y });
   return pts;
 };
 
+/** The hole's turns still ahead of a tee (a short tee ahead of the first turn leaves it out). */
+export const turnsAhead = (hole: Hole, tee: P, basket: P): P[] => {
+  let turns = hole.doglegs;
+  while (turns.length && dist(tee, turns[1] ?? basket) < dist(turns[0], turns[1] ?? basket)) turns = turns.slice(1);
+  return turns;
+};
+
 /**
  * A hole's lines of play from each of its tees (the hole's own first) to its basket, through the
- * turns still ahead of each tee: every tee has a fairway of its own (where they meet, they make
- * one). `line` is the hole's main line, tee to basket.
+ * tee's own turns, or else the hole's turns still ahead of it: every tee has a fairway of its own
+ * (where they meet, they make one). `line` is the hole's main line, tee to basket.
  */
 export const teeLines = (doc: Pick<CourseDoc, "items">, hole: Hole, line: P[], mainTeeId?: string | null): P[][] => {
   if (line.length < 2) return [];
@@ -538,12 +546,17 @@ export const teeLines = (doc: Pick<CourseDoc, "items">, hole: Hole, line: P[], m
   const out: P[][] = [line];
   for (const tee of holeTees(doc, hole.id)) {
     if (tee.id === mainTeeId || dist(tee, line[0]) < 1) continue;
-    // (turns the tee is already past are left out: a short tee ahead of the first turn)
-    let turns = hole.doglegs;
-    while (turns.length && dist(tee, turns[1] ?? basket) < dist(turns[0], turns[1] ?? basket)) turns = turns.slice(1);
+    const turns = tee.doglegs ?? turnsAhead(hole, tee, basket);
     out.push([{ x: tee.x, y: tee.y }, ...turns.map(p => ({ ...p })), { ...basket }]);
   }
   return out;
+};
+
+/** Whose bends editing a hole's line changes: the tee given (the one picked, or the one the layout
+ * plays) when it has bends of its own; null: the hole's. */
+export const bendOwner = (doc: Pick<CourseDoc, "items">, hole: Hole, teeId?: string | null): TeeItem | null => {
+  const t = teeId ? doc.items.find(i => i.id === teeId) : undefined;
+  return t?.type === "tee" && t.holeId === hole.id && t.doglegs ? t : null;
 };
 
 /** The main throw line (the layout's tee and pin). */
@@ -617,7 +630,8 @@ export const teeAim = (doc: Pick<CourseDoc, "items" | "holes">, tee: TeeItem) =>
   if (tee.aimFixed) return tee.rotation;
   const hole = doc.holes.find(h => h.id === tee.holeId);
   if (!hole) return tee.rotation;
-  const next = hole.doglegs[0] ?? basketFor(doc, hole.id);
+  const basket = basketFor(doc, hole.id);
+  const next = (tee.doglegs ?? (basket ? turnsAhead(hole, tee, basket) : hole.doglegs))[0] ?? basket;
   if (!next) return tee.rotation;
   return (Math.atan2(next.y - tee.y, next.x - tee.x) * 180) / Math.PI;
 };
@@ -746,6 +760,7 @@ export const movedGroup = (doc: Pick<CourseDoc, "items" | "holes">, ids: string[
       if (!set.has(i.id) || i.locked) return i;
       const moved = { ...i, x: i.x + dx, y: i.y + dy } as CourseItem;
       if (moved.type === "area" || moved.type === "line" || moved.type === "structure") moved.points = moved.points.map(shift);
+      if (moved.type === "tee" && moved.doglegs && whole.has(moved.holeId)) moved.doglegs = moved.doglegs.map(shift);
       return moved;
     }),
     holes: doc.holes.map(h => (whole.has(h.id) ? { ...h, doglegs: h.doglegs.map(shift) } : h))

@@ -1,6 +1,6 @@
 // The open course (the saved document) with undo and redo, and the editor's own state.
 import { create } from "zustand";
-import type { CourseDoc, CourseItem, Hole, TeeLevel, ToolMode, AreaKind, LineKind, AmenityKind, TreeKind, DrawShape, StructureKind, FieldKind, FieldPart } from "../types";
+import type { CourseDoc, CourseItem, Hole, P, TeeLevel, ToolMode, AreaKind, LineKind, AmenityKind, TreeKind, DrawShape, StructureKind, FieldKind, FieldPart } from "../types";
 import { byNumber, createEmptyCourse, holeNumber, holeNumbers } from "../lib/course";
 
 const HISTORY = 120;
@@ -76,6 +76,10 @@ export const addItems = (items: CourseItem[]) => changeDoc(d => ({ items: [...d.
 
 export const updateHole = (id: string, patch: Partial<Hole>, history = true) =>
   changeDoc(d => ({ holes: d.holes.map(h => (h.id === id ? { ...h, ...patch } : h)) }), history);
+
+/** A hole's line's turns: a tee's own (`teeId`: see bendOwner), else the hole's. */
+export const setBends = (holeId: string, teeId: string | null | undefined, doglegs: P[], history = true) =>
+  teeId ? updateItem(teeId, { doglegs } as Partial<CourseItem>, history) : updateHole(holeId, { doglegs }, history);
 
 /** Removes items; removing a hole's last tee or basket keeps the hole (it shows as unfinished). */
 export const removeItems = (ids: string[]) => {

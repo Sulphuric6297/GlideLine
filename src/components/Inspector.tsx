@@ -7,7 +7,7 @@ import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES } from "../constants";
-import { areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries, AMENITY_ROLE } from "../lib/course";
+import { activeLayout, basketFor, bendOwner, turnsAhead, areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries, AMENITY_ROLE } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
 import { BUILDING_LOOKS, boxOutline, gazeboOutline, structureHeight, structurePath, structureRoof, structureWidth, turnShape } from "../lib/structures";
 import { amenitySymbol, STRUCTURE_INK, structureLegend, symbolSvg } from "../lib/symbols";
@@ -20,10 +20,10 @@ import { toast } from "../state/toast";
 import { turnable } from "../lib/turn";
 import { conifersOf } from "../lib/landscapes";
 import { addHoleOb, deleteSelection, duplicateSelection, forgetNewLabel, isNewLabel, nextHomeCorner, obChoiceOf, pinsFull, setCourtCount, setFieldKind, setFieldLeague, setFieldPart, setFieldPlay, setLineKind, setObChoice, setPinPosition, startAnotherPin, startAnotherTee, startHoleToBasket, select, setTeeLevel, shareBasket, teesFull, type ObChoice } from "../state/actions";
-import { changeDoc, setHoleNumber, updateHole, updateItem, useCourse, useEditor } from "../state/course";
+import { changeDoc, setBends, setHoleNumber, updateHole, updateItem, useCourse, useEditor } from "../state/course";
 import { standShape } from "../lib/treeMix";
 import { SPECIES } from "../three/ezShapes";
-import type { AmenityKind, AreaItem, CourseDoc, CourseItem, FenceStyle, FieldKind, FieldLeague, FieldPart, Hole, LabelItem, LineItem, LineKind, P, PathSurface, PinPosition, RoofKind, StructureItem, StructureKind, TeeLevel, TeeSurface } from "../types";
+import type { TeeItem, AmenityKind, AreaItem, CourseDoc, CourseItem, FenceStyle, FieldKind, FieldLeague, FieldPart, Hole, LabelItem, LineItem, LineKind, P, PathSurface, PinPosition, RoofKind, StructureItem, StructureKind, TeeLevel, TeeSurface } from "../types";
 import { fieldInks, fieldPlan, LEAGUE_ORDER, LEAGUES } from "../lib/fieldPlan";
 import { ElevationProfile } from "./ElevationProfile";
 import { TreeSettings } from "./TreeSettings";
@@ -181,6 +181,46 @@ const GrowButton = ({ mark, title, onClick, testid }: { mark: ReactNode; title: 
 /** How many times, in words: "once", "twice", "3 times". */
 const times = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} times`);
 
+/** A tee's own bends and par, or the hole's: what the tee's panel (and its bar on a phone) offers. */
+export function useTeeOwn(tee: TeeItem | null) {
+  const doc = useCourse(s => s.doc);
+  const hole = tee ? doc.holes.find(h => h.id === tee.holeId) : undefined;
+  if (!tee) return null;
+  if (!hole) return null;
+  const pin = activeLayout(doc)?.pin ?? "A";
+  // (the par it would have without its own: the hole's, or worked out along its line)
+  const st = holeStats(doc, hole, { id: "tee", name: "", tee: tee.level, pin });
+  const holePar = hole.par ?? st.parAuto;
+  const basket = basketFor(doc, hole.id, pin);
+  return {
+    holePar,
+    // (the hole's par set by hand, or worked out along this tee's line)
+    parSaid: hole.par ? `${hole.par} · hole` : `${holePar} · auto`,
+    own: !!tee.doglegs,
+    // (its own bends start as the ones it plays now, the hole's still ahead of it, so nothing moves
+    // until they're changed)
+    setOwn: (on: boolean) => updateItem(tee.id, { doglegs: on ? (basket ? turnsAhead(hole, tee, basket) : hole.doglegs).map(p => ({ ...p })) : undefined } as Partial<CourseItem>),
+    setPar: (p: number) => updateItem(tee.id, { par: p || undefined } as Partial<CourseItem>),
+    bendOptions: [{ value: "hole", label: "The hole's" }, { value: "own", label: "Its own" }] as { value: "hole" | "own"; label: string }[],
+    parOptions: [{ value: 0, label: hole.par ? `Hole's ${hole.par}` : `Auto ${holePar}` }, ...[2, 3, 4, 5, 6].map(p => ({ value: p, label: String(p) }))]
+  };
+}
+
+function TeeOwnFields({ tee }: { tee: TeeItem }) {
+  const o = useTeeOwn(tee);
+  if (!o) return null;
+  return (
+    <>
+      <Field label="Bends" help="tee-own-line">
+        <Segmented label="Bends" value={o.own ? "own" : "hole"} onChange={v => o.setOwn(v === "own")} options={o.bendOptions} />
+      </Field>
+      <Field label="Par from this tee" help="tee-own-line">
+        <Segmented label="Par from this tee" value={tee.par ?? 0} onChange={o.setPar} options={o.parOptions} />
+      </Field>
+    </>
+  );
+}
+
 export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem }) {
   const doc = useCourse(s => s.doc);
   const s = useMemo(() => holeStats(doc, hole), [doc, hole]);
@@ -195,6 +235,8 @@ export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem })
   useEffect(() => { if (sharing) setShareOpen(true); }, [sharing]);
   const set = (patch: Partial<Hole>, history = true) => updateHole(hole.id, patch, history);
   const played = tees.find(t => t.id === s.teeId);
+  // (the played tee's own bends, when it has them, are the ones its line's buttons change)
+  const owner = bendOwner(doc, hole, s.teeId);
   // (the fairway's widths along it, when they aren't all the same, or its middle moved off the line)
   const widths = (hole.fairwayShape ?? []).map(f => f * hole.fairwayWidth);
   const lo = Math.min(...widths), hi = Math.max(...widths);
@@ -297,9 +339,9 @@ export function HoleInspector({ hole, part }: { hole: Hole; part?: CourseItem })
           <Field label="Line of play" help="line-of-play">
             <div className="flex flex-wrap gap-1.5">
               <Button small onClick={() => useEditor.getState().set({ plotLine: hole.id, tool: "select" })} testid="plot-line">Plot the line</Button>
-              <Button small onClick={() => set({ doglegs: bendHole(s.line, -1) })} testid="bend-left">Bend left</Button>
-              <Button small onClick={() => set({ doglegs: bendHole(s.line, 1) })} testid="bend-right">Bend right</Button>
-              {hole.doglegs.length > 0 && <Button small onClick={() => set({ doglegs: [] })}>Straighten</Button>}
+              <Button small onClick={() => setBends(hole.id, owner?.id, bendHole(s.line, -1))} testid="bend-left">Bend left</Button>
+              <Button small onClick={() => setBends(hole.id, owner?.id, bendHole(s.line, 1))} testid="bend-right">Bend right</Button>
+              {(owner?.doglegs ?? hole.doglegs).length > 0 && <Button small onClick={() => setBends(hole.id, owner?.id, [])}>Straighten</Button>}
             </div>
           </Field>
         )}
@@ -825,6 +867,7 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
           <Field label="Surface">
             <ChipPick label="Tee surface" value={item.surface} onChange={v => set({ surface: v })} options={(Object.keys(TEE_SURFACES) as TeeSurface[]).map(k => ({ value: k, label: TEE_SURFACES[k].label, color: TEE_SURFACES[k].color }))} />
           </Field>
+          <TeeOwnFields tee={item} />
           <TurnButtons item={item} />
           {item.aimFixed && <div className="mb-2"><Button small onClick={() => set({ aimFixed: false })}>Face down the hole again</Button></div>}
         </>
@@ -838,6 +881,9 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
           </Field>
           <Field label="Raised above the ground">
             {lenIn("Raised", item.raised ?? 0, 0, 30, v => set({ raised: v || undefined }, false))}
+          </Field>
+          <Field label="Basket model" help="tee-basket">
+            <TextInput label="Basket model" testid="basket-model" value={item.model ?? ""} placeholder="Maker and model" onChange={v => set({ model: v.trim() ? v : undefined }, false)} onDone={commit} />
           </Field>
         </>
       );

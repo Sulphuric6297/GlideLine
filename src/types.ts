@@ -32,6 +32,11 @@ export interface TeeItem extends BaseItem {
   surface: TeeSurface;
   /** Turned by hand; otherwise the pad faces down its hole. */
   aimFixed?: boolean;
+  /** Its own turns, in order from the tee to the basket (unset: the hole's turns still ahead of
+   * it). */
+  doglegs?: P[];
+  /** Its own par (unset: the hole's). */
+  par?: number;
 }
 
 /** A basket (target). A hole can have several pin positions (A, B, C...). */
@@ -43,6 +48,8 @@ export interface BasketItem extends BaseItem {
   position: PinPosition;
   /** Raised on a platform or slope above the ground, ft (an elevated basket). */
   raised?: number;
+  /** Its make and model, as typed or brought in from a file (e.g. "Discraft ChainStar"). */
+  model?: string;
 }
 
 /** A mandatory: the disc must pass on this side of it (an arrow sign on a post or a tree). */

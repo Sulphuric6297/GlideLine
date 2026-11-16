@@ -4,7 +4,7 @@
 // drinking water, trash cans, grills, gates, lights and poles, parking signs, single trees, tree
 // rows, hedges, power lines, and its ball fields, courts and play areas as fields), and a disc golf
 // course mapped there (its tees, baskets and holes).
-import type { AmenityKind, ParkDetail, ParkKind, PathSurface } from "../../types";
+import type { AmenityKind, ParkDetail, ParkKind, PathSurface, TeeSurface } from "../../types";
 import { abortError, anySignal, type GeoBounds } from "./core";
 import { amenityOf, fieldKindOfTags, lineOf } from "./parkKinds";
 
@@ -369,8 +369,9 @@ export const holeHints = (features: OsmFeature[]) =>
 /** A hole of a disc golf course as mapped: its number (from its `ref`), par, tee, basket and the
  * bends between them; and every tee and pin position it has, the first of each being `tee` and
  * `basket` (`tag`: what tells it from the others, a letter, "long" or "short", a tee color). */
-export type MappedHole = { ref?: string; number?: number; par?: number; tee: LatLon; basket: LatLon; doglegs: LatLon[]; tees?: MappedSpot[]; baskets?: MappedSpot[] };
-export type MappedSpot = { at: LatLon; tag?: string };
+export type MappedHole = { ref?: string; number?: number; par?: number; name?: string; notes?: string; tee: LatLon; basket: LatLon; doglegs: LatLon[]; tees?: MappedSpot[]; baskets?: MappedSpot[] };
+/** A tee or pin; a tee's own turns and par, where they aren't its hole's. */
+export type MappedSpot = { at: LatLon; tag?: string; surface?: TeeSurface; model?: string; doglegs?: LatLon[]; par?: number };
 export type MappedCourse = { name?: string; outline?: LatLon[]; holes: MappedHole[] };
 type DgPoint = Extract<OsmFeature, { geom: "point"; kind: "dgTee" | "dgBasket" }>;
 
