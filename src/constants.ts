@@ -196,7 +196,9 @@ export const ROCK_LOOKS: Record<RockLook, { label: string; layer: "bedrock" | "b
   cliff: { label: "Cliff", layer: "cliff", grass: 0.1, stones: 0, help: "The layered rock of a cliff face. Steep ground shows it by itself." }
 };
 export const ROCK_LOOK_ORDER: RockLook[] = ["bedrock", "broken", "rocky", "cliff"];
-/** Steep ground shows bare rock from this slope up, degrees (the map's steepRock, unset). */
+/** Steep ground shows bare rock from this slope up, degrees: a new course's steepRock. A course
+ * saved without one shows none (STEEP_NEVER), as it did before. */
 export const STEEP_ROCK = 40;
+export const STEEP_NEVER = 90;
 
 export const TREE_COLORS = ["#4a7a3a", "#3d6b2f", "#5c8a3c", "#2f5d34", "#7a9a3a"];

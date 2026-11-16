@@ -1,5 +1,5 @@
 // Making course documents and items, and finding a hole's parts.
-import { CIRCLE_ONE_FT, DEFAULT_CANVAS, DEFAULT_FAIRWAY_FT, DEFAULT_PAD, LINE_KINDS, PIN_POSITIONS, STRUCTURE_KINDS, TEE_ORDER, TREE_COLORS, generateId, AMENITY_KINDS, ROCK_KINDS } from "../constants";
+import { CIRCLE_ONE_FT, DEFAULT_CANVAS, DEFAULT_FAIRWAY_FT, DEFAULT_PAD, LINE_KINDS, PIN_POSITIONS, STRUCTURE_KINDS, TEE_ORDER, TREE_COLORS, STEEP_ROCK, generateId, AMENITY_KINDS, ROCK_KINDS } from "../constants";
 import type {
   AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseDoc, CourseItem, CourseRules, DropZoneItem, Hole, LabelItem,
   Layout, LineItem, LineKind, MandoItem, MapStyle, P, PinPosition, StructureItem, StructureKind, TeeItem, TeeLevel, TreeItem
@@ -81,8 +81,9 @@ export const createEmptyCourse = (): CourseDoc => ({
   items: [],
   layouts: defaultLayouts(),
   activeLayout: "layout-main",
-  // (a new course starts in Brushed; one saved without a look is Classic, as it was)
-  style: { ...defaultStyle(), mapLook: "handpainted" },
+  // (a new course starts in Brushed, with bare rock on its steep ground; one saved without a look
+  // is Classic, and one saved without steep rock has none, as it was)
+  style: { ...defaultStyle(), mapLook: "handpainted", steepRock: STEEP_ROCK },
   units: "ft",
   rules: defaultRules()
 });

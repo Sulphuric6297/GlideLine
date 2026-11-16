@@ -13,7 +13,7 @@ import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
-import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp, ROCK_KINDS, ROCK_LOOKS, ROCK_STONES, STEEP_ROCK } from "../constants";
+import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp, ROCK_KINDS, ROCK_LOOKS, ROCK_STONES, STEEP_NEVER } from "../constants";
 import { FAIRWAY_STATIONS, bendOwner, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
 import { boundsOf, centroid, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
@@ -2796,7 +2796,7 @@ export class CourseView {
       gd.growRect.value.copy(gm.rect);
     }
     gd.growOn.value = grown && gm ? 1 : 0;
-    const steep = this.doc?.course.style.steepRock ?? STEEP_ROCK;
+    const steep = this.doc?.course.style.steepRock ?? STEEP_NEVER;
     gd.steepCos.value = steep >= 89 ? 0 : Math.cos(steep * DEG);
     if (!on || !q) {
       this.grass.group.visible = false;

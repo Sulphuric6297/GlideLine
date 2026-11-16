@@ -25,6 +25,8 @@ const GRAIN = [1.6, 1.3, 1.4, 1.4, 1.4, 1.4, 1.4, 1.4, 1.3, 1.3, 1.4, 1.4, 1.3];
  * takes it, real grass and dirt, not the map's flat paint. */
 const MEAN = [[96, 109, 48], [127, 116, 102], [89, 80, 70], [121, 100, 60], [146, 131, 104], [80, 56, 27], [142, 112, 58], [157, 128, 101], [141, 108, 84], [168, 155, 140], [120, 113, 100], [147, 128, 107], [124, 83, 49]];
 const S = 512;
+/** The layers in the first strip (scripts/ground-scans.py); the rest are the rock surfaces'. */
+const FIRST_LAYERS = 9;
 
 let scans: Promise<{ color: THREE.DataArrayTexture; normal: THREE.DataArrayTexture } | null> | null = null;
 /** The scans as two stacks of layers (their color variation, their bumps), loaded once. */
@@ -32,15 +34,22 @@ export const groundScans = () => {
   if (scans) return scans;
   if (typeof document === "undefined") return Promise.resolve(null);
   scans = (async () => {
+    // (the first nine layers in <name>.jpg, as they always were; the rock surfaces' four after
+    // them in <name>-rock.jpg)
     const strip = async (name: string) => {
-      const img = new Image();
-      img.src = `${import.meta.env.BASE_URL}ground/${name}.jpg`;
-      await img.decode();
+      const load = async (file: string) => {
+        const img = new Image();
+        img.src = `${import.meta.env.BASE_URL}ground/${file}.jpg`;
+        await img.decode();
+        return img;
+      };
+      const [first, rock] = await Promise.all([load(name), load(`${name}-rock`)]);
       const c = document.createElement("canvas");
       c.width = S;
       c.height = S * LAYERS.length;
       const g = c.getContext("2d", { willReadFrequently: true })!;
-      g.drawImage(img, 0, 0, S, S * LAYERS.length);
+      g.drawImage(first, 0, 0, S, S * FIRST_LAYERS);
+      g.drawImage(rock, 0, S * FIRST_LAYERS, S, S * (LAYERS.length - FIRST_LAYERS));
       const t = new THREE.DataArrayTexture(new Uint8Array(g.getImageData(0, 0, S, S * LAYERS.length).data.buffer), S, S, LAYERS.length);
       t.format = THREE.RGBAFormat;
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -180,7 +189,7 @@ export const groundDetailUniforms = (): GroundDetailUniforms => ({
   growTint: { value: null },
   growRect: { value: new THREE.Vector4(0, 0, 1, 1) },
   growOn: { value: 0 },
-  steepCos: { value: Math.cos((40 * Math.PI) / 180) }
+  steepCos: { value: 0 }
 });
 
 /** Whether there's a graphics card: without one, the ground's own real ground at every distance

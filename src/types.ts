@@ -643,7 +643,8 @@ export interface MapStyle {
   reliefLook?: ReliefLook;
   /** Rocks and rock surfaces left off the painted map (they stay in 3D). */
   hideRocks?: boolean;
-  /** Steep ground shows bare rock (as a cliff face) from this slope up, degrees (unset: 40; 90: none). */
+  /** Steep ground shows bare rock (as a cliff face) from this slope up, degrees (a new course: 40;
+   * unset or 90: none, so a course made before stays as it was). */
   steepRock?: number;
   /** Where the legend (and hole table) panel sits on the course map: its top-left corner as a
    * share of the page's width and height (unset: a free corner). */
