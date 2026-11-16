@@ -519,7 +519,8 @@ export const teeLevels = (tees: { tag?: string; far: number }[]): (TeeLevel | nu
 };
 
 /** A disc golf course mapped on OpenStreetMap or read from a GPS file, as holes on the plan: each
- * hole's tees, pin positions and bends, numbered and with a par where mapped; only holes whose tee
+ * hole's tees (with their surface), pin positions (with their model) and bends, numbered and with a
+ * par, name and notes where given; only holes whose tee
  * and basket are on the site (`outside` says how many weren't). `taken`: numbers in use already
  * (a hole with one of those plays as the next free one). `dropped`: tees and pins past the six
  * colors and four letters there are. */
@@ -536,15 +537,15 @@ export const courseFromMap = (course: MappedCourse, ref: GeoBounds & { width: nu
     // (a number used twice: the second plays as the next free one)
     const number = m.number && !taken.has(m.number) ? m.number : undefined;
     if (number) taken.add(number);
-    const hole = newHole({ doglegs: m.doglegs.map(plan), ...(number ? { number } : {}), ...(m.par ? { par: m.par } : {}) });
+    const hole = newHole({ doglegs: m.doglegs.map(plan), ...(number ? { number } : {}), ...(m.par ? { par: m.par } : {}), ...(m.name ? { name: m.name } : {}), ...(m.notes ? { notes: m.notes } : {}) });
     holes.push(hole);
     // (every tee and pin it has; one past the site's edge stays out)
     const tees = (m.tees ?? [{ at: m.tee }]).map(t => ({ ...t, p: plan(t.at) })).filter((t, i) => i === 0 || on(t.p));
     const pins = (m.baskets ?? [{ at: m.basket }]).map(b => ({ ...b, p: plan(b.at) })).filter((b, i) => i === 0 || on(b.p));
     const levels = teeLevels(tees.map(t => ({ tag: t.tag, far: Math.hypot(t.p.x - basket.x, t.p.y - basket.y) })));
     const positions = pinPositions(pins.map((b: MappedSpot & { p: P }) => b.tag));
-    tees.forEach((t, i) => { const l = levels[i]; if (l) items.push(createTee(hole.id, t.p, l)); else dropped++; });
-    pins.forEach((b, i) => { const l = positions[i]; if (l) items.push(createBasket(hole.id, b.p, l)); else dropped++; });
+    tees.forEach((t, i) => { const l = levels[i]; if (l) items.push({ ...createTee(hole.id, t.p, l), ...(t.surface ? { surface: t.surface } : {}), ...(t.doglegs ? { doglegs: t.doglegs.map(plan) } : {}), ...(t.par ? { par: t.par } : {}) }); else dropped++; });
+    pins.forEach((b, i) => { const l = positions[i]; if (l) items.push({ ...createBasket(hole.id, b.p, l), ...(b.model ? { model: b.model } : {}) }); else dropped++; });
   }
   return { name: course.name, holes, items, outside, dropped };
 };

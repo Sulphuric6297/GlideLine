@@ -13,8 +13,8 @@ import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
-import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, ROCK_KINDS, ROCK_LOOKS, ROCK_STONES, STEEP_ROCK, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp } from "../constants";
-import { FAIRWAY_STATIONS, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
+import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp, ROCK_KINDS, ROCK_LOOKS, ROCK_STONES, STEEP_ROCK } from "../constants";
+import { FAIRWAY_STATIONS, bendOwner, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
 import { boundsOf, centroid, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
 import { heightAt } from "../lib/terrainGrid";
@@ -3281,6 +3281,25 @@ export class CourseView {
     return id ? this.doc?.course.holes.find(h => h.id === id) ?? null : null;
   }
 
+  /** The turns a hole's line handles edit, with that line, tee to basket: a picked tee's of the hole
+   * (its own, else the hole's); with none picked, the layout's tee's own, else the hole's. */
+  private bendTarget(holeId: string): { teeId: string | null; bends: P[]; line: P[]; key: string } | null {
+    const hole = this.hole(holeId), s = this.doc?.stats.find(x => x.holeId === holeId);
+    if (!hole || !s?.complete || !this.doc) return null;
+    const sel = this.item(this.selectedId);
+    const picked = sel?.type === "tee" && sel.holeId === holeId ? sel : null;
+    const owner = picked ? (picked.doglegs ? picked : null) : bendOwner(this.doc.course, hole, s.teeId);
+    const bends = owner?.doglegs ?? hole.doglegs;
+    const from = picked ?? s.line[0];
+    const line = [{ x: from.x, y: from.y }, ...bends.map(p => ({ ...p })), s.line[s.line.length - 1]];
+    return { teeId: owner?.id ?? null, bends, line, key: `${owner?.id ?? "hole"}:${bends.length}:${picked?.id ?? ""}` };
+  }
+
+  private setBendsOf(holeId: string, teeId: string | null, pts: P[]) {
+    if (teeId) this.cb.onChange(teeId, { doglegs: pts });
+    else this.cb.onHoleChange(holeId, { doglegs: pts });
+  }
+
   private num(holeId: string | undefined) {
     return holeId && this.doc ? holeLabel(this.doc.course, holeId) : "";
   }
@@ -5122,7 +5141,7 @@ export class CourseView {
     const holeId = editing ? (this.hole(this.selectedId)?.id ?? doc.activeHoleId) : null;
     const hole = this.hole(holeId);
     const drawing = this.drawn() ? this.drawPts.length : -1;
-    const key = `${sel?.id ?? ""}|${sel?.locked ?? ""}|${sel && (sel.type === "area" || sel.type === "line" || sel.type === "structure") ? `${sel.points.length}${sel.kind}${sel.type === "area" ? (sel.field ?? "") : ""}` : sel?.type === "rock" ? `${sel.kind}${sel.outline?.length ?? 0}` : ""}|${hole ? `${hole.id}:${hole.doglegs.length}:${doc.stats.find(s => s.holeId === hole.id)?.complete}:${hole.flyKeys?.length ?? 0}:${hole.fairwayStations?.length ?? 0}:${this.selectedId === hole.id}:${doc.course.holes.length}:${doc.course.style.nextTee}` : ""}|${drawing}`;
+    const key = `${sel?.id ?? ""}|${sel?.locked ?? ""}|${sel && (sel.type === "area" || sel.type === "line" || sel.type === "structure") ? `${sel.points.length}${sel.kind}${sel.type === "area" ? (sel.field ?? "") : ""}` : sel?.type === "rock" ? `${sel.kind}${sel.outline?.length ?? 0}` : ""}|${hole ? `${hole.id}:${this.bendTarget(hole.id)?.key ?? ""}:${doc.stats.find(s => s.holeId === hole.id)?.complete}:${hole.flyKeys?.length ?? 0}:${hole.fairwayStations?.length ?? 0}:${this.selectedId === hole.id}:${doc.course.holes.length}:${doc.course.style.nextTee}` : ""}|${drawing}`;
     const obKey = `${sel?.type === "line" || sel?.type === "area" ? `${sel.ob}:${sel.obStretches?.length ?? 0}` : ""}|${this.obPick ? `${this.obPick.id}:${this.obPick.from}:${this.obPick.cut}` : ""}|${this.partPick ? `${this.partPick.id}:${this.partPick.part}` : ""}`;
     if (`${this.readOnly}${key}${obKey}` === this.handleKey) return;
     this.handleKey = `${this.readOnly}${key}${obKey}`;
@@ -5456,6 +5475,10 @@ export class CourseView {
     const h0 = hole();
     const s0 = stats();
     if (!h0 || !s0?.complete) return;
+    // (the turns of the line being edited: a tee's own, or the hole's)
+    const target = () => this.bendTarget(holeId);
+    const bends = () => target()?.bends ?? [];
+    const setBends = (pts: P[]) => { const t = target(); if (t) this.setBendsOf(holeId, t.teeId, pts); };
     const dragPoint = (index: number, start: P[]): Drag => {
       const pts = start.map(p => ({ ...p }));
       const y = this.h(pts[index].x, pts[index].y);
@@ -5464,25 +5487,23 @@ export class CourseView {
           const hit = this.planeAt(ev.clientX, ev.clientY, y);
           if (!hit) return;
           pts[index] = { x: hit.x, y: hit.z };
-          this.cb.onHoleChange(holeId, { doglegs: pts.map(p => ({ ...p })) });
+          setBends(pts.map(p => ({ ...p })));
         },
         end: () => this.cb.onCommit()
       };
     };
-    h0.doglegs.forEach((_, i) => {
-      add("dogleg", () => { const p = hole()?.doglegs[i]; return p ? at(p) : null; }, e => {
-        const h = hole();
-        if (!h) return null;
+    bends().forEach((_, i) => {
+      add("dogleg", () => { const p = bends()[i]; return p ? at(p) : null; }, e => {
         const now = performance.now();
         const last = this.lastCorner;
         this.lastCorner = { id: holeId, index: i, time: now };
         if (e.altKey || (last && last.id === holeId && last.index === i && now - last.time < 400)) {
           this.lastCorner = null;
-          this.cb.onHoleChange(holeId, { doglegs: h.doglegs.filter((_, k) => k !== i) });
+          setBends(bends().filter((_, k) => k !== i));
           this.cb.onCommit();
           return null;
         }
-        return dragPoint(i, h.doglegs);
+        return dragPoint(i, bends());
       }, { index: i, title: "Drag to move this turn · double-click to remove it" });
     });
     // The walks on to the next tee and in from the hole before (while the hole is selected): where
@@ -5609,30 +5630,30 @@ export class CourseView {
       }
     }
     // Mid dots between each pair of line points: pulling one adds a turn there
-    const n = s0.line.length;
+    const n = (target()?.line.length ?? s0.line.length);
     for (let i = 0; i + 1 < n; i++) {
       add("mid", () => {
-        const s = stats();
-        if (!s || s.line.length !== n) return null;
-        const a = s.line[i], b = s.line[i + 1];
+        const l = target()?.line;
+        if (!l || l.length !== n) return null;
+        const a = l[i], b = l[i + 1];
         return at({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
       }, () => {
-        const s = stats(), h = hole();
-        if (!s || !h) return null;
-        const a = s.line[i], b = s.line[i + 1];
-        const doglegs = [...h.doglegs];
+        const t = target();
+        if (!t) return null;
+        const a = t.line[i], b = t.line[i + 1];
+        const doglegs = [...t.bends];
         // Line point i+1 is dogleg i (point 0 is the tee)
         doglegs.splice(i, 0, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-        this.cb.onHoleChange(holeId, { doglegs });
+        setBends(doglegs);
         return dragPoint(i, doglegs);
       }, {
         index: i,
         title: "Drag to bend the hole here",
         data: { kind: "line" },
         visible: () => {
-          const s = stats();
-          if (!s || s.line.length !== n) return false;
-          const a = this.project(at(s.line[i])), b = this.project(at(s.line[i + 1]));
+          const l = target()?.line;
+          if (!l || l.length !== n) return false;
+          const a = this.project(at(l[i])), b = this.project(at(l[i + 1]));
           return !!a && !!b && Math.hypot(a.x - b.x, a.y - b.y) > 36;
         }
       });
@@ -6793,9 +6814,9 @@ export class CourseView {
   private turnMenu(h: Handle, holeId: string, index: number) {
     if (!this.hole(holeId)) return;
     this.handleButton(h, "remove-turn", "Remove this turn", true, () => {
-      const hole = this.hole(holeId);
-      if (!hole || !hole.doglegs[index]) return;
-      this.cb.onHoleChange(holeId, { doglegs: hole.doglegs.filter((_, k) => k !== index) });
+      const t = this.bendTarget(holeId);
+      if (!t || !t.bends[index]) return;
+      this.setBendsOf(holeId, t.teeId, t.bends.filter((_, k) => k !== index));
       this.cb.onCommit();
     });
   }
@@ -7716,7 +7737,7 @@ export class CourseView {
   finishPlot() {
     const holeId = this.plotHole;
     if (!holeId) return false;
-    this.cb.onHoleChange(holeId, { doglegs: this.plotPts.map(p => ({ ...p })) });
+    this.setBendsOf(holeId, this.bendTarget(holeId)?.teeId ?? null, this.plotPts.map(p => ({ ...p })));
     this.cb.onCommit();
     this.endPlot();
     return true;

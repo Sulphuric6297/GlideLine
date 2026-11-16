@@ -150,7 +150,7 @@ export function useFlight(hole: Hole) {
   const ground = (x: number, y: number) => getView()?.groundHeight(x, y) ?? 0;
   const times = keys ? keyTimes(keys, fs, ground) : [];
   // (how long it plays: the view works it out from the hole and its settings, as it'll fly)
-  const sig = JSON.stringify([hole.flyKeys, hole.flyover, doc.flyover, doc.items.length, hole.doglegs]);
+  const sig = JSON.stringify([hole.flyKeys, hole.flyover, doc.flyover, doc.items.length, hole.doglegs, doc.items.map(i => (i.type === "tee" && i.holeId === hole.id ? [i.doglegs, i.par] : null))]);
   const [length, setLength] = useState<number | null>(null);
   useEffect(() => {
     const t = window.setTimeout(() => setLength(getView()?.flyLength(hole.id) ?? null), 60);

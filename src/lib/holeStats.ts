@@ -174,7 +174,7 @@ export const holeStats = (doc: CourseDoc, hole: Hole, layout: Layout | undefined
   }
 
   const lim = PAR_MIN_FT[level];
-  const par = hole.par ?? parAuto;
+  const par = tee?.par ?? hole.par ?? parAuto;
   // Difficulty: how far it plays within its par's range, plus trees, OB and shape
   const lo = par <= 3 ? lim.par3 : par === 4 ? lim.par4 : lim.par5;
   const hi = par <= 3 ? lim.par4 : par === 4 ? lim.par5 : lim.par5 + (lim.par5 - lim.par4);

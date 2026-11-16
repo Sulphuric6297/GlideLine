@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { FileUp, MapPinned } from "lucide-react";
 import { Dialog } from "../auth/parts";
-import { fileCourse, fileExtent, needsLook, readCourseFile, type CourseFile, type FilePoint } from "../lib/courseFile";
+import { fileCourse, fileExtent, needsLook, readCourseFile, withFileLayouts, type CourseFile, type FilePoint } from "../lib/courseFile";
 import { courseFromMap, pinPositions } from "../lib/importSite";
 import { geoRefOf } from "../lib/geoRef";
 import { holeNumbers } from "../lib/course";
@@ -127,7 +127,9 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
     const out = courseFromMap(planned, r, replace ? new Set() : new Set(nums.values()));
     changeDoc(d => {
       const base = replace ? withoutHoles(d) : { holes: d.holes.map(h => ({ ...h, number: nums.get(h.id) ?? h.number })), items: d.items };
-      return { holes: [...base.holes, ...out.holes], items: [...base.items, ...out.items] };
+      // (the file's layouts, and its course name on a course that has none of its own yet)
+      const named = file.name && d.name === "New Disc Golf Course" ? { name: file.name } : {};
+      return { holes: [...base.holes, ...out.holes], items: [...base.items, ...out.items], ...withFileLayouts(d.layouts, d.activeLayout, file.layouts), ...named };
     });
     close();
     if (useEditor.getState().step === "site") useEditor.getState().set({ step: "design", tool: "select" });
@@ -141,6 +143,7 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
       <p className="text-[13px] text-zinc-300 mb-3" data-testid="course-file-summary">
         {`${fileName}: ${holes.length} ${holes.length === 1 ? "hole" : "holes"}`}
         {multiPin ? `, ${multiPin} with more than one pin` : ""}{multiTee ? `${multiPin ? " and" : ","} ${multiTee} with more than one tee` : ""}.
+        {file.layouts?.length ? ` ${file.layouts.length === 1 ? "Layout" : "Layouts"}: ${file.layouts.map(l => l.name).join(", ")}.` : ""}
         {" "}<HelpLink topic="gps-holes" label="Holes from a GPS file" />
       </p>
       {!ref && (

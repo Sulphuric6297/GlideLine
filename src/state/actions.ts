@@ -4,15 +4,15 @@ import { woodsCrownWidth } from "../three/treeKit";
 import { CIRCLE_ONE_FT, FIELD_KINDS, PIN_POSITIONS, TEE_ORDER, generateId } from "../constants";
 import { MARKED_FIELDS, createField, fieldHome, fieldKindOf, fieldOutline, isBallField } from "../lib/fields";
 import {
-  createAmenity, createArea, createBasket, createDropZone, createLabel, createLine, createMando, createRock, createStructure, createTee, createTree,
-  insertHole, autoWalks, basketHoles, belongsTo, closestHole, holeBaskets, holeTees, itemHoleId, movedGroup, newHole, obPicked, obPieces, teeFor, wholeHoles, withoutStretch, holeLabel, fairwayShiftAt, fairwayWidthAt
+  createAmenity, createArea, createBasket, createDropZone, createLabel, createLine, createMando, createStructure, createTee, createTree, createRock,
+  insertHole, autoWalks, basketHoles, belongsTo, bendOwner, closestHole, holeBaskets, holeTees, itemHoleId, movedGroup, newHole, obPicked, obPieces, teeFor, wholeHoles, withoutStretch, holeLabel, fairwayShiftAt, fairwayWidthAt
 } from "../lib/course";
 import { centroid, nearestOnSegment, pathLength, pointAlong, simplify, smoothPath } from "../lib/geom";
 import { courseStats, holeStats } from "../lib/holeStats";
 import type { AreaItem, BasketItem, CourseDoc, CourseItem, FieldKind, FieldLeague, FieldPart, FieldPartSet, Hole, LineItem, LineKind, P, PinPosition, TeeLevel, ToolMode, TreeItem, TreeKind } from "../types";
 import { LEAGUES, fieldPlan } from "../lib/fieldPlan";
 import { orientedBox } from "../lib/structures";
-import { changeDoc, editor, getDoc, removeHole, removeItems, updateHole, updateItem, useEditor, useCourse } from "./course";
+import { changeDoc, editor, getDoc, removeHole, removeItems, setBends, updateHole, updateItem, useEditor, useCourse } from "./course";
 import { toast } from "./toast";
 import { keepsTreesOut, treeFree } from "../lib/treeFree";
 
@@ -375,7 +375,7 @@ const placeParts = (parts: Parts, dx: number, dy: number) => {
     if ((i.type === "tee" || i.type === "basket") && !own.length) continue;
     const c = { ...structuredClone(i), id: generateId(), x: i.x + dx, y: i.y + dy, locked: false } as CourseItem;
     if (c.type === "area" || c.type === "line" || c.type === "structure") c.points = c.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
-    if (c.type === "tee") c.holeId = holeMap.get(own[0])!;
+    if (c.type === "tee") { c.holeId = holeMap.get(own[0])!; if (c.doglegs) c.doglegs = c.doglegs.map(p => ({ x: p.x + dx, y: p.y + dy })); }
     else if (c.type === "basket") {
       c.holeId = holeMap.get(own[0])!;
       c.alsoHoles = own.length > 1 ? own.slice(1).map(h => holeMap.get(h)!) : undefined;
@@ -467,7 +467,7 @@ export const duplicateSelection = () => {
   if (hole) {
     const copy: Hole = { ...hole, id: `hole-${generateId()}`, doglegs: hole.doglegs.map(p => ({ x: p.x + off, y: p.y + off })) };
     // (a basket it shares with other holes is copied as the copy's own)
-    const parts = [...holeTees(doc, hole.id), ...holeBaskets(doc, hole.id)].map(i => ({ ...i, id: generateId(), holeId: copy.id, ...(i.type === "basket" ? { alsoHoles: undefined } : {}), x: i.x + off, y: i.y + off }) as CourseItem);
+    const parts = [...holeTees(doc, hole.id), ...holeBaskets(doc, hole.id)].map(i => ({ ...i, id: generateId(), holeId: copy.id, ...(i.type === "basket" ? { alsoHoles: undefined } : {}), ...(i.type === "tee" && i.doglegs ? { doglegs: i.doglegs.map(p => ({ x: p.x + off, y: p.y + off })) } : {}), x: i.x + off, y: i.y + off }) as CourseItem);
     changeDoc(d => ({ holes: insertHole(d.holes, copy, d.holes.indexOf(hole) + 1), items: [...d.items, ...parts] }));
     select(copy.id);
     return;
@@ -649,9 +649,10 @@ export const bendHoleAt = (holeId: string, p: P) => {
     const d = nearestOnSegment(p, s.line[i - 1], s.line[i]).distance;
     if (d < best) { best = d; at = i - 1; }
   }
-  const doglegs = [...hole.doglegs];
+  const owner = bendOwner(doc, hole, s.teeId);
+  const doglegs = [...(owner?.doglegs ?? hole.doglegs)];
   doglegs.splice(at, 0, { x: p.x, y: p.y });
-  changeDoc(d => ({ holes: d.holes.map(h => (h.id === holeId ? { ...h, doglegs } : h)) }));
+  setBends(hole.id, owner?.id ?? null, doglegs);
 };
 
 /** The layout worked on: its tees and pins to the fore, new tees in its color. */
