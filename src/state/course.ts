@@ -1,6 +1,6 @@
 // The open course (the saved document) with undo and redo, and the editor's own state.
 import { create } from "zustand";
-import type { CourseDoc, CourseItem, Hole, TeeLevel, ToolMode, AreaKind, LineKind, AmenityKind, TreeKind, DrawShape, StructureKind, FieldKind, FieldPart } from "../types";
+import type { CourseDoc, CourseItem, Hole, TeeLevel, ToolMode, AreaKind, LineKind, AmenityKind, TreeKind, RockKind, DrawShape, StructureKind, FieldKind, FieldPart } from "../types";
 import { byNumber, createEmptyCourse, holeNumber, holeNumbers } from "../lib/course";
 
 const HISTORY = 120;
@@ -185,6 +185,8 @@ type EditorStore = {
   /** What the Park tool puts down: a ball field, a court, a playground… */
   fieldKind: FieldKind;
   treeKind: TreeKind;
+  /** What the Rocks tool puts down. */
+  rockKind: RockKind;
   /** The species the Trees tool plants, for each kind (unset: the course's kinds of trees). */
   treeSpecies: Partial<Record<TreeKind, string>>;
   /** The Trees tool drawing a stand of one kind (woods that grow only it, around the trees
@@ -303,6 +305,7 @@ export const useEditor = create<EditorStore>()(set => ({
   amenityKind: "bench",
   fieldKind: "baseball",
   treeKind: "deciduous",
+  rockKind: "boulder",
   treeSpecies: {},
   standOf: null,
   teeView: null,

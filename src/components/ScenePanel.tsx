@@ -9,6 +9,7 @@ import { paintLight } from "../lib/mapLook";
 import type { MapStyle } from "../types";
 import { useCourse, useEditor } from "../state/course";
 import { setStyle } from "./DesignPanel";
+import { STEEP_ROCK } from "../constants";
 import { Segmented, Toggle } from "./ui";
 import { LandscapePicker } from "./LandscapePicker";
 import { SunFromSlider } from "./MapLookPanel";
@@ -189,6 +190,7 @@ function ScenePanel({ onClose, big, place, sheet }: { onClose: () => void; big?:
           <div className="text-xs text-zinc-400 mb-1">Landscape</div>
           <LandscapePicker />
           <Look3d s={s} />
+          <Look3dSlider label="Bare rock on steep ground" value={s.steepRock ?? STEEP_ROCK} min={20} max={90} step={1} format={x => (x >= 89 ? "Never" : `Steeper than ${Math.round(x)}°`)} put={(x, h) => setStyle({ steepRock: x === STEEP_ROCK ? undefined : x }, h)} />
           <div className="text-xs text-zinc-400 mt-2 mb-1">Basket band</div>
           {/* (a finger's 44 px round each swatch: six to the row, touching) */}
           <div className="flex gap-1.5 touch:gap-0" role="radiogroup" aria-label="Basket band" data-testid="basket-band">

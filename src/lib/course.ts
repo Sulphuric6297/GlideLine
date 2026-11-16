@@ -1,9 +1,9 @@
 // Making course documents and items, and finding a hole's parts.
-import { CIRCLE_ONE_FT, DEFAULT_CANVAS, DEFAULT_FAIRWAY_FT, DEFAULT_PAD, LINE_KINDS, PIN_POSITIONS, STRUCTURE_KINDS, TEE_ORDER, TREE_COLORS, generateId, AMENITY_KINDS } from "../constants";
+import { CIRCLE_ONE_FT, DEFAULT_CANVAS, DEFAULT_FAIRWAY_FT, DEFAULT_PAD, LINE_KINDS, PIN_POSITIONS, STRUCTURE_KINDS, TEE_ORDER, TREE_COLORS, generateId, AMENITY_KINDS, ROCK_KINDS } from "../constants";
 import type {
   AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseDoc, CourseItem, CourseRules, DropZoneItem, Hole, LabelItem,
   Layout, LineItem, LineKind, MandoItem, MapStyle, P, PinPosition, StructureItem, StructureKind, TeeItem, TeeLevel, TreeItem
-} from "../types";
+, RockItem, RockKind, RockStone } from "../types";
 import { centroid, corridor, dist, nearestAlong, nearestOnSegment, pathLength, pointAlong, pointInPolygon, smoothClosed, smoothPath, subPath } from "./geom";
 import { landscapeOf } from "./landscapes";
 import { flyoverOf, keysAsTheyFlew } from "./flight";
@@ -479,6 +479,11 @@ export const amenityMarked = (a: { kind: AmenityKind; mark?: boolean }, level: A
 export const amenityPlural = (k: AmenityKind) =>
   ({ water: "drinking water spots", kiosk: "course kiosks", here: "\"You are here\" marks", firstaid: "first aid stations", parking: "parking signs", sign: "tee signs", trash: "trash cans", practice: "practice baskets", picnic: "picnic tables", fitness: "fitness stations", bikerack: "bike racks", light: "light poles", pole: "utility poles", benches: "benches" } as Record<string, string>)[k] ?? (k === "bench" ? "benches" : `${AMENITY_KINDS[k].label.toLowerCase()}s`);
 export const createAmenity = (at: P, kind: AmenityKind): AmenityItem => ({ id: generateId(), type: "amenity", kind, x: at.x, y: at.y, rotation: 0 });
+/** A rock of a kind at its usual size, turned at random so no two sit the same way. */
+export const createRock = (at: P, kind: RockKind, stone: RockStone = kind === "ledge" ? "sandstone" : kind === "wall" || kind === "outcrop" ? "fieldstone" : "granite"): RockItem => ({
+  id: generateId(), type: "rock", kind, stone, x: at.x, y: at.y, rotation: kind === "wall" ? 0 : Math.round(Math.random() * 360),
+  length: ROCK_KINDS[kind].length, width: ROCK_KINDS[kind].width, height: ROCK_KINDS[kind].height, seed: Math.floor(Math.random() * 9999) + 1
+});
 export const createLabel = (at: P, text = "Label"): LabelItem => ({ id: generateId(), type: "label", text, fontSize: 14, color: "#ffffff", x: at.x, y: at.y, rotation: 0 });
 export const createArea = (kind: AreaKind, points: P[], holeId?: string): AreaItem => {
   const c = centroid(points);
@@ -628,6 +633,7 @@ export const ITEM_LABELS: Record<CourseItem["type"], string> = {
   mando: "Mando",
   dropzone: "Drop zone",
   tree: "Tree",
+  rock: "Rock",
   amenity: "Amenity",
   label: "Label",
   area: "Area",

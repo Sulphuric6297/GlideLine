@@ -1,4 +1,4 @@
-import type { AmenityKind, AreaKind, FieldKind, LineKind, PathSurface, PinPosition, RoofKind, StructureKind, TeeLevel, TeeSurface } from "./types";
+import type { AmenityKind, AreaKind, FieldKind, LineKind, PathSurface, PinPosition, RockKind, RockLook, RockStone, RoofKind, StructureKind, TeeLevel, TeeSurface } from "./types";
 
 export const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -72,12 +72,13 @@ export const AREA_KINDS: Record<AreaKind, { label: string; color: string; fill: 
   parking: { label: "Parking lot", color: "#6b7280", fill: 0.5, help: "A parking lot. Checks warn about a hole that throws over one, and about a first tee or a last basket that's a long walk from it." },
   building: { label: "Building", color: "#a8a29e", fill: 0.7, help: "A building as a flat shape on the map. For walls and a roof in 3D, use a Building from the Build tool." },
   field: { label: "Field or court", color: "#6aa84f", fill: 0.5, help: "A ball field, a court, a playground or a pool: drawn as itself on the map and in 3D." },
-  sand: { label: "Sand or dirt", color: "#d9c48f", fill: 0.5, help: "Sand, dirt or bare ground. No grass or trees grow on it." }
+  sand: { label: "Sand or dirt", color: "#d9c48f", fill: 0.5, help: "Sand, dirt or bare ground. No grass or trees grow on it." },
+  rock: { label: "Rock surface", color: "#9a948a", fill: 0.6, help: "Bare rock in the ground: bedrock, broken rock, rocky ground or a cliff face, in the stone you pick." }
 };
 
 /** The kinds of area offered in a shape's panel and a phone's strip, in this order (rules first,
  * then water, trees and grass; a flat building is an old course's, offered only to one that is one). */
-export const AREA_ORDER: AreaKind[] = ["ob", "hazard", "casual", "nogo", "water", "woods", "rough", "fairway", "green", "sand", "parking"];
+export const AREA_ORDER: AreaKind[] = ["ob", "hazard", "casual", "nogo", "water", "woods", "rough", "fairway", "green", "sand", "rock", "parking"];
 
 /** What paths and walks can be made of (dirt takes the map's path color). */
 export const PATH_SURFACES: Record<PathSurface, { label: string; color: string }> = {
@@ -165,5 +166,37 @@ export const STRUCTURE_KINDS: Record<StructureKind, { label: string; shape: "lin
   deck: { label: "Deck", shape: "outline", width: 0, widths: [0, 0], height: 2.5, heights: [0, 10], heightLabel: "Deck above the ground", color: "#b8916a", help: "A raised wooden platform, like a tee deck or a viewing deck." }
 };
 export const STRUCTURE_ORDER: StructureKind[] = ["bridge", "boardwalk", "stairs", "wall", "building", "shelter", "deck"];
+
+/** Each kind of rock: its name, usual size (ft: length, width, height) and a line on what it is
+ * (the tool bar chip's tooltip and the help). The same sizes on a phone's dials as in the panel. */
+export const ROCK_KINDS: Record<RockKind, { label: string; length: number; width: number; height: number; help: string }> = {
+  boulder: { label: "Boulder", length: 6, width: 4.5, height: 3.5, help: "A rounded rock sitting in the grass." },
+  block: { label: "Block", length: 5, width: 4, height: 3.5, help: "A broken, angular rock with flat faces." },
+  ledge: { label: "Ledge", length: 10, width: 6, height: 2.5, help: "Flat beds of rock, each stepping back from the one below. Good to sit on, or for a tee." },
+  outcrop: { label: "Outcrop", length: 16, width: 10, height: 4.5, help: "Bedrock breaking through the ground in tilted beds." },
+  cluster: { label: "Cluster", length: 12, width: 8, height: 3.5, help: "A few rocks together, one big and some small." },
+  wall: { label: "Rock wall", length: 22, width: 2, height: 2.5, help: "A dry-stone wall: flat stones stacked in rows." }
+};
+export const ROCK_ORDER: RockKind[] = ["boulder", "block", "ledge", "outcrop", "cluster", "wall"];
+/** The stones, with the color a rock of it is on the map. */
+export const ROCK_STONES: Record<RockStone, { label: string; color: string }> = {
+  granite: { label: "Granite", color: "#a89b8c" },
+  fieldstone: { label: "Fieldstone", color: "#8a7a66" },
+  sandstone: { label: "Sandstone", color: "#a07a48" },
+  basalt: { label: "Basalt", color: "#55504a" },
+  redgranite: { label: "Red granite", color: "#8a5f4a" }
+};
+export const STONE_ORDER: RockStone[] = ["granite", "fieldstone", "sandstone", "basalt", "redgranite"];
+/** What a rock surface is: its name, its ground scan (three/groundDetail's LAYERS) and how much
+ * grass grows through it and how many loose stones lie on it by default. */
+export const ROCK_LOOKS: Record<RockLook, { label: string; layer: "bedrock" | "broken" | "rocky" | "cliff"; grass: number; stones: number; help: string }> = {
+  bedrock: { label: "Bedrock", layer: "bedrock", grass: 0.3, stones: 0.1, help: "Bare rock, smooth and cracked, lifting a little out of the turf." },
+  broken: { label: "Broken rock", layer: "broken", grass: 0.1, stones: 0.8, help: "Loose broken stones, like scree under a cliff." },
+  rocky: { label: "Rocky ground", layer: "rocky", grass: 0.4, stones: 0.3, help: "Soil full of stones, with a few loose on top." },
+  cliff: { label: "Cliff", layer: "cliff", grass: 0.1, stones: 0, help: "The layered rock of a cliff face. Steep ground shows it by itself." }
+};
+export const ROCK_LOOK_ORDER: RockLook[] = ["bedrock", "broken", "rocky", "cliff"];
+/** Steep ground shows bare rock from this slope up, degrees (the map's steepRock, unset). */
+export const STEEP_ROCK = 40;
 
 export const TREE_COLORS = ["#4a7a3a", "#3d6b2f", "#5c8a3c", "#2f5d34", "#7a9a3a"];

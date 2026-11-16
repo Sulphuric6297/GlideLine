@@ -13,7 +13,7 @@ import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
-import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp } from "../constants";
+import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, ROCK_KINDS, ROCK_LOOKS, ROCK_STONES, STEEP_ROCK, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp } from "../constants";
 import { FAIRWAY_STATIONS, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
 import { boundsOf, centroid, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
@@ -27,6 +27,7 @@ import { DrapeCache, drapedPoints, drapedPolygon, drapedRibbon } from "../three/
 import { dab, strokeOutline } from "../lib/brush";
 import { disposeObjectDeep } from "../three/dispose";
 import { create3dTree, getTreeSignature, retuneTrees } from "../three/trees";
+import { createRock, rockItemGeometry, rockMaterial, rockSignature, ROCK_BURIED, rockOutlinePoints, rockSpan } from "../three/rocks";
 import { createMeasuredWoods, createUnderbrush, createWoods, createWoodsWhere } from "../three/woods";
 import { standingTrees, grownTree, grownTrees } from "../lib/lidar";
 import type { WoodedGrid } from "../lib/forest";
@@ -51,7 +52,7 @@ import { createFieldGround, createFieldProps, createHedge, createPowerLine } fro
 import { LEAGUES, cornerFrame, fieldInks, fieldPartAt, fieldPartShape, fieldPlan } from "../lib/fieldPlan";
 import { fieldHome, fieldKeepsTreesOut, fieldKindOf, fieldOutline, isBallField } from "../lib/fields";
 import { isLineKind, orientedBox, roofFor, structureBounds, structureHeight, structurePath, structureWidth, turnShape } from "../lib/structures";
-import type { AmenityItem, AmenityKind, AreaItem, BasketItem, CourseItem, FlyKey, Hole, LabelItem, LineItem, MandoItem, StructureItem, TeeItem, TeeLevel, TreeItem, BrushKind, PathTier, FieldPart } from "../types";
+import type { AmenityItem, AmenityKind, AreaItem, BasketItem, CourseItem, FlyKey, Hole, LabelItem, LineItem, MandoItem, RockItem, StructureItem, TeeItem, TeeLevel, TreeItem, BrushKind, PathTier, FieldPart } from "../types";
 import { Ground } from "./ground";
 import { grassMaps, grassTerrain } from "./grassMaps";
 import type { FlightFrames, FlyoverVideo, FrameInfo, RecordOptions } from "./flyoverVideo";
@@ -2795,6 +2796,8 @@ export class CourseView {
       gd.growRect.value.copy(gm.rect);
     }
     gd.growOn.value = grown && gm ? 1 : 0;
+    const steep = this.doc?.course.style.steepRock ?? STEEP_ROCK;
+    gd.steepCos.value = steep >= 89 ? 0 : Math.cos(steep * DEG);
     if (!on || !q) {
       this.grass.group.visible = false;
       this.tufts.group.visible = false;
@@ -3333,6 +3336,7 @@ export class CourseView {
       case "dropzone": return "dz";
       case "tree": return getTreeSignature(item as TreeItem) + item.id + (this.doc ? `|${this.doc.course.style.trees}|${this.doc.course.style.landscape ?? ""}|${this.doc.course.style.treeMix?.join() ?? ""}` : "");
       case "amenity": return `${item.kind}|${item.width ?? ""}`;
+      case "rock": return rockSignature(item);
       default: return "";
     }
   }
@@ -3346,6 +3350,7 @@ export class CourseView {
       case "dropzone": return createDropZone();
       case "tree": { const st = doc.course.style; return create3dTree(item, { color: st.trees, mix: treeMixOf(st) }); }
       case "amenity": return createAmenity(item.kind, item.width);
+      case "rock": return createRock(item);
       default: return null;
     }
   }
@@ -3362,6 +3367,16 @@ export class CourseView {
     } else if (item.type === "basket") {
       obj.position.set(item.x, g + (item.raised ?? 0), item.y);
       obj.rotation.set(0, 0, 0);
+    } else if (item.type === "rock") {
+      // (on a slope it sits as deep as the ground's lowest point under it, never floating)
+      const a = item.rotation * DEG, c = Math.cos(a), s = Math.sin(a), hl = item.length * 0.4, hw = item.width * 0.4;
+      let low = g;
+      for (const [u, v] of [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]]) {
+        const lx = u * hl, lz = v * hw;
+        low = Math.min(low, this.h(item.x + lx * c - lz * s, item.y + lx * s + lz * c));
+      }
+      obj.position.set(item.x, low, item.y);
+      obj.rotation.set(0, -item.rotation * DEG, 0);
     } else {
       obj.position.set(item.x, g + OBJECT_ELEVATION_OFFSET, item.y);
       obj.rotation.set(0, -item.rotation * DEG, 0);
@@ -3634,7 +3649,7 @@ export class CourseView {
         if (s.complete && hole) teeLines(course, hole, s.line, s.teeId).forEach((l, k) => polys.push(this.outline(hole, l, `tee${k}`, 8, hole.fairway ? 0 : -hole.fairwayWidth * 0.4, 6)));
       }
       for (const it of course.items) {
-        if (it.type === "area" && (play ? ["fairway", "green"] : ["fairway", "green", "water", "parking", "building", "sand", ...(tallGrass ? ["rough"] : []), "nogo", "field"]).includes(it.kind)) polys.push(this.shapeOf(it).pts);
+        if (it.type === "area" && (play ? ["fairway", "green"] : ["fairway", "green", "water", "parking", "building", "sand", "rock", ...(tallGrass ? ["rough"] : []), "nogo", "field"]).includes(it.kind)) polys.push(this.shapeOf(it).pts);
         else if (it.type === "line" && !play && it.kind !== "ob" && it.kind !== "fence") lines.push({ pts: this.shapeOf(it).pts, half: ((it.width ?? LINE_KINDS[it.kind].width) * Math.max(...widthFactors(it))) / 2 + 3 });
         else if (it.type === "tee") discs.push({ p: it, r: Math.max(12, it.padLength) });
         else if (it.type === "basket") discs.push({ p: it, r: CIRCLE_ONE_FT * 0.6 });
@@ -3867,12 +3882,14 @@ export class CourseView {
         return;
       }
       const meta = AREA_KINDS[a.kind];
-      const c = color(a.kind) ?? meta.color;
+      const c = a.kind === "rock" ? rockGroundColor(a) : (color(a.kind) ?? meta.color);
       // (woods: no fill, the ground under the trees as it is; the trees show it, its edge line only)
       const bare = a.kind === "woods";
       const tinted = this.brushTint && a.kind === "woods" && (a.bushes ?? 0) >= 1 ? levelOf(a) : 0;
-      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted, tinted && a.id === this.brushPicked, standing]), () => {
+      put(`area:${a.id}`, JSON.stringify([a.points, a.kind, hv, c, photo, order, a.ob, a.obStretches, a.hazard, a.kind === "water" ? this.waterShore(a.points) : 0, painted, clean, bare, tinted, tinted && a.id === this.brushPicked, standing, a.kind === "rock" ? [a.rockLook, a.stone, a.grassBetween, a.looseStones] : 0]), () => {
         const g = new THREE.Group();
+        // (a rock surface's loose stones, real ones, whatever the ground is)
+        if (a.kind === "rock") g.add(this.looseStones(a));
         // (underbrush being painted: tinted light, medium or heavy, the heavier over the lighter)
         if (tinted) {
           const tc = ["", "#fde68a", "#f59e0b", "#b45309"][tinted], hot = a.id === this.brushPicked;
@@ -3884,10 +3901,10 @@ export class CourseView {
           // (seen through the trees: underbrush lies under them, and it has to be plain where it is)
           g.traverse(o => { const m = (o as THREE.Mesh).material as (THREE.Material & { opacity?: number }) | undefined; if (m && !Array.isArray(m)) { m.depthTest = false; o.renderOrder = 40 + tinted + (hot ? 5 : 0); o.userData.tint = m.opacity ?? 1; } });
         }
-        const fill = photo ? meta.fill : Math.min(0.9, meta.fill + 0.35);
+        const fill = a.kind === "rock" ? 1 : photo ? meta.fill : Math.min(0.9, meta.fill + 0.35);
         const rule = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo";
         // (on the painted ground: no fills, it has them painted; only the rules' edges)
-        if (painted && a.kind !== "water") {
+        if (painted && a.kind !== "water" && a.kind !== "rock") {
           if (rule) g.add(this.fatLine(this.drapeLine(a.points, LIFT, true), c, 3, { order: 4, dashed: a.kind === "ob" ? undefined : 6 }));
           if (a.ob === true && a.kind !== "ob") obEdge(a, g);
           hazardEdge(a, g);
@@ -3980,14 +3997,19 @@ export class CourseView {
         const floor = a.kind === "woods";
         if (!bare) {
           // (grass, sand and dirt fade into the ground around them; paving keeps a crisp edge)
-          const soft = photo ? 0 : a.kind === "fairway" ? 4 : a.kind === "rough" ? 6 : a.kind === "green" ? 3 : a.kind === "sand" ? 3 : 0;
+          const soft = a.kind === "rock" ? 2.5 : photo ? 0 : a.kind === "fairway" ? 4 : a.kind === "rough" ? 6 : a.kind === "green" ? 3 : a.kind === "sand" ? 3 : 0;
           const geo = this.draped.get(a.points, (x, y) => this.h(x, y), hv, doc.gridSize, floor ? 0.08 : 0.15 + order * 0.01, soft ? [[...a.points, a.points[0]]] : undefined, soft);
           const mat = new THREE.MeshLambertMaterial({ color: c, transparent: true, opacity: floor ? Math.min(fill, 0.45) : fill, depthWrite: false, polygonOffset: true, polygonOffsetFactor: floor ? -1 : -4, polygonOffsetUnits: floor ? -2 : -8 });
           // (up close, what it's made of: a fairway's mown grass, a parking lot's asphalt, a woods' floor)
           const scan: [SurfaceLayer, number] | null = a.kind === "fairway" || a.kind === "green" ? ["grass", 0.9] : a.kind === "rough" ? ["grass", 1] : a.kind === "sand" ? ["sand", 1]
-            : a.kind === "parking" ? ["asphalt", 1] : null;
-          if (scan) addSurfaceDetail(mat, this.ground.detail, layerOf(scan[0]), scan[1], a.kind === "fairway" || a.kind === "green", soft);
+            : a.kind === "parking" ? ["asphalt", 1] : a.kind === "rock" ? [ROCK_LOOKS[a.rockLook ?? "bedrock"].layer, 1] : null;
+          if (scan) addSurfaceDetail(mat, this.ground.detail, layerOf(scan[0]), scan[1], a.kind === "fairway" || a.kind === "green", soft, a.kind === "rock" ? (a.grassBetween ?? ROCK_LOOKS[a.rockLook ?? "bedrock"].grass) : 0, a.kind === "rock" ? 0.8 : 0.25);
           const mesh: THREE.Mesh = new THREE.Mesh(geo, mat);
+          // (bedrock: bare rock of its stone, as rocks are made of; the other looks the ground's scans)
+          if (a.kind === "rock" && (a.rockLook ?? "bedrock") === "bedrock") {
+            mat.dispose();
+            mesh.material = rockMaterial({ stone: a.stone ?? "granite", moss: 0.12, lichen: 0.35, seed: 5 }, { gaps: a.grassBetween ?? ROCK_LOOKS.bedrock.grass });
+          }
           mesh.renderOrder = floor ? 0.5 : a.kind === "parking" ? tierOrder("road") : 2 + order * 0.001;
           mesh.receiveShadow = true;
           // (grass and a woods' floor on the ground's own: the ground paints them itself)
@@ -3996,7 +4018,7 @@ export class CourseView {
         }
         const w = a.kind === "ob" || a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo" ? 3 : 1.5;
         // (grass and sand with a soft edge: no hard line round them, unless over the photo)
-        const softKind = !photo && (a.kind === "fairway" || a.kind === "rough" || a.kind === "green" || a.kind === "sand");
+        const softKind = a.kind === "rock" || (!photo && (a.kind === "fairway" || a.kind === "rough" || a.kind === "green" || a.kind === "sand"));
         if (w === 3 || (!clean && !standing && !softKind)) g.add(this.fatLine(this.drapeLine(a.points, LIFT, true), c, w, { order: 4, dashed: a.kind === "hazard" || a.kind === "casual" || a.kind === "nogo" ? 6 : undefined }));
         // Marked OB (water, say): its red OB edge; a hazard, its dashed hazard edge
         if (a.ob === true && a.kind !== "ob") obEdge(a, g);
@@ -5100,7 +5122,7 @@ export class CourseView {
     const holeId = editing ? (this.hole(this.selectedId)?.id ?? doc.activeHoleId) : null;
     const hole = this.hole(holeId);
     const drawing = this.drawn() ? this.drawPts.length : -1;
-    const key = `${sel?.id ?? ""}|${sel?.locked ?? ""}|${sel && (sel.type === "area" || sel.type === "line" || sel.type === "structure") ? `${sel.points.length}${sel.kind}${sel.type === "area" ? (sel.field ?? "") : ""}` : ""}|${hole ? `${hole.id}:${hole.doglegs.length}:${doc.stats.find(s => s.holeId === hole.id)?.complete}:${hole.flyKeys?.length ?? 0}:${hole.fairwayStations?.length ?? 0}:${this.selectedId === hole.id}:${doc.course.holes.length}:${doc.course.style.nextTee}` : ""}|${drawing}`;
+    const key = `${sel?.id ?? ""}|${sel?.locked ?? ""}|${sel && (sel.type === "area" || sel.type === "line" || sel.type === "structure") ? `${sel.points.length}${sel.kind}${sel.type === "area" ? (sel.field ?? "") : ""}` : sel?.type === "rock" ? `${sel.kind}${sel.outline?.length ?? 0}` : ""}|${hole ? `${hole.id}:${hole.doglegs.length}:${doc.stats.find(s => s.holeId === hole.id)?.complete}:${hole.flyKeys?.length ?? 0}:${hole.fairwayStations?.length ?? 0}:${this.selectedId === hole.id}:${doc.course.holes.length}:${doc.course.style.nextTee}` : ""}|${drawing}`;
     const obKey = `${sel?.type === "line" || sel?.type === "area" ? `${sel.ob}:${sel.obStretches?.length ?? 0}` : ""}|${this.obPick ? `${this.obPick.id}:${this.obPick.from}:${this.obPick.cut}` : ""}|${this.partPick ? `${this.partPick.id}:${this.partPick.part}` : ""}`;
     if (`${this.readOnly}${key}${obKey}` === this.handleKey) return;
     this.handleKey = `${this.readOnly}${key}${obKey}`;
@@ -5156,6 +5178,7 @@ export class CourseView {
     if (sel.type === "line" && sel.kind === "stream") this.lineWidthHandles(sel.id, add);
     if ((sel.type === "line" || sel.type === "area") && sel.ob === true && sel.obStretches?.length && !sel.locked) this.obStretchHandles(sel.id, add);
     if (sel.type === "structure" && !isLineKind(sel.kind)) this.outlineHandles(sel.id, add);
+    else if (sel.type === "rock") this.rockHandles(sel.id, add);
     else if (sel.type === "tree") {
       const id = sel.id;
       add("radius", () => {
@@ -5193,6 +5216,121 @@ export class CourseView {
           e => this.planeDrag(e, id, (p, it) => { const t = it as TeeItem, sv = axes(t).s; return { padWidth: Math.max(2, Math.min(20, Math.round(Math.abs((p.x - t.x) * sv.x + (p.y - t.y) * sv.y) * 4) / 2)) }; }),
           { title: "Drag to make the pad wider or narrower" });
       }
+    }
+  }
+
+  /** A rock surface's loose stones: a few shapes, each laid many times over it (instanced), lying on
+   * the ground, as many as it's set to (broken rock thick with them, rocky ground a scatter). */
+  private looseStones(a: AreaItem): THREE.Object3D {
+    const g = new THREE.Group(), look = a.rockLook ?? "bedrock", amount = a.looseStones ?? ROCK_LOOKS[look].stones;
+    if (amount <= 0.01 || look === "cliff") return g;
+    const per = look === "broken" ? 5 : look === "rocky" ? 20 : 60;
+    const n = Math.min(5000, Math.round((Math.abs(polygonArea(a.points)) / per) * amount));
+    if (!n) return g;
+    const shapes = [0, 1, 2, 3, 4, 5].map(i => rockItemGeometry({ id: "s", type: "rock", kind: "block", stone: "granite", x: 0, y: 0, rotation: 0, length: 1, width: 0.8, height: 0.55, buried: 0, edges: 0.85, seed: 300 + i }, 0.25));
+    const mat = rockMaterial({ stone: a.stone ?? "granite", moss: 0.05, lichen: 0.25, seed: 3 });
+    let seed = 1;
+    for (const ch of a.id) seed = (seed * 31 + ch.charCodeAt(0)) % 2147483647;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const box = boundsOf(a.points), lists: THREE.Matrix4[][] = shapes.map(() => []);
+    const q = new THREE.Quaternion(), e = new THREE.Euler();
+    for (let k = 0, tries = 0; k < n && tries < n * 6; tries++) {
+      const x = box.minX + rnd() * (box.maxX - box.minX), y = box.minY + rnd() * (box.maxY - box.minY);
+      if (!pointInPolygon({ x, y }, a.points)) continue;
+      const sz = (look === "broken" ? 0.5 + rnd() * 1.6 : 0.35 + rnd() * 0.9) * (rnd() < 0.07 ? 2 : 1);
+      e.set((rnd() - 0.5) * 0.5, rnd() * 6.28, (rnd() - 0.5) * 0.5);
+      lists[k % shapes.length].push(new THREE.Matrix4().compose(new THREE.Vector3(x, this.h(x, y) - sz * 0.12, y), q.setFromEuler(e), new THREE.Vector3(sz, sz * (0.7 + rnd() * 0.5), sz)));
+      k++;
+    }
+    lists.forEach((list, j) => {
+      if (!list.length) { shapes[j].dispose(); return; }
+      const im = new THREE.InstancedMesh(shapes[j], mat, list.length);
+      list.forEach((m, i) => im.setMatrixAt(i, m));
+      im.castShadow = true;
+      im.receiveShadow = true;
+      g.add(im);
+    });
+    return g;
+  }
+
+  /** A rock's handles: a round one to turn it; a dot each for its length and width (or, with an
+   * outline drawn, a dot at each of its points and a small one between two to add another, a
+   * double-click taking one away). Its height has the height handle. */
+  private rockHandles(id: string, add: (kind: string, world: () => THREE.Vector3 | null, start: Handle["start"], opts?: any) => void) {
+    const rock = () => { const r = this.item(id); return r && r.type === "rock" ? r : null; };
+    // (its own feet, round its middle, to the map and back: it turns by its rotation)
+    const toWorld = (r: RockItem, lx: number, lz: number) => { const a = r.rotation * DEG, c = Math.cos(a), s = Math.sin(a); return { x: r.x + lx * c - lz * s, y: r.y + lx * s + lz * c }; };
+    const toLocal = (r: RockItem, p: P) => { const a = r.rotation * DEG, c = Math.cos(a), s = Math.sin(a), dx = p.x - r.x, dy = p.y - r.y; return { x: dx * c + dy * s, y: -dx * s + dy * c }; };
+    const at = (p: P, up = 0.3) => new THREE.Vector3(p.x, this.h(p.x, p.y) + up, p.y);
+    const r0 = rock();
+    if (!r0) return;
+    add("rotate", () => {
+      const r = rock();
+      if (!r) return null;
+      const reach = Math.max(r.length, r.width) / 2 + 4;
+      const d = COARSE ? Math.max(reach, 40 * this.upp(new THREE.Vector3(r.x, this.h(r.x, r.y), r.y))) : reach;
+      return at(toWorld(r, 0, -d));
+    }, e => this.planeDrag(e, id, (p, it, ev) => {
+      // (the handle stands off its "north" side: its turn is the pointer's bearing less a quarter)
+      let deg = (Math.atan2(p.y - it.y, p.x - it.x) * 180) / Math.PI + 90;
+      if (ev.shiftKey) deg = Math.round(deg / 15) * 15;
+      return { rotation: Math.round(((deg % 360) + 360) % 360) };
+    }), { title: "Drag to turn it · Shift snaps to 15°" });
+    const outline = r0.outline && r0.outline.length >= 3 && (r0.kind === "boulder" || r0.kind === "block") ? r0.outline : null;
+    if (!outline) {
+      // (its length along its own long side, its width across it: dragged out from its middle)
+      add("radius", () => { const r = rock(); return r ? at(toWorld(r, r.length / 2 + 0.6, 0)) : null; },
+        e => this.planeDrag(e, id, (p, it) => ({ length: clamp(Math.round(Math.abs(toLocal(it as RockItem, p).x) * 4 - 1.2) / 2, 1, 80) })), { title: "Drag to make it longer or shorter" });
+      if (r0.kind !== "wall") add("radius", () => { const r = rock(); return r ? at(toWorld(r, 0, r.width / 2 + 0.6)) : null; },
+        e => this.planeDrag(e, id, (p, it) => ({ width: clamp(Math.round(Math.abs(toLocal(it as RockItem, p).y) * 4 - 1.2) / 2, 1, 60) })), { title: "Drag to make it wider or narrower" });
+      return;
+    }
+    const n = outline.length;
+    const drag = (index: number, start: P[]): Drag => {
+      const pts = start.map(p => ({ ...p }));
+      const r = rock()!, y = this.h(r.x, r.y);
+      return {
+        move: ev => {
+          const hit = this.planeAt(ev.clientX, ev.clientY, y);
+          const cur = rock();
+          if (!hit || !cur) return;
+          const l = toLocal(cur, { x: hit.x, y: hit.z });
+          pts[index] = { x: Math.round(l.x * 10) / 10, y: Math.round(l.y * 10) / 10 };
+          this.cb.onChange(id, { outline: pts.map(p => ({ ...p })), ...rockSpan(pts) });
+        },
+        end: () => this.cb.onCommit()
+      };
+    };
+    for (let i = 0; i < n; i++) {
+      add("corner", () => { const r = rock(), p = r?.outline?.[i]; return r && p ? at(toWorld(r, p.x, p.y)) : null; }, e => {
+        const cur = rock();
+        if (!cur?.outline) return null;
+        const now = performance.now(), last = this.lastCorner;
+        this.lastCorner = { id, index: i, time: now };
+        if (e.altKey || (last && last.id === id && last.index === i && now - last.time < 400)) {
+          this.lastCorner = null;
+          if (cur.outline.length > 3) {
+            const pts = cur.outline.filter((_, k) => k !== i);
+            this.cb.onChange(id, { outline: pts, ...rockSpan(pts) });
+            this.cb.onCommit();
+          } else toast("A rock's outline needs at least 3 points.", "info");
+          return null;
+        }
+        return drag(i, cur.outline);
+      }, { index: i, title: "Drag to reshape the rock · double-click to remove this point" });
+      add("mid", () => {
+        const r = rock(), pts = r?.outline;
+        if (!r || !pts || pts.length !== n) return null;
+        const q = rockOutlinePoints(pts.map(p => [p.x, p.y] as [number, number]), n * 8)[i * 8 + 4];
+        return q ? at(toWorld(r, q[0], q[1])) : null;
+      }, () => {
+        const cur = rock();
+        if (!cur?.outline) return null;
+        const q = rockOutlinePoints(cur.outline.map(p => [p.x, p.y] as [number, number]), cur.outline.length * 8)[i * 8 + 4];
+        const next = [...cur.outline.slice(0, i + 1), { x: q[0], y: q[1] }, ...cur.outline.slice(i + 1)];
+        this.cb.onChange(id, { outline: next });
+        return drag(i + 1, next);
+      }, { index: i, title: "Drag to add a point here" });
     }
   }
 
@@ -5263,6 +5401,10 @@ export class CourseView {
       if (it.type === "tree") {
         const h = it.height ?? it.radius * 2.6;
         return { at: { x: it.x, y: it.y }, h, min: 2, max: Math.max(120, Math.round(h)), patch: (v: number) => ({ height: v, radius: Math.max(1, Math.min(45, Math.round(it.radius * (v / h) * 10) / 10)) }) };
+      }
+      if (it.type === "rock") {
+        const keep = 1 - (it.buried ?? ROCK_BURIED[it.kind]), h = Math.round(it.height * keep * 2) / 2;
+        return { at: { x: it.x, y: it.y }, h, min: 0.5, max: Math.max(30, h), patch: (v: number) => ({ height: Math.round((v / Math.max(0.05, keep)) * 10) / 10 }) };
       }
       if (it.type === "structure" && isLineKind(it.kind) && STRUCTURE_KINDS[it.kind].heightLabel) {
         const meta = STRUCTURE_KINDS[it.kind], h = structureHeight(it), c = centroid(it.points);
@@ -8281,7 +8423,7 @@ export class CourseView {
 
   private updateGhost(at: THREE.Vector3 | null) {
     const mode = this.tool.mode;
-    const kind = mode === "add-tee" ? "tee" : mode === "add-basket" ? "basket" : mode === "add-mando" ? "mando" : mode === "add-dropzone" ? "dropzone" : mode === "add-tree" ? "tree" : mode === "add-amenity" ? "amenity" : mode === "add-field" ? "field" : "";
+    const kind = mode === "add-tee" ? "tee" : mode === "add-basket" ? "basket" : mode === "add-mando" ? "mando" : mode === "add-dropzone" ? "dropzone" : mode === "add-tree" ? "tree" : mode === "add-amenity" ? "amenity" : mode === "add-field" ? "field" : mode === "add-rock" ? "rock" : "";
     if (!at || !kind || !this.doc) {
       if (this.ghost) {
         this.fx.remove(this.ghost);
@@ -8295,7 +8437,8 @@ export class CourseView {
     // (the Tree tool's preview: the kind it plants, as big as it plants it)
     const tk = this.tool.treeKind ?? "deciduous";
     const fk = this.tool.fieldKind ?? "baseball";
-    const key = kind === "tree" ? `tree:${tk}` : kind === "tee" ? `tee:${this.teeLevel}` : kind === "amenity" ? `amenity:${this.amenityKind}` : kind === "field" ? `field:${fk}` : kind;
+    const rk = this.tool.rockKind ?? "boulder";
+    const key = kind === "tree" ? `tree:${tk}` : kind === "tee" ? `tee:${this.teeLevel}` : kind === "amenity" ? `amenity:${this.amenityKind}` : kind === "field" ? `field:${fk}` : kind === "rock" ? `rock:${rk}` : kind;
     if (this.ghostKey !== key) {
       if (this.ghost) {
         this.fx.remove(this.ghost);
@@ -8307,6 +8450,7 @@ export class CourseView {
         : kind === "mando" ? createMando("right")
         : kind === "dropzone" ? createDropZone()
         : kind === "amenity" ? createAmenity(this.amenityKind)
+        : kind === "rock" ? createRock({ id: "ghost", type: "rock", kind: rk, stone: "granite", x: 0, y: 0, rotation: 0, length: ROCK_KINDS[rk].length, width: ROCK_KINDS[rk].width, height: ROCK_KINDS[rk].height, seed: 7 })
         : kind === "tree" ? create3dTree(tk === "bush" ? { id: "ghost", type: "tree", x: 0, y: 0, rotation: 0, radius: 5, height: 6, treeType: "bush", color: "#4a7a3a" } : tk === "conifer" ? { id: "ghost", type: "tree", x: 0, y: 0, rotation: 0, radius: 10, height: 50, treeType: "conifer", color: "#2f5d34" } : { id: "ghost", type: "tree", x: 0, y: 0, rotation: 0, radius: 14, height: 40, color: "#4a7a3a" })
         : createTeePad({ id: "ghost", type: "tee", holeId: "", level: this.teeLevel, x: 0, y: 0, rotation: 0, padWidth: 5, padLength: 12, surface: "concrete" }, 0);
       obj.traverse(o => {
@@ -8334,3 +8478,11 @@ export class CourseView {
     return g;
   }
 }
+
+/** A rock surface's color: its stone, darker for broken rock, earthier for rocky ground. */
+const rockGroundColor = (a: AreaItem) => {
+  const st = new THREE.Color(ROCK_STONES[a.stone ?? "granite"].color), look = a.rockLook ?? "bedrock";
+  st.multiplyScalar(look === "broken" ? 0.62 : 0.72);
+  if (look === "rocky") st.lerp(new THREE.Color("#6a5644"), 0.55);
+  return `#${st.getHexString()}`;
+};
