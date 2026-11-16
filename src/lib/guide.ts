@@ -2,7 +2,7 @@
 // it as chapters, and search (Ctrl+K) finds any of it and takes you there.
 import type { Step } from "../state/course";
 import type { ToolMode } from "../types";
-import { EXAMPLE_CSV, EXAMPLE_GEOJSON } from "./courseFileExamples";
+import { EXAMPLE_CSV, EXAMPLE_GEOJSON, EXAMPLE_GPX, EXAMPLE_KML } from "./courseFileExamples";
 
 export type GuideSection = "start" | "site" | "design" | "view" | "map" | "export" | "share" | "phone" | "keys";
 
@@ -445,9 +445,9 @@ export const TOPICS: Topic[] = [
   },
   {
     id: "course-file-format", section: "design", title: "Course file format",
-    body: "Holes from a GPS file opens any GPX, KML, KMZ, GeoJSON or CSV, but a GeoJSON or CSV laid out like the examples here brings in everything: tees with their color and surface, baskets with their pin and model, each tee's line and par, the hole's name and notes, and the course's layouts. Download an example, put your course's points in it, and open it with Holes from a GPS file. The examples are one hole in a made-up park.\n\nIn a CSV, each row is one point, with lat and lon columns. A bend row is a point the hole's line turns at: list them in order from the tee, with the tee's color to make them that tee's line. A layout row has no lat or lon, just layout, tee and pin. Commas, semicolons or tabs all work between columns.\n\nIn GeoJSON, tees and baskets are Points, and a hole's line is a LineString from the tee through each bend to the basket. Give the line its tee's color and par, and its name and notes become the hole's. The course's name and layouts sit beside the features.\n\nColumn names can be in any case, with spaces in place of underscores. Leave out what you don't have: a tee with no color gets one by how far back it is, and baskets with no pin become A, B and so on. The back tee's line gives the hole its bends and par, and another tee whose line or par differs keeps its own. KML can carry the same columns as ExtendedData. GPX has names only, so it brings in tees, baskets and lines. Mandos, drop zones and OB lines don't come in from a file.",
+    body: "Holes from a GPS file opens any GPX, KML, KMZ, GeoJSON or CSV, but a CSV, GeoJSON or KML laid out like the examples here brings in everything: tees with their color and surface, baskets with their pin and model, each tee's line and par, the hole's name and notes, and the course's layouts. Download an example, put your course's points in it, and open it with Holes from a GPS file. The examples are one hole in a made-up park, in each kind of file.\n\nIn a CSV, each row is one point, with lat and lon columns. A bend row is a point the hole's line turns at: list them in order from the tee, with the tee's color to make them that tee's line. A layout row has no lat or lon, just layout, tee and pin. Commas, semicolons or tabs all work between columns.\n\nIn GeoJSON, tees and baskets are Points, and a hole's line is a LineString from the tee through each bend to the basket. Give the line its tee's color and par, and its name and notes become the hole's. The course's name and layouts sit beside the features.\n\nColumn names can be in any case, with spaces in place of underscores. Leave out what you don't have: a tee with no color gets one by how far back it is, and baskets with no pin become A, B and so on. The back tee's line gives the hole its bends and par, and another tee whose line or par differs keeps its own.\n\nIn KML, the columns are each placemark's ExtendedData, and a layout is a placemark with no point or line. A KMZ is a zipped KML. GPX has names only (Hole 1 Blue tee, Hole 1 basket A, and a route named Hole 1 Blue for the line), so it brings in tees, baskets and lines, and the rest is set in the app. Mandos, drop zones and OB lines don't come in from a file.",
     table: [
-      ["kind", "tee, basket or hole (a line from a tee to its basket). In a CSV, also bend or layout."],
+      ["kind", "tee, basket or hole (a line from a tee to its basket). Also layout, and in a CSV, bend."],
       ["hole", "The hole's number, 1 to 99."],
       ["tee", "Gold, Blue, White, Red, Green or Purple. On a line or bend, the tee it starts from; on a layout, the tee it plays."],
       ["surface", "A tee's surface: Concrete, Turf, Rubber, Pavers, Gravel or Natural (grass or dirt)."],
@@ -461,7 +461,9 @@ export const TOPICS: Topic[] = [
     ],
     files: [
       { label: "Example CSV", name: "course-file-example.csv", type: "text/csv", text: EXAMPLE_CSV },
-      { label: "Example GeoJSON", name: "course-file-example.geojson", type: "application/geo+json", text: EXAMPLE_GEOJSON }
+      { label: "Example GeoJSON", name: "course-file-example.geojson", type: "application/geo+json", text: EXAMPLE_GEOJSON },
+      { label: "Example KML", name: "course-file-example.kml", type: "application/vnd.google-earth.kml+xml", text: EXAMPLE_KML },
+      { label: "Example GPX", name: "course-file-example.gpx", type: "application/gpx+xml", text: EXAMPLE_GPX }
     ],
     words: "course file format columns properties template example spreadsheet csv geojson kml gpx kind hole tee color surface pin model par name notes layout lat lon latitude longitude bend line import",
     path: "Site › Holes from a GPS file",

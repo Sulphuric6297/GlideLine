@@ -4,9 +4,8 @@ Holes from a GPS file brings a course's holes in from a file: every tee and bask
 place, each hole's bends, and whatever else the file says about the holes. This page lists what a
 file can hold and how to write it so all of it comes in.
 
-GeoJSON and CSV can hold everything below. KML can too, with each placemark's properties as
-ExtendedData. GPX only has names, so a GPX brings in tees, baskets and lines, and the rest comes
-from what each name says.
+CSV, GeoJSON and KML can hold everything below (KML as each placemark's ExtendedData). GPX only
+has names, so a GPX brings in tees, baskets and lines, and the rest comes from what each name says.
 
 The help guide's Course file format has the same list, with these examples to download.
 
@@ -37,7 +36,7 @@ read as `hole_name`).
 
 | Key | Values | Notes |
 |---|---|---|
-| `kind` | `tee`, `basket`, `hole` | `hole` is a line from a tee to its basket. In a CSV, `bend` and `layout` rows too (see below). |
+| `kind` | `tee`, `basket`, `hole` | `hole` is a line from a tee to its basket. `layout` too (see each format below), and in a CSV, `bend` rows. |
 | `hole` | `1` to `99` | The hole's number. |
 
 ### Tees
@@ -137,11 +136,56 @@ A row a hole works too: `tee_lat` and `tee_lon`, then `basket_lat` and `basket_l
 pin as `basket_a_lat`, `basket_b_lat` and so on). The hole list GlideLine Studio exports reads back
 this way, with its `name`, `notes`, `tee`, `par` and `basket_pin` columns.
 
-## KML and GPX
+## KML
 
-Name each point for what it is (`Hole 3 Tee`, `3T`, `Blue tee 3`, `Basket 3`, `3A`, `Pin 3 long`),
-or put a hole's points in a folder named `Hole 3`. A KML placemark's ExtendedData can carry any of
-the keys above. A GPX route or track named `Hole 3` (or `Hole 3 Blue`) is that hole's line.
+Placemarks, each with its keys as ExtendedData. Tees and baskets are Points, and a hole's lines are
+LineStrings (`kind` `hole`), from the tee through each bend to the basket. The line's placemark
+name is the hole's name, as GeoJSON's `name` is. A layout is a placemark of `kind` `layout` with no
+point or line, named for the layout. The Document's name is the course's. A KMZ is a zipped KML.
+
+```xml
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Springfield Park</name>
+    <Placemark><name>Hole 1 Blue tee</name>
+      <ExtendedData><Data name="kind"><value>tee</value></Data><Data name="hole"><value>1</value></Data>
+        <Data name="tee"><value>Blue</value></Data><Data name="surface"><value>Turf</value></Data></ExtendedData>
+      <Point><coordinates>-89.68112,39.78021</coordinates></Point></Placemark>
+    <Placemark><name>The Long Way</name>
+      <ExtendedData><Data name="kind"><value>hole</value></Data><Data name="hole"><value>1</value></Data>
+        <Data name="tee"><value>Blue</value></Data><Data name="par"><value>4</value></Data>
+        <Data name="notes"><value>OB left of the path.</value></Data></ExtendedData>
+      <LineString><coordinates>-89.68112,39.78021 -89.68055,39.7804 -89.6799,39.78102</coordinates></LineString></Placemark>
+    <Placemark><name>Long</name>
+      <ExtendedData><Data name="kind"><value>layout</value></Data><Data name="tee"><value>Blue</value></Data>
+        <Data name="pin"><value>A</value></Data></ExtendedData></Placemark>
+  </Document>
+</kml>
+```
+
+The help guide's example KML has the whole hole: both tees, both baskets, both lines and both
+layouts.
+
+A KML without ExtendedData, such as one drawn in Google Earth, works from names: name each point
+for what it is (`Hole 3 Tee`, `3T`, `Blue tee 3`, `Basket 3`, `3A`, `Pin 3 long`), or put a
+hole's points in a folder named `Hole 3`.
+
+## GPX
+
+GPX has names only. Name each waypoint for what it is, as above, and a route or track named
+`Hole 3` (or `Hole 3 Blue`) is that hole's line. The metadata's name is the course's. Surfaces,
+models, par, the hole's name and notes, and layouts don't fit in a GPX, so set them in the app.
+
+```xml
+<gpx version="1.1" creator="GlideLine Studio" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Springfield Park</name></metadata>
+  <wpt lat="39.78021" lon="-89.68112"><name>Hole 1 Blue tee</name></wpt>
+  <wpt lat="39.78034" lon="-89.68087"><name>Hole 1 Red tee</name></wpt>
+  <wpt lat="39.78102" lon="-89.6799"><name>Hole 1 basket A</name></wpt>
+  <wpt lat="39.78085" lon="-89.67961"><name>Hole 1 basket B</name></wpt>
+  <rte><name>Hole 1 Blue</name><rtept lat="39.78021" lon="-89.68112"/><rtept lat="39.7804" lon="-89.68055"/><rtept lat="39.78102" lon="-89.6799"/></rte>
+</gpx>
+```
 
 ## What doesn't come in
 
