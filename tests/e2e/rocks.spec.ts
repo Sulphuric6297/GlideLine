@@ -126,7 +126,8 @@ test("steep ground on the map: painted as rock on a course made since rocks came
     const th: Record<string, number> = {};
     for (let x = 0; x <= 30 * g; x += g) for (let y = 0; y <= 30 * g; y += g) th[x + "," + y] = 80 * Math.max(0, Math.min(1, (110 - Math.hypot(x - mid, y - mid)) / 60));
     const doc = { ...doc0, terrainHeights: th };
-    const style = { ...doc0.style, hillshade: true, reliefLook: "shaded" }, before = { ...style, steepRock: undefined }, since = { ...style, steepRock: 40 };
+    // (open ground: a new course is all woods until its woods are drawn)
+    const style = { ...doc0.style, hillshade: true, reliefLook: "shaded", forest: "woods" }, before = { ...style, steepRock: undefined }, since = { ...style, steepRock: 40 };
     const view = { cx: mid, cy: mid, rotation: 0, scale: 0.8, width: 240, height: 240 };
     const rock = { id: "r1", type: "rock", kind: "boulder", stone: "granite", x: mid + 400, y: mid + 400, rotation: 0, length: 6, width: 5, height: 4, seed: 1 };
     return {
