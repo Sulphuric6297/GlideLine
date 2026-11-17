@@ -3369,7 +3369,7 @@ export class CourseView {
       case "dropzone": return createDropZone();
       case "tree": { const st = doc.course.style; return create3dTree(item, { color: st.trees, mix: treeMixOf(st) }); }
       case "amenity": return createAmenity(item.kind, item.width);
-      case "rock": return createRock(item);
+      case "rock": return createRock(item, () => this.invalidate());
       default: return null;
     }
   }
@@ -5251,14 +5251,22 @@ export class CourseView {
     let seed = 1;
     for (const ch of a.id) seed = (seed * 31 + ch.charCodeAt(0)) % 2147483647;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const box = boundsOf(a.points), lists: THREE.Matrix4[][] = shapes.map(() => []);
-    const q = new THREE.Quaternion(), e = new THREE.Euler();
+    const box = boundsOf(a.points), ring = [...a.points, a.points[0]], lists: THREE.Matrix4[][] = shapes.map(() => []);
+    const q = new THREE.Quaternion(), tilt = new THREE.Quaternion(), e = new THREE.Euler(), up = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3();
     for (let k = 0, tries = 0; k < n && tries < n * 6; tries++) {
       const x = box.minX + rnd() * (box.maxX - box.minX), y = box.minY + rnd() * (box.maxY - box.minY);
       if (!pointInPolygon({ x, y }, a.points)) continue;
       const sz = (look === "broken" ? 0.5 + rnd() * 1.6 : 0.35 + rnd() * 0.9) * (rnd() < 0.07 ? 2 : 1);
-      e.set((rnd() - 0.5) * 0.5, rnd() * 6.28, (rnd() - 0.5) * 0.5);
-      lists[k % shapes.length].push(new THREE.Matrix4().compose(new THREE.Vector3(x, this.h(x, y) - sz * 0.12, y), q.setFromEuler(e), new THREE.Vector3(sz, sz * (0.7 + rnd() * 0.5), sz)));
+      // (each stone wholly on the surface, none over its edge)
+      if (distanceToPath({ x, y }, ring) < sz * 0.6) continue;
+      // (lying with the ground's slope, not level on it, and set into it a little, as stones settle)
+      const d = Math.max(0.5, sz * 0.5);
+      nrm.set(this.h(x - d, y) - this.h(x + d, y), 2 * d, this.h(x, y - d) - this.h(x, y + d)).normalize();
+      tilt.setFromUnitVectors(up, nrm);
+      e.set((rnd() - 0.5) * 0.3, rnd() * 6.28, (rnd() - 0.5) * 0.3);
+      q.setFromEuler(e).premultiply(tilt);
+      const hy = sz * (0.7 + rnd() * 0.5);
+      lists[k % shapes.length].push(new THREE.Matrix4().compose(new THREE.Vector3(x, this.h(x, y) - hy * 0.55 * 0.3, y), q, new THREE.Vector3(sz, hy, sz)));
       k++;
     }
     lists.forEach((list, j) => {

@@ -87,12 +87,12 @@ const paintKey = (doc: CourseDoc) => {
 };
 const keyOf = (doc: CourseDoc) =>
   JSON.stringify([
-    { ...doc.style, logo: undefined, card: undefined, sign: undefined, legendAt: undefined, page: undefined, texts: undefined, images: undefined, title: undefined, subtitle: undefined, footer: undefined },
+    { ...doc.style, logo: undefined, card: undefined, sign: undefined, legendAt: undefined, page: undefined, texts: undefined, images: undefined, title: undefined, subtitle: undefined, footer: undefined, hideRocks: undefined, steepRock: undefined },
     idOf(doc.terrainHeights),
     doc.background?.length ?? 0,
     doc.canvas,
     doc.activeLayout,
-    paintedFrom(doc)
+    paintedFrom(doc, true)
   ]);
 
 /** The course with its 3D look's colors (the painted ground is for the 3D view only), the same

@@ -115,3 +115,29 @@ test("rocks hidden on the illustrated map from Rocks in its map style, and shown
   await expect.poll(async () => (await course(page)).style.hideRocks).toBeUndefined();
   await expect(page.getByTestId("part-rocks")).toContainText("Shown");
 });
+
+test("steep ground on the map: painted as rock on a course made since rocks came or with a rock on it, drawn as it was on one from before", async ({ page }) => {
+  await blankCourse(page);
+  await page.getByRole("button", { name: "3 Map" }).click();
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__dgMapDiff), { timeout: 60_000 }).toBe("function");
+  const d = await page.evaluate(async () => {
+    const w = window as any, doc0 = w.__dgCourse(), g = doc0.gridSize, mid = 15 * g;
+    // (a mound 80 ft high, its sides steep)
+    const th: Record<string, number> = {};
+    for (let x = 0; x <= 30 * g; x += g) for (let y = 0; y <= 30 * g; y += g) th[x + "," + y] = 80 * Math.max(0, Math.min(1, (110 - Math.hypot(x - mid, y - mid)) / 60));
+    const doc = { ...doc0, terrainHeights: th };
+    const style = { ...doc0.style, hillshade: true, reliefLook: "shaded" }, before = { ...style, steepRock: undefined }, since = { ...style, steepRock: 40 };
+    const view = { cx: mid, cy: mid, rotation: 0, scale: 0.8, width: 240, height: 240 };
+    const rock = { id: "r1", type: "rock", kind: "boulder", stone: "granite", x: mid + 400, y: mid + 400, rotation: 0, length: 6, width: 5, height: 4, seed: 1 };
+    return {
+      gate: await w.__dgMapDiff(doc, before, since, view),
+      withRock: await w.__dgMapDiff({ ...doc, items: [...doc.items, rock] }, before, since, view),
+      rockChanges: await w.__dgMapDiff(doc, before, before, view)
+    };
+  });
+  // (a course from before rocks, none on it: its steep ground is drawn as it always was, not as the rock painting)
+  expect(d.gate).toBeGreaterThan(0.5);
+  expect(d.rockChanges).toBe(0);
+  // (with a rock on it, it has the rock painting too)
+  expect(d.withRock).toBeLessThan(0.01);
+});

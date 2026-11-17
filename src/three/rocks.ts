@@ -456,17 +456,61 @@ export const rockSignature = (it: RockItem) =>
 /** Where a rock gives way to its plainer versions, ft from the eye. */
 const LOD_AT = [0, 140, 380];
 
-/** A rock in 3D: three versions, finer close up; it stands at y = 0 on its own ground. */
-export function createRock(it: RockItem): THREE.Object3D {
+/** Rock shapes made already, by what shapes them and how fine: a rock's stone, moss or lichen
+ * changed, or the rock moved or turned, makes none again. Shared (the 3D view and the map's
+ * painter use them; neither frees them), the least used let go past a few dozen. */
+const SHAPES = new Map<string, THREE.BufferGeometry>();
+const shapeKeyOf = (it: RockItem, q: number) => JSON.stringify([it.kind, it.length, it.width, it.height, it.buried, it.edges, it.seed, it.profile, it.outline, q]);
+export function rockShape(it: RockItem, q: number): THREE.BufferGeometry {
+  const key = shapeKeyOf(it, q);
+  let g = SHAPES.get(key);
+  if (g) {
+    SHAPES.delete(key);
+    SHAPES.set(key, g);
+    return g;
+  }
+  g = rockItemGeometry(it, q);
+  g.userData.shared = true;
+  SHAPES.set(key, g);
+  // (one let go and still drawn somewhere is simply sent to the graphics card again)
+  if (SHAPES.size > 120) { const [k0, g0] = SHAPES.entries().next().value!; SHAPES.delete(k0); g0.dispose(); }
+  return g;
+}
+
+// (the finest versions, made one at a time once changes stop: a slider dragged makes only the
+// plainer ones, a few hundredths of a second, not the finest, a fifth of a second a rock)
+const finer: { lod: THREE.LOD; it: RockItem; done?: () => void }[] = [];
+let finerTimer: ReturnType<typeof setTimeout> | null = null;
+const makeFiner = () => {
+  finerTimer = null;
+  const job = finer.shift();
+  if (!job) return;
+  // (one taken off the map meanwhile, by a change after it: not made)
+  if (job.lod.parent) {
+    (job.lod.levels[0].object as THREE.Mesh).geometry = rockShape(job.it, 1);
+    job.done?.();
+  }
+  if (finer.length) finerTimer = setTimeout(makeFiner, 16);
+};
+
+/** A rock in 3D: three versions, finer close up; it stands at y = 0 on its own ground. The finest
+ * is made a moment later (until then the next one stands in); `done` then (to draw again). */
+export function createRock(it: RockItem, done?: () => void): THREE.Object3D {
   const lod = new THREE.LOD();
   const mat = rockMaterial(it);
-  [1, 0.42, 0.16].forEach((q, i) => {
-    const mesh = new THREE.Mesh(rockItemGeometry(it, q), mat);
+  const ready = SHAPES.has(shapeKeyOf(it, 1)), mid = rockShape(it, 0.42);
+  [ready ? rockShape(it, 1) : mid, mid, rockShape(it, 0.16)].forEach((g, i) => {
+    const mesh = new THREE.Mesh(g, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     lod.addLevel(mesh, LOD_AT[i]);
   });
   lod.userData.rock = true;
+  if (!ready) {
+    finer.push({ lod, it, done });
+    if (finerTimer) clearTimeout(finerTimer);
+    finerTimer = setTimeout(makeFiner, 350);
+  }
   return lod;
 }
 
