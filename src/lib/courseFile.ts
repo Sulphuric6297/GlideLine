@@ -230,13 +230,15 @@ const kmlCoords = (s: string): LatLon[] => s.trim().split(/\s+/).map(c => c.spli
 
 export const readKml = (text: string, format: "KML" | "KMZ" = "KML"): CourseFile => {
   const d = xmlDoc(text);
-  const points: FilePoint[] = [], lines: FileLine[] = [];
+  const points: FilePoint[] = [], lines: FileLine[] = [], layouts: FileLayout[] = [];
   for (const pm of all(d, "Placemark")) {
     const name = textOf(kid(pm, "name"));
     const props: Record<string, string> = { name, description: textOf(kid(pm, "description")).replace(/<[^>]*>/g, " ") };
     for (const data of all(pm, "Data")) props[data.getAttribute("name") ?? ""] = textOf(kid(data, "value"));
     for (const sd of all(pm, "SimpleData")) props[sd.getAttribute("name") ?? ""] = textOf(sd);
     const said = readTags(props);
+    // (a placemark of kind layout, with no point or line, names a layout, as a CSV's row does)
+    if (said.layout) { const l = layoutOf(said); if (l) layouts.push(l); continue; }
     // (what the folders round it say fills in what its own name doesn't: a folder "Hole 3" with
     // "Tee" and "Basket" in it, or a folder "Tees" with "1", "2"... in it)
     for (let f = pm.parentElement; f && (said.role === undefined || said.hole === undefined); f = f.parentElement) {
@@ -250,13 +252,17 @@ export const readKml = (text: string, format: "KML" | "KMZ" = "KML"): CourseFile
       const at = kmlCoords(textOf(all(p, "coordinates")[0]))[0];
       if (at) points.push(pointOf(at, name, said));
     }
+    // (a line whose kind says it's a hole's names the hole and holds its notes, as in GeoJSON; any
+    // other line, "Untitled Path" from Google Earth or GlideLine Studio's own "Hole 3 throw line",
+    // names nothing)
+    const own = said.line ? { ...said, holeName: said.holeName ?? holeNameIn(name), holeNotes: said.holeNotes ?? propOf(props, "notes") } : said;
     for (const l of all(pm, "LineString")) {
       const pts = kmlCoords(textOf(all(l, "coordinates")[0]));
-      if (pts.length >= 2) lines.push(lineOf(name, pts, said));
+      if (pts.length >= 2) lines.push(lineOf(name, pts, own));
     }
   }
   const doc = all(d, "Document")[0];
-  return { format, name: doc ? textOf(kid(doc, "name")) || undefined : undefined, points, lines };
+  return { format, name: doc ? textOf(kid(doc, "name")) || undefined : undefined, points, lines, ...(layouts.length ? { layouts } : {}) };
 };
 
 /** A KMZ is a zip with a KML in it (doc.kml, or the first one there). */
@@ -505,7 +511,7 @@ const teeRank = (tag?: string) => { const i = (TEE_ORDER as string[]).indexOf(ta
  * The holes the file makes as it stands: each hole number with its tees and pins (every one, in the
  * file's order) and its bends from its line (with a line from each tee, the back tee's; another
  * tee whose line turns elsewhere keeps its own turns), its par (that line's, else the back tee's;
- * another tee's own where it differs), name and notes. Points that don't say what they are, or
+ * another tee's own, from its line or its own point, where it differs), name and notes. Points that don't say what they are, or
  * which hole, stay out until they're given both.
  */
 export const fileCourse = (file: CourseFile): MappedCourse & { left: FilePoint[] } => {
@@ -532,18 +538,21 @@ export const fileCourse = (file: CourseFile): MappedCourse & { left: FilePoint[]
     const par = line?.par ?? says.find(s => s.par)?.par;
     const name = says.find(s => s.holeName)?.holeName, notes = says.find(s => s.holeNotes)?.holeNotes;
     // (each other tee's own line: its turns, where they aren't the hole's still ahead of it, and its
-    // par, where it isn't the hole's)
+    // par, its line's or its own row's, where it isn't the hole's)
     const lineFrom = (t: FilePoint) => (t.tag ? ownLines.find(l => l.tag === t.tag) : undefined) ?? ownLines.find(l => metersApart(l.points[0], t.at) < SNAP_M);
     const own = (t: FilePoint) => {
       const l = lineFrom(t);
-      if (!l || l === line) return {};
+      if (l ? l === line : t === backTees[0]) return {};
+      const tp = l?.par ?? t.par;
+      const ownPar = tp && tp !== par ? { par: tp } : {};
+      if (!l) return ownPar;
       const turns = simplifyM(l.points, l.points.length > 8 ? BEND_M : 0.5).slice(1, -1);
       // (a tee with none of its own plays through the hole's turns still ahead of it)
       const end = l.points[l.points.length - 1];
       let ahead = doglegs;
       while (ahead.length && metersApart(t.at, ahead[1] ?? end) < metersApart(ahead[0], ahead[1] ?? end)) ahead = ahead.slice(1);
       const same = turns.length === ahead.length && turns.every((p, i) => metersApart(p, ahead[i]) < 1.5);
-      return { ...(same ? {} : { doglegs: turns }), ...(l.par && l.par !== par ? { par: l.par } : {}) };
+      return { ...(same ? {} : { doglegs: turns }), ...ownPar };
     };
     holes.push({
       ref: String(number), number, ...(par ? { par } : {}), ...(name ? { name } : {}), ...(notes ? { notes } : {}),

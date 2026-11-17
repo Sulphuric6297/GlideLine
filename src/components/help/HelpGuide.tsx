@@ -6,6 +6,7 @@ import { BookOpen, Box, Download, Keyboard, Lock, MapPin, Palette, Route, Search
 import { SECTIONS, TOPICS, type GuideSection, type Topic, type Where } from "../../lib/guide";
 import { SERVER } from "../../auth/api";
 import { showSetting } from "../showSetting";
+import { download } from "../../state/files";
 import { FlyArt, HoleArt, MapStepArt, PhoneArt, ScreenArt, ShareArt, StepsArt } from "./Illustrations";
 
 const ICONS: Record<GuideSection, JSX.Element> = {
@@ -66,6 +67,26 @@ function TopicCard({ t, onShow, lit }: { t: Topic; onShow: (t: Topic) => void; l
             </li>
           ))}
         </ol>
+      )}
+      {t.table && (
+        <dl className="mt-2 grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-x-4 text-[13px]" data-testid="help-table">
+          {t.table.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="mt-1.5 font-mono text-[12px] text-orange-200 whitespace-nowrap">{k}</dt>
+              <dd className="sm:mt-1.5 text-zinc-300">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {t.files && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {t.files.map(f => (
+            <button key={f.name} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 touch:min-h-[44px] touch:px-4 text-[12.5px] font-semibold bg-white/[0.08] hover:bg-white/[0.14] text-zinc-100"
+              onClick={() => download(new Blob([f.text], { type: f.type }), f.name)} data-testid="help-file">
+              <Download size={13} /> {f.label}
+            </button>
+          ))}
+        </div>
       )}
       {(t.path || t.where) && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -132,7 +153,7 @@ export function HelpGuide({ onClose, topic, touch = false, onShow }: { onClose: 
   const found = useMemo(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return null;
-    return shownTopics.filter(t => { const f = `${t.title} ${t.body} ${t.words ?? ""} ${t.path ?? ""} ${(t.steps ?? []).join(" ")}`.toLowerCase(); return words.every(w => f.includes(w)); });
+    return shownTopics.filter(t => { const f = `${t.title} ${t.body} ${t.words ?? ""} ${t.path ?? ""} ${(t.steps ?? []).join(" ")} ${(t.table ?? []).flat().join(" ")}`.toLowerCase(); return words.every(w => f.includes(w)); });
   }, [q]);
   // (not found on screen: said where it is, by the topic's path or its title)
   const show = (t: Topic) => { onClose(); onShow?.(); if (t.where) void showSetting({ ...t.where, missing: t.path ?? t.title } as Where); };

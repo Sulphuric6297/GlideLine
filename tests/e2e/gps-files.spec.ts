@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import { test as plain, expect as plainExpect, type Page } from "@playwright/test";
 import { test, expect, addHole, blankCourse, course, geoAt, SITE } from "./fixtures";
 import { fileCourse, readCsv, readGeoJson, readName, readSurface, settle, withFileLayouts } from "../../src/lib/courseFile";
@@ -5,6 +6,7 @@ import { bendOwner, createBasket, createEmptyCourse, createTee, defaultLayouts, 
 import { holeStats } from "../../src/lib/holeStats";
 import { holeHints, mappedCourse, osmFeaturesFrom } from "../../src/lib/geo/osm";
 import { pinPositions, teeLevels } from "../../src/lib/importSite";
+import { EXAMPLE_CSV, EXAMPLE_GEOJSON, EXAMPLE_GPX, EXAMPLE_KML } from "../../src/lib/courseFileExamples";
 
 // Holes from a GPS file (lib/courseFile, components/CourseFileDialog): GPX, KML, GeoJSON and CSV
 // files of a course's tees and baskets, each point worked out from its name, every pin position
@@ -270,4 +272,81 @@ plain("a tee past one of the hole's turns skips it: its line, length and the way
   plainExpect(play("blue").line.length).toBe(4);
   plainExpect(play("red").line.map(p => [p.x, p.y])).toEqual([[150, 40], [200, 100], [300, 100]]);
   plainExpect(play("red").length).toBeLessThan(play("blue").length);
+});
+
+plain("the help guide's example files bring in all they hold, CSV and GeoJSON alike (pure logic)", () => {
+  for (const file of [readCsv(EXAMPLE_CSV), readGeoJson(EXAMPLE_GEOJSON)]) {
+    const h = fileCourse(settle(file)).holes[0];
+    plainExpect([h.par, h.name, h.notes, h.doglegs.length]).toEqual([4, "The Long Way", "OB left of the path.", 1]);
+    plainExpect(h.tees?.map(t => [t.tag, t.surface, t.par])).toEqual([["blue", "turf", undefined], ["red", "natural", 3]]);
+    plainExpect(h.baskets?.map(b => [b.tag, b.model])).toEqual([["A", "Springfield 24"], ["B", "Springfield 24"]]);
+    plainExpect(file.layouts).toEqual([{ name: "Long", tee: "blue", pin: "A" }, { name: "Short", tee: "red", pin: "B" }]);
+  }
+  plainExpect(readGeoJson(EXAMPLE_GEOJSON).name).toBe("Springfield Park");
+  // (GeoJSON's Red line goes straight at the basket: its own; a CSV's Red, with no bends of its own, plays the hole's)
+  plainExpect(fileCourse(settle(readGeoJson(EXAMPLE_GEOJSON))).holes[0].tees?.[1].doglegs).toEqual([]);
+  plainExpect(fileCourse(settle(readCsv(EXAMPLE_CSV))).holes[0].tees?.[1].doglegs).toBeUndefined();
+});
+
+test("Course file format in the help guide: every column, and an example file that opens in Holes from a GPS file", async ({ page }) => {
+  await blankCourse(page);
+  await page.keyboard.press("Escape");
+  await siteHere(page);
+  // (the button's ? on the Site step says where the format is)
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "site" }));
+  await page.getByTestId("site-info").getByTestId("help-gps-holes").click();
+  await expect(page.getByTestId("help-tip")).toContainText("Course file format");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("?");
+  const guide = page.getByRole("dialog", { name: "Help guide" });
+  await guide.getByTestId("help-search").fill("course file format");
+  const card = guide.getByTestId("help-topic").filter({ hasText: "Course file format" });
+  await expect(card.getByTestId("help-table")).toContainText("hole_name, hole_notes");
+  const [dl] = await Promise.all([page.waitForEvent("download"), card.getByTestId("help-file").filter({ hasText: "Example CSV" }).click()]);
+  plainExpect(dl.suggestedFilename()).toBe("course-file-example.csv");
+  const text = readFileSync(await dl.path(), "utf8");
+  plainExpect(text).toBe(EXAMPLE_CSV);
+  // (Escape clears the search, then closes the guide)
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(guide).toHaveCount(0);
+  // (the made-up park is the test site's, so it lands on it)
+  await open(page, "course-file-example.csv", text);
+  await expect(page.getByTestId("course-file-summary")).toContainText("1 hole, 1 with more than one pin and 1 with more than one tee. Layouts: Long, Short.");
+  await page.getByTestId("course-file-format").getByTestId("help-course-file-format").click();
+  await expect(page.getByTestId("help-tip")).toContainText("laid out like the examples here");
+});
+
+test("the help guide's KML example brings in the whole hole, and its GPX example the points and the line", async ({ page }) => {
+  await blankCourse(page);
+  await page.keyboard.press("Escape");
+  await siteHere(page);
+  await page.keyboard.press("?");
+  const guide = page.getByRole("dialog", { name: "Help guide" });
+  await guide.getByTestId("help-search").fill("course file format");
+  const card = guide.getByTestId("help-topic").filter({ hasText: "Course file format" });
+  await expect(card.getByTestId("help-file")).toHaveText(["Example CSV", "Example GeoJSON", "Example KML", "Example GPX"]);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  const bring = async (name: string, text: string) => {
+    await open(page, name, text);
+    await page.getByTestId("course-file-bring").click();
+    await expect(page.getByTestId("course-file-dialog")).toBeHidden();
+    const c = await course(page);
+    const tee = (level: string) => c.items.find((i: any) => i.type === "tee" && i.level === level);
+    return { c, h: c.holes[0], tee, baskets: c.items.filter((i: any) => i.type === "basket").map((b: any) => [b.position, b.model]) };
+  };
+  // KML: all of it, as the GeoJSON has it (Red's own straight line and par)
+  const k = await bring("course-file-example.kml", EXAMPLE_KML);
+  plainExpect([k.c.name, k.h.name, k.h.notes, k.h.par, k.h.doglegs.length]).toEqual(["Springfield Park", "The Long Way", "OB left of the path.", 4, 1]);
+  plainExpect([k.tee("blue").surface, k.tee("red").surface, k.tee("red").par, k.tee("red").doglegs]).toEqual(["turf", "natural", 3, []]);
+  plainExpect(k.baskets).toEqual([["A", "Springfield 24"], ["B", "Springfield 24"]]);
+  plainExpect(k.c.layouts.map((l: any) => [l.name, l.tee, l.pin])).toEqual([["Long", "blue", "A"], ["Short", "red", "B"]]);
+  // GPX, once the KML is undone: names only
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await course(page)).holes.length).toBe(0);
+  const g = await bring("course-file-example.gpx", EXAMPLE_GPX);
+  plainExpect([g.h.doglegs.length, !!g.tee("blue"), !!g.tee("red"), g.h.name]).toEqual([1, true, true, undefined]);
+  plainExpect(g.baskets.map(([pin]: any) => pin)).toEqual(["A", "B"]);
+  plainExpect(g.c.layouts.map((l: any) => l.name)).toEqual(["Main"]);
 });
