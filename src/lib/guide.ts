@@ -2,6 +2,7 @@
 // it as chapters, and search (Ctrl+K) finds any of it and takes you there.
 import type { Step } from "../state/course";
 import type { ToolMode } from "../types";
+import { EXAMPLE_CSV, EXAMPLE_GEOJSON, EXAMPLE_GPX, EXAMPLE_KML } from "./courseFileExamples";
 
 export type GuideSection = "start" | "site" | "design" | "view" | "map" | "export" | "share" | "phone" | "keys";
 
@@ -34,6 +35,10 @@ export interface Topic {
   body: string;
   /** Steps, when it's something to do. */
   steps?: string[];
+  /** Words and what each means, in two columns (a file's columns, say). */
+  table?: [string, string][];
+  /** Files to download from it: examples to fill in. */
+  files?: { label: string; name: string; type: string; text: string }[];
   /** Other words people search with. */
   words?: string;
   /** The way there, as a path ("Map › Course map › Light and shadow"). */
@@ -255,10 +260,17 @@ export const TOPICS: Topic[] = [
   },
   {
     id: "line-of-play", section: "design", title: "The line of play: bends and plotting",
-    body: "The line of play is the route a throw is meant to take from tee to basket. Bend it to match a dogleg, so the length, par and checks follow the real route instead of a straight line.\n\nBend left and Bend right add a gentle curve, and Straighten takes the bends out. You can also drag the dot halfway along the line to bend it there, drag a turn to move it, or double-click a turn to remove it (on a phone, tap the turn, then Remove this turn).\n\nPlot the line lets you click the line out point by point (or drag it freehand). A bar over the map says which hole and \"Click along the line\", with Undo (the last point), Cancel and Done.",
+    body: "The line of play is the route a throw is meant to take from tee to basket. Bend it to match a dogleg, so the length, par and checks follow the real route instead of a straight line.\n\nBend left and Bend right add a gentle curve, and Straighten takes the bends out. A tee can have bends of its own, too (see A tee's own bends and par). You can also drag the dot halfway along the line to bend it there, drag a turn to move it, or double-click a turn to remove it (on a phone, tap the turn, then Remove this turn).\n\nPlot the line lets you click the line out point by point (or drag it freehand). A bar over the map says which hole and \"Click along the line\", with Undo (the last point), Cancel and Done.",
     words: "dogleg bend curve plot line straighten throw line",
     path: "Design › a hole › Plot the line",
     where: { step: "design", pick: "hole", find: "plot-line" }
+  },
+  {
+    id: "tee-own-line", section: "design", title: "A tee's own bends and par",
+    body: "Every tee plays through the hole's bends and to the hole's par unless you give it its own. Pick a tee and set Bends to Its own when that tee's line turns somewhere else, like a short tee that goes straight at the basket. It starts with the bends it plays now, so nothing moves until you change them. While that tee is picked, drag its turns on the map, pull the dot halfway along its line to add one, or double-click a turn to remove it. The hole's drops its own bends. A tee past one of the hole's turns skips that turn either way.\n\nPar from this tee works the same way. Leave it on the hole's par (Auto, when the hole's is worked out for you), or pick 2 to 6 when this tee plays to a different par, like a par 4 from the back and a par 3 from the front. Layouts, the scorecard, tee signs and the hole list use the par of the tee each layout plays.\n\nWhen the tee a layout plays has bends of its own, the hole's Bend left, Bend right, Straighten and Plot the line change that tee's bends. On a phone, a tee's bar has Bends and Par.",
+    words: "tee own line bends par different par per tee short tee long tee dogleg each tee layout",
+    path: "Design › pick a tee › Bends, Par from this tee",
+    where: { step: "design", pick: "tee", find: "inspector" }
   },
   {
     id: "in-play", section: "design", title: "In play",
@@ -360,6 +372,19 @@ export const TOPICS: Topic[] = [
     where: { step: "design", tool: "add-field", find: "field-kind-baseball" }
   },
   {
+    id: "rocks", section: "design", title: "Rocks",
+    body: "The Rocks tool (J) puts down a Boulder, Block, Ledge, Outcrop, Cluster or Rock wall wherever you click, at its usual size, and draws a Rock surface. Pick one to change its Kind, Stone (Granite, Fieldstone, Sandstone, Basalt or Red granite), Length, Width, Height and how much of it is Buried. A wall's Width is its Thickness. On the map, drag the round handle to turn it and the green dots to make it longer or wider; the orange handle in 3D sets its height.\n\nA boulder or block also has Profile (Rounded, Flat top, Peaked) and Outline. Outline Drawn puts points round it where it meets the ground: drag them to any shape, drag a small dot between two to add one, and double-click a point (double-tap on a phone) to take it away. Notches and bends are fine. Oval puts it back.\n\nLook details, folded away, has Edges (Rounded to Jagged), Moss and Lichen. Moss grows on what faces up and in the hollows, so a flat top gets more than a steep side. New shape makes a different rock of the same size and stone.\n\nA Rock surface is an area of bare rock in the ground: Bedrock, Broken rock, Rocky ground or Cliff, in any stone. Grass between sets how much grass grows through it, and Loose stones how many stones lie on it. On a new course, steep ground shows bare rock by itself: Bare rock on steep ground, under 3D look in the View panel, sets how steep (Never turns it off).\n\nRocks are drawn on the Map step's painted map from the same shapes as 3D, lit by its sun with their shadows, so moving or reshaping one in 3D shows in the drawing too. Steep rock is pale where it faces the sun and dark where it faces away, with its shadow on the ground below, and takes the stone of a rock surface on or near it. To leave them off the map, open Map style, Rocks, and pick Hidden. They stay in 3D.",
+    steps: [
+      "Pick Rocks in the tool bar, or press J.",
+      "Pick Boulder, Block, Ledge, Outcrop, Cluster or Rock wall.",
+      "Click where it goes.",
+      "In its panel, set its Stone, size and look."
+    ],
+    words: "rock rocks boulder block ledge outcrop bedrock cluster wall dry stone stone granite fieldstone sandstone basalt red granite moss lichen buried profile flat top outline shape custom shape rock surface broken rock scree rocky ground cliff steep slope shadow hide rocks hidden off the map",
+    path: "Design › Rocks (J)",
+    where: { step: "design", tool: "add-rock", find: "rock-kind-boulder" }
+  },
+  {
     id: "trees", section: "design", title: "Trees",
     body: "The Trees tool (R) plants a Leafy tree, a Conifer or a Bush wherever you click, and draws Woods and Hedges. To plant a whole stand of one kind, pick it, then Points, Rectangle, Circle, Freehand or Paint in the row under it, and draw it as you would any area. It's a wood that grows only that kind, so its panel is a wood's. Where trees were measured from the air, they stay, and the new ones fill the gaps. One tree goes back to a tree at a time. A hedge is drawn along its line, like a fence, and its panel is a line's: Width and Height. Pick one to change its Kind (the same Leafy tree, Conifer and Bush chips as the tool bar), its Species, height and spread. A leafy tree can be an oak, ash, maple, aspen, birch, weeping willow or Bradford pear, and a conifer a pine, tall pine, spruce or cedar. On a phone, Species is a setting of its own. To plant one species, pick it in the row under the ways to plant (Any kind plants the course's own kinds of trees). A stand drawn that way grows only that species, and a wood of only leafy trees or only conifers has Species in its panel too. Which kinds the woods grow is set on the Site step, under Trees. Shape details, folded away under those, has where the branches start, how many branches or limbs, the trunk, the leaves and the lean. New shape grows a different tree of the same species, and Reset puts it back to its species' own shape. It stays the same species.\n\nRight-click a tree (hold on a phone) to cut it down, or to edit a measured tree. Trees never stand in a building, on a road or path, or in water. Draw one of those over trees and the trees go, as part of the same change. A tree standing in a wood gets the tree's menu too, and Select the woods at the bottom picks the wood instead. On a phone, holding a finger on trees gives a row for each: Edit this tree and Cut down this tree.",
     words: "tree plant species pine bush hedge height spread lean cut down edit measured tree stand draw points paint many trees oak ash maple aspen birch willow bradford pear spruce cedar tall pine",
@@ -380,8 +405,8 @@ export const TOPICS: Topic[] = [
   },
   {
     id: "tee-basket", section: "design", title: "Tee pads and baskets",
-    body: "A tee or basket opens inside its hole's panel, under Tees and baskets. A tee sets its color (the skill level it's for), the pad's width, length and surface (Concrete, Artificial turf, Rubber mat, Pavers, Gravel, or Grass or dirt), and Turn. A hole has one tee of each color, so picking a color another of its tees has swaps the two. If you've turned the pad by hand, Face down the hole again straightens it out. On a phone, a tee's bar has the pad's Length and Width, and Facing as a compass bearing, like Facing NE · 64° (0° is north).\n\nA basket sets its Pin position (A, B, C or D) and how high it's raised off the ground, for a basket up on a slope or a platform. Picking a letter another of its pins has swaps those two as well.",
-    words: "tee pad surface concrete turf basket pin raised height",
+    body: "A tee or basket opens inside its hole's panel, under Tees and baskets. A tee sets its color (the skill level it's for), the pad's width, length and surface (Concrete, Artificial turf, Rubber mat, Pavers, Gravel, or Grass or dirt), and Turn. A hole has one tee of each color, so picking a color another of its tees has swaps the two. Bends and Par from this tee give a tee its own line and par, where it doesn't play like the hole's. If you've turned the pad by hand, Face down the hole again straightens it out. On a phone, a tee's bar has the pad's Length and Width, and Facing as a compass bearing, like Facing NE · 64° (0° is north).\n\nA basket sets its Pin position (A, B, C or D), how high it's raised off the ground (for a basket up on a slope or a platform), and its Basket model, the maker and model it is. The model shows on the stake-out sheet and in the GeoJSON export. Picking a letter another of its pins swaps those two as well.",
+    words: "tee pad surface concrete turf basket pin raised height model make maker brand",
     path: "Design › pick a tee or basket",
     where: { step: "design", pick: "tee", find: "inspector" }
   },
@@ -413,8 +438,34 @@ export const TOPICS: Topic[] = [
   },
   {
     id: "gps-holes", section: "design", title: "Holes from a GPS file",
-    body: "If you have the course's tees and baskets in a GPS file, Holes from a GPS file brings them in as holes. It's on the Site step and under the list of holes. It reads GPX, KML and KMZ (Google Earth's), GeoJSON (such as an Overpass Turbo export from OpenStreetMap) and CSV (a spreadsheet with latitude and longitude columns, such as UDisc's list of a course's tees and targets).\n\nEach point's name says what it is: Hole 3 Tee, 3T, Basket 3, Target 3 or Pin 3, or a folder named Hole 3 with a tee and a basket in it. A hole with more than one basket keeps them all as its pin positions: 3A and 3B, or long and short, become pins A and B. More than one tee becomes tees of different colors, the longest at the back. A line from tee to basket brings its bends too. Points GlideLine Studio isn't sure of are under Check these: pick Tee, Basket or Leave out, and the hole. Then pick whether the file's holes replace the ones here or are added to them, and tap Bring in. Undo takes it all back in one step.\n\nThe course needs its site first, so the holes land in the right place. Without one, Find the park there opens Find your park where the file's points are. OpenStreetMap has no pin positions, so for those use a file, walk the course with Pin here, or place them by hand.",
-    words: "gps file gpx kml kmz geojson csv udisc google earth overpass openstreetmap import holes tees baskets targets pins pin positions alternate",
+    body: "If you have the course's tees and baskets in a GPS file, Holes from a GPS file brings them in as holes. It's on the Site step and under the list of holes. It reads GPX, KML and KMZ (Google Earth's), GeoJSON (such as an Overpass Turbo export from OpenStreetMap, or GlideLine Studio's own) and CSV (a spreadsheet with latitude and longitude columns). To bring in more than tees and baskets, lay the file out as Course file format shows.\n\nEach point's name says what it is: Hole 3 Tee, 3T, Basket 3, Target 3 or Pin 3, or a folder named Hole 3 with a tee and a basket in it. A hole with more than one basket keeps them all as its pin positions: 3A and 3B, or long and short, become pins A and B. More than one tee becomes tees of different colors, the longest at the back. A line from tee to basket brings its bends too. Points GlideLine Studio isn't sure of are under Check these: pick Tee, Basket or Leave out, and the hole. Then pick whether the file's holes replace the ones here or are added to them, and tap Bring in. Undo takes it all back in one step.\n\nA GeoJSON or CSV file can say more than names can: each tee's color and surface, each basket's pin and model, a line and par for each tee, the hole's name and notes, and the course's layouts. Course file format lists every column and has example files to start from. GeoJSON exported from GlideLine Studio has all of it, so a course exported and opened again comes back whole.\n\nWhere a hole has a line from each tee, the back tee's line gives the hole its bends and par, and any other tee whose line or par differs keeps its own. The course needs its site first, so the holes land in the right place. Without one, Find the park there opens Find your park where the file's points are. OpenStreetMap has no pin positions, so for those use a file, walk the course with Pin here, or place them by hand.",
+    words: "gps file gpx kml kmz geojson csv spreadsheet google earth overpass openstreetmap import holes tees baskets targets pins pin positions alternate surface basket model layouts hole name notes par bends format columns",
+    path: "Site › Holes from a GPS file",
+    where: { step: "site", find: "course-file" }
+  },
+  {
+    id: "course-file-format", section: "design", title: "Course file format",
+    body: "Holes from a GPS file opens any GPX, KML, KMZ, GeoJSON or CSV, but a CSV, GeoJSON or KML laid out like the examples here brings in everything: tees with their color and surface, baskets with their pin and model, each tee's line and par, the hole's name and notes, and the course's layouts. Download an example, put your course's points in it, and open it with Holes from a GPS file. The examples are one hole in a made-up park, in each kind of file.\n\nIn a CSV, each row is one point, with lat and lon columns. A bend row is a point the hole's line turns at: list them in order from the tee, with the tee's color to make them that tee's line. A layout row has no lat or lon, just layout, tee and pin. Commas, semicolons or tabs all work between columns.\n\nIn GeoJSON, tees and baskets are Points, and a hole's line is a LineString from the tee through each bend to the basket. Give the line its tee's color and par, and its name and notes become the hole's. The course's name and layouts sit beside the features.\n\nColumn names can be in any case, with spaces in place of underscores. Leave out what you don't have: a tee with no color gets one by how far back it is, and baskets with no pin become A, B and so on. The back tee's line gives the hole its bends and par, and another tee whose line or par differs keeps its own.\n\nIn KML, the columns are each placemark's ExtendedData, and a layout is a placemark with no point or line. A KMZ is a zipped KML. GPX has names only (Hole 1 Blue tee, Hole 1 basket A, and a route named Hole 1 Blue for the line), so it brings in tees, baskets and lines, and the rest is set in the app. Mandos, drop zones and OB lines don't come in from a file.",
+    table: [
+      ["kind", "tee, basket or hole (a line from a tee to its basket). Also layout, and in a CSV, bend."],
+      ["hole", "The hole's number, 1 to 99."],
+      ["tee", "Gold, Blue, White, Red, Green or Purple. On a line or bend, the tee it starts from; on a layout, the tee it plays."],
+      ["surface", "A tee's surface: Concrete, Turf, Rubber, Pavers, Gravel or Natural (grass or dirt)."],
+      ["pin", "A basket's pin position, A to D. On a layout, the pin it plays."],
+      ["model", "A basket's maker and model."],
+      ["par", "That tee's par, 2 to 7."],
+      ["name, notes", "On a hole's line: the hole's name, and its notes and rules."],
+      ["hole_name, hole_notes", "The same, on any point of the hole."],
+      ["layout", "A layout's name."],
+      ["lat, lon", "In a CSV, where the point is."]
+    ],
+    files: [
+      { label: "Example CSV", name: "course-file-example.csv", type: "text/csv", text: EXAMPLE_CSV },
+      { label: "Example GeoJSON", name: "course-file-example.geojson", type: "application/geo+json", text: EXAMPLE_GEOJSON },
+      { label: "Example KML", name: "course-file-example.kml", type: "application/vnd.google-earth.kml+xml", text: EXAMPLE_KML },
+      { label: "Example GPX", name: "course-file-example.gpx", type: "application/gpx+xml", text: EXAMPLE_GPX }
+    ],
+    words: "course file format columns properties template example spreadsheet csv geojson kml gpx kind hole tee color surface pin model par name notes layout lat lon latitude longitude bend line import",
     path: "Site › Holes from a GPS file",
     where: { step: "site", find: "course-file" }
   },

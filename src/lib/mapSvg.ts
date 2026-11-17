@@ -11,7 +11,7 @@ import { GOV_CREDITS } from "./geo/usgov";
 import { latitudeOf, sunFromOf } from "./mapLook";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, FIELD_KINDS, FT_PER_M, LINE_KINDS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER } from "../constants";
 import type { AmenityItem, AreaItem, BasketItem, CourseDoc, DropZoneItem, LabelItem, LineItem, MandoItem, MapStyle, MapTheme, P, PageElementId, PageElementStyle, PaperSize, StructureItem, StructureKind, TeeItem, TreeItem } from "../types";
-import { activeLayout, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, taglineOf, titleFontOf, amenityMarked, AMENITY_ROLE } from "./course";
+import { activeLayout, throwLine, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, taglineOf, titleFontOf, amenityMarked, AMENITY_ROLE } from "./course";
 import { boundsOf, dist, offsetPath, pathLength, pointAlong, pointInPolygon, polygonArea, rectCorners, rotatePoint, smoothPath, subPath } from "./geom";
 import { courseTotals, holeStats, isOb, isOutOfPlay, playsOf, type HoleStats } from "./holeStats";
 import { forestCanvas, forestCanvasAsync, paintedFrom, paintedLine, paintsAgain, paintsFromPhoto, treesOverOf, type CanopyGrid } from "./forest";
@@ -564,7 +564,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const o = dim(st.holeId);
       // Other tees of the hole: thinner dashed lines in their colors
       for (const tee of doc.items.filter(i => i.type === "tee" && i.holeId === st.holeId && i.id !== st.teeId) as TeeItem[]) {
-        const line = smoothPath([{ x: tee.x, y: tee.y }, ...hole.doglegs, st.line[st.line.length - 1]], 10);
+        const line = smoothPath(throwLine(hole, tee, st.line[st.line.length - 1]), 10);
         out.push(`<path d="${pathD(line)}" fill="none" stroke="${TEE_LEVELS[tee.level].color === "#f8fafc" ? "#e5e7eb" : TEE_LEVELS[tee.level].color}" stroke-width="${n(px(1.6))}" stroke-dasharray="${n(px(5))} ${n(px(4))}" opacity="${n(0.9 * o)}"/>`);
       }
       const line = smoothPath(st.line, 12);

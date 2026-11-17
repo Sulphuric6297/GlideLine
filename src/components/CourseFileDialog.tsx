@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { FileUp, MapPinned } from "lucide-react";
 import { Dialog } from "../auth/parts";
-import { fileCourse, fileExtent, needsLook, readCourseFile, type CourseFile, type FilePoint } from "../lib/courseFile";
+import { fileCourse, fileExtent, needsLook, readCourseFile, withFileLayouts, type CourseFile, type FilePoint } from "../lib/courseFile";
 import { courseFromMap, pinPositions } from "../lib/importSite";
 import { geoRefOf } from "../lib/geoRef";
 import { holeNumbers } from "../lib/course";
@@ -127,7 +127,9 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
     const out = courseFromMap(planned, r, replace ? new Set() : new Set(nums.values()));
     changeDoc(d => {
       const base = replace ? withoutHoles(d) : { holes: d.holes.map(h => ({ ...h, number: nums.get(h.id) ?? h.number })), items: d.items };
-      return { holes: [...base.holes, ...out.holes], items: [...base.items, ...out.items] };
+      // (the file's layouts, and its course name on a course that has none of its own yet)
+      const named = file.name && d.name === "New Disc Golf Course" ? { name: file.name } : {};
+      return { holes: [...base.holes, ...out.holes], items: [...base.items, ...out.items], ...withFileLayouts(d.layouts, d.activeLayout, file.layouts), ...named };
     });
     close();
     if (useEditor.getState().step === "site") useEditor.getState().set({ step: "design", tool: "select" });
@@ -141,7 +143,8 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
       <p className="text-[13px] text-zinc-300 mb-3" data-testid="course-file-summary">
         {`${fileName}: ${holes.length} ${holes.length === 1 ? "hole" : "holes"}`}
         {multiPin ? `, ${multiPin} with more than one pin` : ""}{multiTee ? `${multiPin ? " and" : ","} ${multiTee} with more than one tee` : ""}.
-        {" "}<HelpLink topic="gps-holes" label="Holes from a GPS file" />
+        {file.layouts?.length ? ` ${file.layouts.length === 1 ? "Layout" : "Layouts"}: ${file.layouts.map(l => l.name).join(", ")}.` : ""}
+        {" "}<HelpLink topic="gps-holes" label="Holes from a GPS file" over />
       </p>
       {!ref && (
         <div className="rounded-[16px] bg-orange-500/[0.12] ring-1 ring-orange-400/30 p-3 mb-3" data-testid="course-file-no-site">
@@ -176,7 +179,8 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
           ]} />
         </div>
       )}
-      <div className="flex gap-2 justify-end">
+      <div className="flex flex-wrap items-center gap-2 justify-end">
+        <span className="mr-auto inline-flex items-center gap-1.5 text-[12px] text-zinc-400" data-testid="course-file-format">What a file can hold <HelpLink topic="course-file-format" label="Course file format" over /></span>
         <Button small onClick={close}>Cancel</Button>
         <Button small tone="primary" disabled={!ref || !n} onClick={bring} testid="course-file-bring">{`Bring in ${n} ${n === 1 ? "hole" : "holes"}`}</Button>
       </div>

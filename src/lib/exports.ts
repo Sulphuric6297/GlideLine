@@ -1,7 +1,7 @@
 // Data exports: GPS files (GeoJSON, KML for Google Earth, GPX for a phone or GPS when staking out
 // positions), the hole list as CSV, the stake-out list, and the parts list with a cost estimate.
 import { AMENITY_KINDS, AREA_KINDS, FT_PER_M, LINE_KINDS, TEE_LEVELS, TEE_SURFACES } from "../constants";
-import type { AmenityItem, AreaItem, BasketItem, CourseDoc, CourseItem, CourseRules, DropZoneItem, Hole, LineItem, MandoItem, P, TeeItem, TreeItem, Units } from "../types";
+import type { AmenityItem, AreaItem, BasketItem, CourseDoc, CourseItem, CourseRules, DropZoneItem, Hole, Layout, LineItem, MandoItem, P, TeeItem, TreeItem, Units } from "../types";
 import { areaPath, belongsTo, fairwayOutline, holeBaskets, holeNumber, holeTees, linePath, obRanges } from "./course";
 import { pathLength, pathTouchesPolygon, pointInPolygon, smoothPath } from "./geom";
 import { bearing, compassPoint, geoRefOf, toLatLon, type GeoRef } from "./geoRef";
@@ -33,15 +33,19 @@ const holeFeatures = (doc: CourseDoc, ref: GeoRef, hole: Hole): Feature[] => {
   for (const t of holeTees(doc, hole.id)) {
     point(t, { kind: "tee", hole: num, tee: TEE_LEVELS[t.level].label, pad_ft: `${t.padWidth}x${t.padLength}`, surface: TEE_SURFACES[t.surface].label, elevation_ft: elevationFt(doc, t) });
   }
-  for (const b of holeBaskets(doc, hole.id)) point(b, { kind: "basket", hole: num, pin: b.position, elevation_ft: elevationFt(doc, b) });
-  for (const layout of doc.layouts) {
-    const s = holeStats(doc, hole, layout);
-    if (!s.complete) continue;
+  for (const b of holeBaskets(doc, hole.id)) point(b, { kind: "basket", hole: num, pin: b.position, ...(b.model ? { model: b.model } : {}), elevation_ft: elevationFt(doc, b) });
+  // (a line for each layout, and one from each tee no layout plays, each with its own par)
+  const played = new Set<string>();
+  const plays = [...doc.layouts.map(l => ({ layout: l as Layout | null, l })), ...holeTees(doc, hole.id).map(t => ({ layout: null as Layout | null, l: { id: `tee-${t.id}`, name: "", tee: t.level, pin: doc.layouts[0]?.pin ?? "A" } as Layout }))];
+  for (const { layout, l } of plays) {
+    const s = holeStats(doc, hole, l);
+    if (!s.complete || (!layout && played.has(s.teeId ?? ""))) continue;
+    played.add(s.teeId ?? "");
     features.push({
       type: "Feature",
       geometry: { type: "LineString", coordinates: s.line.map(p => ll(ref, p)) },
       properties: {
-        kind: "hole", hole: num, name: hole.name ?? null, layout: layout.name, tee: TEE_LEVELS[s.level].label, par: s.par,
+        kind: "hole", hole: num, name: hole.name ?? null, layout: layout?.name ?? null, tee: TEE_LEVELS[s.level].label, par: s.par,
         length_ft: Math.round(s.length), length_m: Math.round(s.length / FT_PER_M), elevation_change_ft: r1(s.elevationChange), plays_like_ft: Math.round(s.playsLike), notes: hole.notes ?? null,
         // OpenStreetMap tags for a disc golf hole
         disc_golf: "hole", ref: String(num), par_tag: String(s.par)
@@ -77,7 +81,9 @@ export const toGeoJSON = (doc: CourseDoc) => {
     const f = itemFeature(doc, ref, i);
     if (f) features.push(f);
   }
-  return JSON.stringify({ type: "FeatureCollection", name: doc.name, features }, null, 1);
+  // (the layouts too, so the file brings them back in)
+  const layouts = doc.layouts.map(l => ({ layout: l.name, tee: TEE_LEVELS[l.tee].label, pin: l.pin }));
+  return JSON.stringify({ type: "FeatureCollection", name: doc.name, layouts, features }, null, 1);
 };
 
 /** One hole as GeoJSON: its tees, baskets and throw line, its mandos and drop zones, the shapes
@@ -225,8 +231,9 @@ export const stakeOutCsv = (doc: CourseDoc) => {
       rows.push([num, what, g ? r6(g.lat) : "", g ? r6(g.lon) : "", elevationFt(doc, p), b, d, notes]);
     };
     for (const t of tees) add(`${TEE_LEVELS[t.level].label} tee (pad middle)`, t, `${t.padWidth} x ${t.padLength} ft ${TEE_SURFACES[t.surface].label.toLowerCase()}`);
-    for (const b of holeBaskets(doc, hole.id)) add(`Basket ${b.position}`, b, b.raised ? `raised ${b.raised} ft` : "");
+    for (const b of holeBaskets(doc, hole.id)) add(`Basket ${b.position}`, b, [b.model, b.raised ? `raised ${b.raised} ft` : ""].filter(Boolean).join(", "));
     hole.doglegs.forEach((p, i) => add(`Throw line turn ${i + 1}`, p, "flag only"));
+    for (const t of tees) t.doglegs?.forEach((p, i) => add(`${TEE_LEVELS[t.level].label} tee's line turn ${i + 1}`, p, "flag only"));
     for (const i of doc.items) if ((i.type === "mando" || i.type === "dropzone") && i.holeId === hole.id) add(i.type === "mando" ? `Mando (pass ${i.side})` : "Drop zone", i);
   }
   return toCsv(rows);

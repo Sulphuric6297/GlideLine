@@ -536,7 +536,7 @@ test("a tee or basket picked opens its hole's panel, with it opened up under Tee
   await expect(insp.getByTestId("hole-part-settings")).toHaveCount(1);
   await expect(insp.getByRole("radiogroup", { name: "Tee color" })).toBeVisible();
   // (the hole's own settings right there too)
-  await expect(insp.getByRole("radiogroup", { name: "Par" })).toBeVisible();
+  await expect(insp.getByRole("radiogroup", { name: "Par", exact: true })).toBeVisible();
   // The basket's row: it opens instead, and it's the one picked on the map
   await insp.getByTestId("hole-part-basket").click();
   await expect(insp.getByRole("radiogroup", { name: "Pin position" })).toBeVisible();

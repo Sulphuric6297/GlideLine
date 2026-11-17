@@ -32,6 +32,11 @@ export interface TeeItem extends BaseItem {
   surface: TeeSurface;
   /** Turned by hand; otherwise the pad faces down its hole. */
   aimFixed?: boolean;
+  /** Its own turns, in order from the tee to the basket (unset: the hole's turns still ahead of
+   * it). */
+  doglegs?: P[];
+  /** Its own par (unset: the hole's). */
+  par?: number;
 }
 
 /** A basket (target). A hole can have several pin positions (A, B, C...). */
@@ -43,6 +48,8 @@ export interface BasketItem extends BaseItem {
   position: PinPosition;
   /** Raised on a platform or slope above the ground, ft (an elevated basket). */
   raised?: number;
+  /** Its make and model, as typed or brought in from a file (e.g. "Discraft ChainStar"). */
+  model?: string;
 }
 
 /** A mandatory: the disc must pass on this side of it (an arrow sign on a post or a tree). */
@@ -93,6 +100,40 @@ export interface TreeItem extends BaseItem {
   importSource?: "photo" | "osm" | "lidar";
 }
 
+/** A rock: a boulder, a block, a ledge of stacked beds, bedrock breaking through (an outcrop), a
+ * cluster of rocks, or a dry-stone wall. */
+export type RockKind = "boulder" | "block" | "ledge" | "outcrop" | "cluster" | "wall";
+/** The stone it's made of (its scan in public/rocks). */
+export type RockStone = "granite" | "fieldstone" | "sandstone" | "basalt" | "redgranite";
+/** Its side view: a dome, a flat top (a seat or a tee rock) or a peak. */
+export type RockProfile = "round" | "flat" | "peak";
+export interface RockItem extends BaseItem {
+  type: "rock";
+  kind: RockKind;
+  stone: RockStone;
+  /** Its size, ft: along its own long side, across it, and how tall (from its foot, buried part and all). */
+  length: number;
+  width: number;
+  height: number;
+  /** How much of its height is in the ground (unset: its kind's). */
+  buried?: number;
+  /** 0 rounded, 1 jagged (unset: 0.5). */
+  edges?: number;
+  /** How much moss and lichen, 0 to 1 (unset: a little). */
+  moss?: number;
+  lichen?: number;
+  /** A new seed makes a different rock of the same size and stone. */
+  seed?: number;
+  /** A boulder's or block's side view (unset: rounded). */
+  profile?: RockProfile;
+  /** A boulder's or block's outline drawn by hand, where it meets the ground: plan feet round its
+   * middle, before its turn (unset: an oval of its length and width). */
+  outline?: P[];
+}
+/** What a rock surface (an area of kind "rock") is: bare bedrock, broken rock (loose stones), rocky
+ * ground (soil with stones), or a cliff's face. */
+export type RockLook = "bedrock" | "broken" | "rocky" | "cliff";
+
 /** What a park's thing is on OpenStreetMap (a ball field, a playground, a pool…), kept with it
  * as it came, whatever kind it's drawn as. */
 export type ParkKind = "pitch" | "playground" | "pool" | "dog_park" | "court" | "garden" | "sports_centre" | "track" | "skatepark" | "fountain" | "splash_pad" | "water_tower" | "shed" | "flagpole" | "goal" | "backstop" | "infield" | "outfield";
@@ -121,7 +162,7 @@ export interface LabelItem extends BaseItem {
 }
 
 /** Areas drawn on the map. OB and hazards are what play cares about; the rest make the map read. */
-export type AreaKind = "ob" | "hazard" | "casual" | "water" | "fairway" | "green" | "woods" | "rough" | "nogo" | "parking" | "building" | "sand" | "field";
+export type AreaKind = "ob" | "hazard" | "casual" | "water" | "fairway" | "green" | "woods" | "rough" | "nogo" | "parking" | "building" | "sand" | "field" | "rock";
 /** A ball field's size, by who plays on it. */
 export type FieldLeague = "teeball" | "little" | "softball" | "high";
 /** The pieces a field or court is made of, each picked and set on its own. */
@@ -208,6 +249,12 @@ export interface AreaItem extends BaseItem {
   importSource?: "osm" | "photo" | "lidar" | "usgs" | "nwi";
   /** From OpenStreetMap: what it is there (a ball field, a playground), whatever kind it's drawn as. */
   park?: ParkDetail;
+  /** A rock surface: what it is (unset: bedrock), its stone (unset: granite), how much grass grows
+   * through it and how many loose stones lie on it, 0 to 1 (unset: its look's). */
+  rockLook?: RockLook;
+  stone?: RockStone;
+  grassBetween?: number;
+  looseStones?: number;
 }
 
 /** Lines drawn on the map: OB lines (the line itself is OB), paths, roads, fences, streams. */
@@ -296,7 +343,7 @@ export interface StructureItem extends BaseItem {
   label?: string;
 }
 
-export type CourseItem = TeeItem | BasketItem | MandoItem | DropZoneItem | TreeItem | AmenityItem | LabelItem | AreaItem | LineItem | StructureItem;
+export type CourseItem = TeeItem | BasketItem | MandoItem | DropZoneItem | TreeItem | AmenityItem | LabelItem | AreaItem | LineItem | StructureItem | RockItem;
 export type ItemType = CourseItem["type"];
 
 /** A hole. Its tees and baskets are items that point back to it; the order in `holes` is the
@@ -594,6 +641,11 @@ export interface MapStyle {
   reliefScale?: number;
   /** How the painted map draws the ground's shape when hill shading is on (unset: shaded). */
   reliefLook?: ReliefLook;
+  /** Rocks and rock surfaces left off the painted map (they stay in 3D). */
+  hideRocks?: boolean;
+  /** Steep ground shows bare rock (as a cliff face) from this slope up, degrees (a new course: 40;
+   * unset or 90: none, so a course made before stays as it was). */
+  steepRock?: number;
   /** Where the legend (and hole table) panel sits on the course map: its top-left corner as a
    * share of the page's width and height (unset: a free corner). */
   legendAt?: { x: number; y: number };
@@ -843,6 +895,8 @@ export type ToolMode =
   | "add-mando"
   | "add-dropzone"
   | "add-tree"
+  /** A rock of the kind picked (editor's rockKind), with one click. */
+  | "add-rock"
   | "add-amenity"
   /** A field, court or play area at its usual size, with one click. */
   | "add-field"

@@ -15,6 +15,10 @@ All CC0 (public domain): free for any use, commercial too, no credit needed. Mad
 | leaves | Poly Haven forest_leaves_02 |
 | needles | Poly Haven forrest_ground_03 |
 | sand | Poly Haven park_sand |
+| bedrock | Poly Haven rock_boulder_dry (these four in color-rock.jpg and normal-rock.jpg, by scripts/rock-scans.py) |
+| broken | Poly Haven gray_rocks |
+| rocky | Poly Haven rocky_trail |
+| cliff | Poly Haven cliff_side |
 
 Licenses: polyhaven.com/license (CC0), docs.ambientcg.com/license (CC0 1.0).
 

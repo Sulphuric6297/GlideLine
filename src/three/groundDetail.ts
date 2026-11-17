@@ -12,18 +12,21 @@ import * as THREE from "three";
 import { classifyCover } from "../lib/geo/landCover";
 
 /** The scans, in the order of their layers in the textures (scripts/ground-scans.py). */
-export const LAYERS = ["grass", "concrete", "asphalt", "dirt", "gravel", "chips", "leaves", "needles", "sand"] as const;
+/** (the last four, the rock surfaces and steep ground: scripts/rock-scans.py adds them) */
+export const LAYERS = ["grass", "concrete", "asphalt", "dirt", "gravel", "chips", "leaves", "needles", "sand", "bedrock", "broken", "rocky", "cliff"] as const;
 export type SurfaceLayer = (typeof LAYERS)[number];
 export const layerOf = (l: SurfaceLayer) => LAYERS.indexOf(l);
 /** Feet each scan covers, by layer (as the real thing is: a few feet of lawn or gravel). */
-const TILE_FT = [5, 8, 8, 7, 6, 6, 7, 7, 7];
+const TILE_FT = [5, 8, 8, 7, 6, 6, 7, 7, 7, 9, 6, 7, 14];
 /** How strongly each scan's light and dark shows (grass most: a lawn's grain is fine, and the
  * ground's colors are bright, where the picture's tone curve flattens it). */
-const GRAIN = [1.6, 1.3, 1.4, 1.4, 1.4, 1.4, 1.4, 1.4, 1.3];
+const GRAIN = [1.6, 1.3, 1.4, 1.4, 1.4, 1.4, 1.4, 1.4, 1.3, 1.3, 1.4, 1.4, 1.3];
 /** Each scan's own average color (sRGB, scripts/ground-scans.py's "means"): up close the ground
  * takes it, real grass and dirt, not the map's flat paint. */
-const MEAN = [[96, 109, 48], [127, 116, 102], [89, 80, 70], [121, 100, 60], [146, 131, 104], [80, 56, 27], [142, 112, 58], [157, 128, 101], [141, 108, 84]];
+const MEAN = [[96, 109, 48], [127, 116, 102], [89, 80, 70], [121, 100, 60], [146, 131, 104], [80, 56, 27], [142, 112, 58], [157, 128, 101], [141, 108, 84], [168, 155, 140], [120, 113, 100], [147, 128, 107], [124, 83, 49]];
 const S = 512;
+/** The layers in the first strip (scripts/ground-scans.py); the rest are the rock surfaces'. */
+const FIRST_LAYERS = 9;
 
 let scans: Promise<{ color: THREE.DataArrayTexture; normal: THREE.DataArrayTexture } | null> | null = null;
 /** The scans as two stacks of layers (their color variation, their bumps), loaded once. */
@@ -31,15 +34,22 @@ export const groundScans = () => {
   if (scans) return scans;
   if (typeof document === "undefined") return Promise.resolve(null);
   scans = (async () => {
+    // (the first nine layers in <name>.jpg, as they always were; the rock surfaces' four after
+    // them in <name>-rock.jpg)
     const strip = async (name: string) => {
-      const img = new Image();
-      img.src = `${import.meta.env.BASE_URL}ground/${name}.jpg`;
-      await img.decode();
+      const load = async (file: string) => {
+        const img = new Image();
+        img.src = `${import.meta.env.BASE_URL}ground/${file}.jpg`;
+        await img.decode();
+        return img;
+      };
+      const [first, rock] = await Promise.all([load(name), load(`${name}-rock`)]);
       const c = document.createElement("canvas");
       c.width = S;
       c.height = S * LAYERS.length;
       const g = c.getContext("2d", { willReadFrequently: true })!;
-      g.drawImage(img, 0, 0, S, S * LAYERS.length);
+      g.drawImage(first, 0, 0, S, S * FIRST_LAYERS);
+      g.drawImage(rock, 0, S * FIRST_LAYERS, S, S * (LAYERS.length - FIRST_LAYERS));
       const t = new THREE.DataArrayTexture(new Uint8Array(g.getImageData(0, 0, S, S * LAYERS.length).data.buffer), S, S, LAYERS.length);
       t.format = THREE.RGBAFormat;
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -153,6 +163,9 @@ export type GroundDetailUniforms = {
   growTint: { value: THREE.Texture | null };
   growRect: { value: THREE.Vector4 };
   growOn: { value: number };
+  /** Steep ground shows bare rock (the cliff scan, in its own color) where the slope's cosine is
+   * below this (0: none). */
+  steepCos: { value: number };
 };
 
 export const groundDetailUniforms = (): GroundDetailUniforms => ({
@@ -175,7 +188,8 @@ export const groundDetailUniforms = (): GroundDetailUniforms => ({
   growMap: { value: null },
   growTint: { value: null },
   growRect: { value: new THREE.Vector4(0, 0, 1, 1) },
-  growOn: { value: 0 }
+  growOn: { value: 0 },
+  steepCos: { value: 0 }
 });
 
 /** Whether there's a graphics card: without one, the ground's own real ground at every distance
@@ -205,9 +219,9 @@ const SCAN_GLSL = /* glsl */ `
     u3 = mat2( cos( a3 ), -sin( a3 ), sin( a3 ), cos( a3 ) ) * uv + dgHash( v3 + 7.0 );
     w = pow( w, vec3( 6.0 ) ); w /= w.x + w.y + w.z;
   }
-  const float DG_TILE[9] = float[9]( ${TILE_FT.map(t => t.toFixed(1)).join(", ")} );
-  const float DG_GRAIN[9] = float[9]( ${GRAIN.map(t => t.toFixed(2)).join(", ")} );
-  const vec3 DG_MEAN[9] = vec3[9]( ${MEAN.map(c => `vec3( ${c.map(v => Math.pow(v / 255, 2.2).toFixed(4)).join(", ")} )`).join(", ")} );
+  const float DG_TILE[${LAYERS.length}] = float[${LAYERS.length}]( ${TILE_FT.map(t => t.toFixed(1)).join(", ")} );
+  const float DG_GRAIN[${LAYERS.length}] = float[${LAYERS.length}]( ${GRAIN.map(t => t.toFixed(2)).join(", ")} );
+  const vec3 DG_MEAN[${LAYERS.length}] = vec3[${LAYERS.length}]( ${MEAN.map(c => `vec3( ${c.map(v => Math.pow(v / 255, 2.2).toFixed(4)).join(", ")} )`).join(", ")} );
   // A layer's color variation (1: its average) and bumps, at feet f
   void dgScan( float layer, vec2 f, out vec3 col, out vec3 nrm ) {
     vec2 uv = f / DG_TILE[ int( layer ) ];
@@ -337,7 +351,7 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
         uniform sampler2D coverMap; uniform vec4 coverRect; uniform float coverOn; uniform float coverFromColor;
         uniform sampler2D paintColorMap; uniform sampler2D paintCoverMap; uniform vec4 paintRect; uniform float paintOn;
         uniform sampler2D floorMap; uniform vec4 floorRect; uniform float floorOn;
-        uniform sampler2D growMap; uniform sampler2D growTint; uniform vec4 growRect; uniform float growOn;
+        uniform sampler2D growMap; uniform sampler2D growTint; uniform vec4 growRect; uniform float growOn; uniform float steepCos;
         // (clumps of grass, fixed to the ground: a couple of feet across near the eye, and farther
         // off, where those would shimmer, the next size up, twice as wide each time, one fading
         // into the next (k: how far between two sizes), so nothing slides or swells as the eye moves)
@@ -433,6 +447,16 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
           }
           // (the photo has its own patches; a painted ground and a plain one get them)
           diffuseColor.rgb = dgMacro( diffuseColor.rgb, f, max( coverFromColor, paintOn ) );
+          // Steep ground: bare rock, a cliff's layers, broken up along its edge (over the grass,
+          // the photo or the painted map alike)
+          float dgSteep = 0.0;
+          if ( steepCos > 0.0 ) {
+            vec3 dgUp = normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz );
+            float cy = dot( normalize( vNormal ), dgUp ) + ( dgNoise( f / 9.0 + 3.0 ) - 0.5 ) * 0.12 + ( dgNoise( f / 2.3 ) - 0.5 ) * 0.05;
+            dgSteep = 1.0 - smoothstep( steepCos - 0.05, steepCos + 0.03, cy );
+            vec3 cliffC = DG_MEAN[ 12 ] * ( 0.85 + 0.3 * dgNoise( vec2( f.x / 30.0, vGroundW.y * groundFeet / 4.0 ) ) );
+            diffuseColor.rgb = mix( diffuseColor.rgb, cliffC, dgSteep );
+          }
           if ( groundDetail > 0.0 ) {
             // The woods' floor where the cover is green (under the trees, the photo shows their tops)
             vec2 fl = vec2( 0.0 );
@@ -442,11 +466,11 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
             }
             float under = min( 1.0, fl.x + fl.y );
             // grass, concrete, asphalt, dirt; leaves, needles: the two that most cover this spot
-            float w[6] = float[6]( cover.r * ( 1.0 - under ), cover.g, cover.b, cover.a, cover.r * fl.x, cover.r * fl.y );
-            const float L[6] = float[6]( 0.0, 1.0, 2.0, 3.0, 6.0, 7.0 );
+            float w[7] = float[7]( cover.r * ( 1.0 - under ) * ( 1.0 - dgSteep ), cover.g * ( 1.0 - dgSteep ), cover.b * ( 1.0 - dgSteep ), cover.a * ( 1.0 - dgSteep ), cover.r * fl.x * ( 1.0 - dgSteep ), cover.r * fl.y * ( 1.0 - dgSteep ), dgSteep );
+            const float L[7] = float[7]( 0.0, 1.0, 2.0, 3.0, 6.0, 7.0, 12.0 );
             int a1 = 0, a2 = -1;
-            for ( int i = 1; i < 6; i++ ) if ( w[ i ] > w[ a1 ] ) a1 = i;
-            for ( int i = 0; i < 6; i++ ) if ( i != a1 && ( a2 < 0 || w[ i ] > w[ a2 ] ) ) a2 = i;
+            for ( int i = 1; i < 7; i++ ) if ( w[ i ] > w[ a1 ] ) a1 = i;
+            for ( int i = 0; i < 7; i++ ) if ( i != a1 && ( a2 < 0 || w[ i ] > w[ a2 ] ) ) a2 = i;
             diffuseColor.rgb = dgLay( diffuseColor.rgb, L[ a1 ], w[ a1 ], L[ a2 ], w[ a2 ], 1.0, dgKeep );
           }
           // (how long it grows shows from any way off: a mown fairway brighter and even, tall grass
@@ -467,8 +491,9 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
  * color kept: `layer` (see LAYERS), `amount` how much of the scan (a fairway's mown grass less than
  * a gravel path's stones). With `soft` (feet), its edge fades out over about that far, ragged as
  * grass meets grass (its geometry's `aEdge`: drape's drapedPolygon with edges). */
-export const addSurfaceDetail = (m: THREE.Material, u: GroundDetailUniforms, layer: number, amount = 1, mown = false, soft = 0) => {
-  const softly = soft > 0 ? `#define DG_SOFT ${soft.toFixed(1)}\n` : "";
+export const addSurfaceDetail = (m: THREE.Material, u: GroundDetailUniforms, layer: number, amount = 1, mown = false, soft = 0, gaps = 0, keep = 0.25) => {
+  // (keep: how much of its own color it keeps up close, against the scan's; a rock surface keeps its stone's)
+  const softly = (soft > 0 ? `#define DG_SOFT ${soft.toFixed(1)}\n` : "") + (gaps > 0 ? `#define DG_GAPS ${gaps.toFixed(2)}\n` : "") + `#define DG_KEEPV ${keep.toFixed(2)}\n`;
   m.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, u, { dgLayer: { value: layer }, dgAmount: { value: amount }, dgMown: { value: mown ? 1 : 0 } });
     shader.vertexShader = softly + worldVertex(shader.vertexShader)
@@ -478,6 +503,15 @@ export const addSurfaceDetail = (m: THREE.Material, u: GroundDetailUniforms, lay
       .replace("#include <common>", `#include <common>\n${SCAN_GLSL}\nuniform float dgLayer; uniform float dgAmount; uniform float dgMown;\n#ifdef DG_SOFT\nvarying float vEdge;\n#endif`)
       .replace("#include <color_fragment>", `#include <color_fragment>
         diffuseColor.rgb = dgMacro( diffuseColor.rgb, vGroundW.xz * groundFeet, dgLayer == 0.0 ? 1.0 : 0.45 );
+        #ifdef DG_GAPS
+        {
+          // (a rock surface: grass growing through it in patches, as much as asked)
+          vec2 gf = vGroundW.xz * groundFeet;
+          float gb = dgNoise( gf / 7.0 + 11.0 ) * 0.6 + dgNoise( gf / 2.2 + 5.0 ) * 0.3 + dgNoise( gf / 0.7 ) * 0.1;
+          diffuseColor.a *= smoothstep( DG_GAPS * 0.75 + 0.12, DG_GAPS * 0.75 + 0.22, gb );
+          if ( diffuseColor.a < 0.004 ) discard;
+        }
+        #endif
         #ifdef DG_SOFT
         {
           float e = vEdge + ( dgNoise( vGroundW.xz * groundFeet / 4.0 ) - 0.5 ) * DG_SOFT * 0.7;
@@ -487,7 +521,7 @@ export const addSurfaceDetail = (m: THREE.Material, u: GroundDetailUniforms, lay
         #endif
         if ( groundDetail > 0.0 ) {
           // (a mown fairway keeps more of its own green, so it reads apart from the rough)
-          diffuseColor.rgb = dgLay( diffuseColor.rgb, dgLayer, 1.0, 0.0, 0.0, dgAmount, dgMown > 0.0 ? 0.45 : 0.25 );
+          diffuseColor.rgb = dgLay( diffuseColor.rgb, dgLayer, 1.0, 0.0, 0.0, dgAmount, dgMown > 0.0 ? 0.45 : DG_KEEPV );
           // (mown: light and dark bands as a mower leaves them, softened over a few inches)
           // (seen as far as the fairway's own grass is: across the course where there's no photo)
           if ( dgMown > 0.0 ) {
@@ -498,5 +532,5 @@ export const addSurfaceDetail = (m: THREE.Material, u: GroundDetailUniforms, lay
         }`)
       .replace("#include <normal_fragment_maps>", BUMPS_GLSL);
   };
-  m.customProgramCacheKey = () => `dg-surface-scan${soft > 0 ? `-soft${soft}` : ""}${groundShader.card ? "" : "-plain"}`;
+  m.customProgramCacheKey = () => `dg-surface-scan${soft > 0 ? `-soft${soft}` : ""}${gaps > 0 ? `-gaps${gaps.toFixed(2)}` : ""}-keep${keep.toFixed(2)}${groundShader.card ? "" : "-plain"}`;
 };

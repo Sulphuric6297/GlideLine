@@ -228,8 +228,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   // picked color already)
   const ghostTee = ed.tool === "add-tee" && !ed.holeToBasket ? teeLevelFor(doc, ed.activeHoleId, ed.teeLevel) : ed.teeLevel;
   useEffect(() => {
-    view?.setTool({ mode: ed.tool, areaKind: ed.areaKind, lineKind: ed.lineKind, structureKind: ed.structureKind, shape: ed.drawShape, dragSelect: ed.dragSelect, treeKind: ed.treeKind, fieldKind: ed.fieldKind, brush: { size: ed.brushSize, strength: ed.brushStrength, ground: ed.groundBrush }, standOf: ed.standOf, areaBrush: ed.areaBrush, reshape: ed.reshapeId }, ghostTee, ed.amenityKind);
-  }, [view, ed.tool, ed.areaKind, ed.lineKind, ed.structureKind, ed.drawShape, ghostTee, ed.amenityKind, ed.dragSelect, ed.treeKind, ed.fieldKind, ed.brushSize, ed.brushStrength, ed.groundBrush, ed.standOf, ed.areaBrush, ed.reshapeId]);
+    view?.setTool({ mode: ed.tool, areaKind: ed.areaKind, lineKind: ed.lineKind, structureKind: ed.structureKind, shape: ed.drawShape, dragSelect: ed.dragSelect, treeKind: ed.treeKind, rockKind: ed.rockKind, fieldKind: ed.fieldKind, brush: { size: ed.brushSize, strength: ed.brushStrength, ground: ed.groundBrush }, standOf: ed.standOf, areaBrush: ed.areaBrush, reshape: ed.reshapeId }, ghostTee, ed.amenityKind);
+  }, [view, ed.tool, ed.areaKind, ed.lineKind, ed.structureKind, ed.drawShape, ghostTee, ed.amenityKind, ed.dragSelect, ed.treeKind, ed.rockKind, ed.fieldKind, ed.brushSize, ed.brushStrength, ed.groundBrush, ed.standOf, ed.areaBrush, ed.reshapeId]);
   // (Measure: from one spot, or along a path)
   useEffect(() => { view?.setMeasureMode(ed.measureMode ?? "spot"); }, [view, ed.measureMode]);
   // A check's mark on the map clicked: the checks open, with its row lit up

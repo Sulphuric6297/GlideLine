@@ -5,19 +5,19 @@
 // everyday ones come first and the rarer ones further along, so nothing is left to a long panel
 // over the map.
 import { useRef, type ReactNode } from "react";
-import { Brush, Navigation, Plus, RotateCw, Scissors, Video } from "lucide-react";
+import { Brush, Navigation, Plus, RotateCw, Scissors, Shuffle, Video } from "lucide-react";
 import { editFlyover } from "../FlyoverSettings";
-import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint } from "../../constants";
-import { holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
+import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint, ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER } from "../../constants";
+import { bendOwner, holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
 import { holeStats } from "../../lib/holeStats";
 import { MARKED_FIELDS, fieldKindOf, isBallField } from "../../lib/fields";
 import { structureHeight, structureWidth } from "../../lib/structures";
 import { standShape } from "../../lib/treeMix";
 import { fmtDist } from "../../lib/units";
 import { addHoleOb, nextHomeCorner, obChoiceOf, pinsFull, select, setFieldKind, setFieldPlay, setLineKind, setPinPosition, setTeeLevel, shareBasket, startAnotherPin, startAnotherTee, startHoleToBasket, teesFull } from "../../state/actions";
-import { updateHole, updateItem, useCourse, useEditor } from "../../state/course";
-import type { AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseItem, FieldKind, Hole, LabelItem, LineItem, LineKind, MandoItem, PathSurface, StructureItem, StructureKind, TeeItem, TeeSurface, TreeItem } from "../../types";
-import { BRUSH_LEVELS, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
+import { setBends, updateHole, updateItem, useCourse, useEditor } from "../../state/course";
+import type { AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseItem, FieldKind, Hole, LabelItem, LineItem, LineKind, MandoItem, PathSurface, StructureItem, StructureKind, TeeItem, TeeSurface, TreeItem, RockItem, RockKind, RockLook, RockStone } from "../../types";
+import { BRUSH_LEVELS, useTeeOwn, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
 import { HoleChips } from "../ApplyToHoles";
 import { OnSiteButton } from "../OnSite";
 import { useTouch } from "../useLayout";
@@ -25,6 +25,8 @@ import { canShowLocation, useGps } from "../../state/gps";
 import { MoveHere } from "../PlaceByGps";
 import { KindTiles, areaPicture, bigIcon, linePicture } from "./KindTiles";
 import { TREE_KINDS, speciesNow } from "../TreeSettings";
+import { ROCK_ICONS, kindPatch, ovalOutline, rockShapes, sizePatch } from "../RockSettings";
+import { ROCK_BURIED, rockSpan } from "../../three/rocks";
 import { SPECIES } from "../../three/ezShapes";
 import { ChipPick, ColorInput, OnlyGroup, PickRow, Segmented, Select, TextInput, Toggle } from "../ui";
 import { ActRow, type BarSetting } from "./GlassBar";
@@ -90,6 +92,8 @@ const cap = (s: string) => `${s[0].toUpperCase()}${s.slice(1)}`;
 export function useHoleSettings(hole: Hole): BarSetting[] {
   const doc = useCourse(s => s.doc);
   const s = holeStats(doc, hole);
+  // (the played tee's own bends, when it has them, are the ones its line's rows change)
+  const owner = bendOwner(doc, hole, s.teeId);
   const u = doc.units;
   const tees = holeTees(doc, hole.id);
   const pins = holeBaskets(doc, hole.id);
@@ -114,9 +118,9 @@ export function useHoleSettings(hole: Hole): BarSetting[] {
         {hole.fairway && (hole.fairwayShape || hole.fairwayShift?.some(v => Math.abs(v) > 1e-3)) && <ActRow label="Even width" hint="One width all along, on the line" onClick={() => set({ fairwayShape: undefined, fairwayShift: undefined, fairwayStations: undefined })} />}
         {s.complete && <>
           <ActRow label="Plot the line" hint="Tap where it goes, turn by turn" onClick={() => useEditor.getState().set({ plotLine: hole.id, tool: "select" })} testid="plot-line" />
-          <ActRow label="Bend left" onClick={() => set({ doglegs: bendHole(s.line, -1) })} testid="bend-left" />
-          <ActRow label="Bend right" onClick={() => set({ doglegs: bendHole(s.line, 1) })} testid="bend-right" />
-          {hole.doglegs.length > 0 && <ActRow label="Straighten" onClick={() => set({ doglegs: [] })} />}
+          <ActRow label="Bend left" onClick={() => setBends(hole.id, owner?.id, bendHole(s.line, -1))} testid="bend-left" />
+          <ActRow label="Bend right" onClick={() => setBends(hole.id, owner?.id, bendHole(s.line, 1))} testid="bend-right" />
+          {(owner?.doglegs ?? hole.doglegs).length > 0 && <ActRow label="Straighten" onClick={() => setBends(hole.id, owner?.id, [])} />}
         </>}
       </div>
     ) },
@@ -172,6 +176,7 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
   const set = (patch: Record<string, unknown>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
   const live = (patch: Record<string, unknown>) => set(patch, false);
   const done = () => useCourse.getState().commit();
+  const own = useTeeOwn(item.type === "tee" ? item : null);
   const deg = (v: number) => `${Math.round(((v % 360) + 360) % 360)}°`;
   const out: BarSetting[] = [];
   const dial = (id: string, name: string, value: ReactNode, d: Parameters<typeof Dial>[0]) => out.push({ id, name, value, wide: true, control: <Dial {...d} /> });
@@ -203,11 +208,16 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     dial("length", "Length", fmtSize(t.padLength, u), { label: "Pad length", value: t.padLength, min: 4, max: 30, step: 0.5, format: v => `${fmtSize(v, u)} long`, onChange: v => live({ padLength: v }), onDone: done });
     dial("width", "Width", fmtSize(t.padWidth, u), { label: "Pad width", value: t.padWidth, min: 2, max: 20, step: 0.5, format: v => `${fmtSize(v, u)} wide`, onChange: v => live({ padWidth: v }), onDone: done });
     out.push({ id: "surface", name: "Surface", value: TEE_SURFACES[t.surface].label, control: <ChipPick label="Tee surface" value={t.surface} onChange={(v: TeeSurface) => set({ surface: v })} options={(Object.keys(TEE_SURFACES) as TeeSurface[]).map(k => ({ value: k, label: TEE_SURFACES[k].label, color: TEE_SURFACES[k].color }))} /> });
+    if (own) {
+      out.push({ id: "bends", name: "Bends", value: own.own ? "Its own" : "The hole's", control: <Segmented label="Bends" value={own.own ? "own" : "hole"} onChange={v => own.setOwn(v === "own")} options={own.bendOptions} /> });
+      out.push({ id: "teepar", name: "Par", value: t.par ?? own.parSaid, control: <Segmented label="Par from this tee" value={t.par ?? 0} onChange={own.setPar} options={own.parOptions} /> });
+    }
     if (t.aimFixed) out.push({ id: "aim", name: "Facing", value: "Down the hole", icon: <Navigation size={16} />, run: () => set({ aimFixed: false }) });
   } else if (item.type === "basket") {
     const b = item as BasketItem;
     out.push({ id: "pin", name: "Pin", value: b.position, control: <Segmented label="Pin position" value={b.position} onChange={v => setPinPosition(b.id, v)} options={PIN_POSITIONS.map(p => ({ value: p, label: `Pin ${p}` }))} /> });
     dial("raised", "Raised", b.raised ? fmtSize(b.raised, u) : "No", { label: "Raised above the ground", value: b.raised ?? 0, min: 0, max: 30, step: 0.5, format: v => (v ? `${fmtSize(v, u)} up` : "On the ground"), onChange: v => live({ raised: v || undefined }), onDone: done });
+    out.push({ id: "model", name: "Model", value: b.model ? (b.model.length > 14 ? `${b.model.slice(0, 13)}…` : b.model) : "None", wide: true, control: <div className="p-1.5"><TextInput label="Basket model" testid="basket-model" value={b.model ?? ""} placeholder="Maker and model" onChange={v => live({ model: v.trim() ? v : undefined })} onDone={done} /></div> });
   } else if (item.type === "mando" || item.type === "amenity" || item.type === "dropzone" || item.type === "label") {
     if (item.type === "label") {
       const l = item as LabelItem;
@@ -314,6 +324,48 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
       const w = structureWidth(s);
       const name = s.kind === "wall" ? "Thickness" : "Width";
       dial("width", name, fmtSize(w, u), { label: name, value: w, min: meta.widths[0], max: Math.max(meta.widths[1], w), step: 0.5, format: v => `${fmtSize(v, u)} ${s.kind === "wall" ? "thick" : "wide"}`, onChange: v => live({ width: v }), onDone: done });
+    }
+  }
+  // A rock: the same settings as its panel, in the same order (sizes on dials)
+  if (item.type === "rock") {
+    const r = item as RockItem, wall = r.kind === "wall";
+    const amount = (v: number) => (v < 0.02 ? "None" : v < 0.25 ? "A little" : v < 0.55 ? "Some" : v < 0.8 ? "Lots" : "Covered");
+    out.push({ id: "kind", name: "Kind", value: ROCK_KINDS[r.kind].label, wide: true, control: <KindTiles label="Rock kind" value={r.kind} onChange={(v: RockKind) => set(kindPatch(r, v) as Record<string, unknown>)} options={ROCK_ORDER.map(k => ({ value: k, label: ROCK_KINDS[k].label, picture: bigIcon(ROCK_ICONS[k]) }))} /> });
+    out.push({ id: "stone", name: "Stone", value: ROCK_STONES[r.stone].label, control: <ChipPick label="Stone" value={r.stone} onChange={(v: RockStone) => set({ stone: v })} options={STONE_ORDER.map(k => ({ value: k, label: ROCK_STONES[k].label, color: ROCK_STONES[k].color }))} /> });
+    dial("length", "Length", fmtSize(r.length, u), { label: "Length", value: r.length, min: 1, max: Math.max(wall ? 120 : 40, r.length), step: 0.5, format: v => `${fmtSize(v, u)} long`, onChange: v => live(sizePatch(r, "length", v) as Record<string, unknown>), onDone: done });
+    dial("width", wall ? "Thickness" : "Width", fmtSize(r.width, u), { label: wall ? "Thickness" : "Width", value: r.width, min: wall ? 0.5 : 1, max: Math.max(wall ? 6 : 30, r.width), step: 0.5, format: v => `${fmtSize(v, u)} ${wall ? "thick" : "wide"}`, onChange: v => live(sizePatch(r, "width", v) as Record<string, unknown>), onDone: done });
+    dial("height", "Height", fmtSize(r.height, u), { label: "Height", value: r.height, min: 0.5, max: Math.max(wall ? 8 : 20, r.height), step: 0.5, format: v => `${fmtSize(v, u)} tall`, onChange: v => live({ height: v }), onDone: done });
+    const bur = Math.round((r.buried ?? ROCK_BURIED[r.kind]) * 100);
+    dial("buried", "Buried", `${bur}%`, { label: "Buried", value: bur, min: 0, max: 70, step: 1, format: v => `${v}% in the ground`, onChange: v => live({ buried: v / 100 }), onDone: done });
+    if (rockShapes(r.kind)) {
+      const prof = r.profile ?? "round";
+      out.push({ id: "profile", name: "Profile", value: prof === "flat" ? "Flat top" : prof === "peak" ? "Peaked" : "Rounded", control: <Segmented label="Profile" value={prof} onChange={v => set({ profile: v === "round" ? undefined : v })} options={[{ value: "round", label: "Rounded" }, { value: "flat", label: "Flat top" }, { value: "peak", label: "Peaked" }]} /> });
+      out.push({ id: "outline", name: "Outline", value: r.outline ? "Drawn" : "Oval", wide: true, control: (
+        <div className="p-1.5">
+          <Segmented label="Outline" value={r.outline ? "drawn" : "oval"} onChange={v => set(v === "drawn" ? { outline: ovalOutline(r), ...rockSpan(ovalOutline(r)) } : { outline: undefined })} options={[{ value: "oval", label: "Oval" }, { value: "drawn", label: "Drawn" }]} />
+          {r.outline && <p className="px-1.5 pt-1.5 text-[12.5px] text-zinc-400 leading-snug">Drag its points on the map. Drag a small dot to add one; double-tap a point to remove it.</p>}
+        </div>) });
+    }
+    const t = Math.round(r.rotation ?? 0);
+    dial("turn", "Turn", deg(t), { label: "Turn", value: t, min: -720, max: 720, step: 1, format: v => `Turned ${deg(v)}`, onChange: v => live({ rotation: v }), onDone: done });
+    const ed = Math.round((r.edges ?? 0.5) * 100);
+    dial("edges", "Edges", ed < 30 ? "Rounded" : ed < 70 ? "Weathered" : "Jagged", { label: "Edges", value: ed, min: 0, max: 100, step: 1, format: v => (v < 30 ? "Rounded" : v < 70 ? "Weathered" : "Jagged"), onChange: v => live({ edges: v / 100 }), onDone: done });
+    const mo = Math.round((r.moss ?? 0.2) * 100), li = Math.round((r.lichen ?? 0.25) * 100);
+    dial("moss", "Moss", amount(mo / 100), { label: "Moss", value: mo, min: 0, max: 100, step: 1, format: v => amount(v / 100), onChange: v => live({ moss: v / 100 }), onDone: done });
+    dial("lichen", "Lichen", amount(li / 100), { label: "Lichen", value: li, min: 0, max: 100, step: 1, format: v => amount(v / 100), onChange: v => live({ lichen: v / 100 }), onDone: done });
+    out.push({ id: "newshape", name: "New shape", value: "Same size", icon: <Shuffle size={16} />, run: () => set({ seed: Math.floor(Math.random() * 9999) + 1 }) });
+  }
+  // A rock surface: what it is, its stone, grass through it, loose stones
+  if (item.type === "area" && item.kind === "rock") {
+    const a = item as AreaItem, look = a.rockLook ?? "bedrock", meta = ROCK_LOOKS[look];
+    const amount = (v: number) => (v < 0.05 ? "None" : v < 0.3 ? "A little" : v < 0.6 ? "Some" : "Lots");
+    out.push({ id: "look", name: "Look", value: meta.label, control: <ChipPick label="Rock surface look" value={look} onChange={(v: RockLook) => set({ rockLook: v === "bedrock" ? undefined : v, grassBetween: undefined, looseStones: undefined })} options={ROCK_LOOK_ORDER.map(k => ({ value: k, label: ROCK_LOOKS[k].label }))} /> });
+    out.push({ id: "stone", name: "Stone", value: ROCK_STONES[a.stone ?? "granite"].label, control: <ChipPick label="Stone" value={a.stone ?? "granite"} onChange={(v: RockStone) => set({ stone: v === "granite" ? undefined : v })} options={STONE_ORDER.map(k => ({ value: k, label: ROCK_STONES[k].label, color: ROCK_STONES[k].color }))} /> });
+    const gb = Math.round((a.grassBetween ?? meta.grass) * 100);
+    dial("grass", "Grass between", amount(gb / 100), { label: "Grass between", value: gb, min: 0, max: 100, step: 1, format: v => amount(v / 100), onChange: v => live({ grassBetween: v / 100 }), onDone: done });
+    if (look !== "cliff") {
+      const ls = Math.round((a.looseStones ?? meta.stones) * 100);
+      dial("stones", "Loose stones", amount(ls / 100), { label: "Loose stones", value: ls, min: 0, max: 100, step: 1, format: v => amount(v / 100), onChange: v => live({ looseStones: v / 100 }), onDone: done });
     }
   }
   // (drawn round or straight through its corners; a switch)

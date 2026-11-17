@@ -1,9 +1,9 @@
 // Making course documents and items, and finding a hole's parts.
-import { CIRCLE_ONE_FT, DEFAULT_CANVAS, DEFAULT_FAIRWAY_FT, DEFAULT_PAD, LINE_KINDS, PIN_POSITIONS, STRUCTURE_KINDS, TEE_ORDER, TREE_COLORS, generateId, AMENITY_KINDS } from "../constants";
+import { CIRCLE_ONE_FT, DEFAULT_CANVAS, DEFAULT_FAIRWAY_FT, DEFAULT_PAD, LINE_KINDS, PIN_POSITIONS, STRUCTURE_KINDS, TEE_ORDER, TREE_COLORS, STEEP_ROCK, generateId, AMENITY_KINDS, ROCK_KINDS } from "../constants";
 import type {
   AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseDoc, CourseItem, CourseRules, DropZoneItem, Hole, LabelItem,
   Layout, LineItem, LineKind, MandoItem, MapStyle, P, PinPosition, StructureItem, StructureKind, TeeItem, TeeLevel, TreeItem
-} from "../types";
+, RockItem, RockKind, RockStone } from "../types";
 import { centroid, corridor, dist, nearestAlong, nearestOnSegment, pathLength, pointAlong, pointInPolygon, smoothClosed, smoothPath, subPath } from "./geom";
 import { landscapeOf } from "./landscapes";
 import { flyoverOf, keysAsTheyFlew } from "./flight";
@@ -81,8 +81,9 @@ export const createEmptyCourse = (): CourseDoc => ({
   items: [],
   layouts: defaultLayouts(),
   activeLayout: "layout-main",
-  // (a new course starts in Brushed; one saved without a look is Classic, as it was)
-  style: { ...defaultStyle(), mapLook: "handpainted" },
+  // (a new course starts in Brushed, with bare rock on its steep ground; one saved without a look
+  // is Classic, and one saved without steep rock has none, as it was)
+  style: { ...defaultStyle(), mapLook: "handpainted", steepRock: STEEP_ROCK },
   units: "ft",
   rules: defaultRules()
 });
@@ -142,8 +143,10 @@ const signOfItem = (i: CourseItem) => {
 
 export const normalizeCourse = (raw: Partial<CourseDoc>): CourseDoc => {
   const base = createEmptyCourse();
-  // (a course's look is its own: an older one, saved without one, stays Classic)
+  // (a course's look is its own: an older one, saved without one, stays Classic, and one saved
+  // without bare rock on its steep ground has none)
   delete base.style.mapLook;
+  delete base.style.steepRock;
   const doc: CourseDoc = {
     ...base,
     ...raw,
@@ -479,6 +482,11 @@ export const amenityMarked = (a: { kind: AmenityKind; mark?: boolean }, level: A
 export const amenityPlural = (k: AmenityKind) =>
   ({ water: "drinking water spots", kiosk: "course kiosks", here: "\"You are here\" marks", firstaid: "first aid stations", parking: "parking signs", sign: "tee signs", trash: "trash cans", practice: "practice baskets", picnic: "picnic tables", fitness: "fitness stations", bikerack: "bike racks", light: "light poles", pole: "utility poles", benches: "benches" } as Record<string, string>)[k] ?? (k === "bench" ? "benches" : `${AMENITY_KINDS[k].label.toLowerCase()}s`);
 export const createAmenity = (at: P, kind: AmenityKind): AmenityItem => ({ id: generateId(), type: "amenity", kind, x: at.x, y: at.y, rotation: 0 });
+/** A rock of a kind at its usual size, turned at random so no two sit the same way. */
+export const createRock = (at: P, kind: RockKind, stone: RockStone = kind === "ledge" ? "sandstone" : kind === "wall" || kind === "outcrop" ? "fieldstone" : "granite"): RockItem => ({
+  id: generateId(), type: "rock", kind, stone, x: at.x, y: at.y, rotation: kind === "wall" ? 0 : Math.round(Math.random() * 360),
+  length: ROCK_KINDS[kind].length, width: ROCK_KINDS[kind].width, height: ROCK_KINDS[kind].height, seed: Math.floor(Math.random() * 9999) + 1
+});
 export const createLabel = (at: P, text = "Label"): LabelItem => ({ id: generateId(), type: "label", text, fontSize: 14, color: "#ffffff", x: at.x, y: at.y, rotation: 0 });
 export const createArea = (kind: AreaKind, points: P[], holeId?: string): AreaItem => {
   const c = centroid(points);
@@ -518,19 +526,27 @@ export const basketFor = (doc: Pick<CourseDoc, "items">, holeId: string, pin?: P
 
 export const activeLayout = (doc: Pick<CourseDoc, "layouts" | "activeLayout">) => doc.layouts.find(l => l.id === doc.activeLayout) ?? doc.layouts[0];
 
-/** The throw line of a hole: tee, its doglegs, basket. */
-export const throwLine = (hole: Hole, tee: P | null, basket: P | null): P[] => {
+/** The throw line of a hole: tee, its doglegs (the tee's own, where it has them, else the hole's
+ * still ahead of it), basket. */
+export const throwLine = (hole: Hole, tee: (P & { doglegs?: P[] }) | null, basket: P | null): P[] => {
   const pts: P[] = [];
   if (tee) pts.push({ x: tee.x, y: tee.y });
-  pts.push(...hole.doglegs.map(p => ({ ...p })));
+  pts.push(...(tee?.doglegs ?? (tee && basket ? turnsAhead(hole, tee, basket) : hole.doglegs)).map(p => ({ ...p })));
   if (basket) pts.push({ x: basket.x, y: basket.y });
   return pts;
 };
 
+/** The hole's turns still ahead of a tee (a short tee ahead of the first turn leaves it out). */
+export const turnsAhead = (hole: Hole, tee: P, basket: P): P[] => {
+  let turns = hole.doglegs;
+  while (turns.length && dist(tee, turns[1] ?? basket) < dist(turns[0], turns[1] ?? basket)) turns = turns.slice(1);
+  return turns;
+};
+
 /**
  * A hole's lines of play from each of its tees (the hole's own first) to its basket, through the
- * turns still ahead of each tee: every tee has a fairway of its own (where they meet, they make
- * one). `line` is the hole's main line, tee to basket.
+ * tee's own turns, or else the hole's turns still ahead of it: every tee has a fairway of its own
+ * (where they meet, they make one). `line` is the hole's main line, tee to basket.
  */
 export const teeLines = (doc: Pick<CourseDoc, "items">, hole: Hole, line: P[], mainTeeId?: string | null): P[][] => {
   if (line.length < 2) return [];
@@ -538,12 +554,17 @@ export const teeLines = (doc: Pick<CourseDoc, "items">, hole: Hole, line: P[], m
   const out: P[][] = [line];
   for (const tee of holeTees(doc, hole.id)) {
     if (tee.id === mainTeeId || dist(tee, line[0]) < 1) continue;
-    // (turns the tee is already past are left out: a short tee ahead of the first turn)
-    let turns = hole.doglegs;
-    while (turns.length && dist(tee, turns[1] ?? basket) < dist(turns[0], turns[1] ?? basket)) turns = turns.slice(1);
+    const turns = tee.doglegs ?? turnsAhead(hole, tee, basket);
     out.push([{ x: tee.x, y: tee.y }, ...turns.map(p => ({ ...p })), { ...basket }]);
   }
   return out;
+};
+
+/** Whose bends editing a hole's line changes: the tee given (the one picked, or the one the layout
+ * plays) when it has bends of its own; null: the hole's. */
+export const bendOwner = (doc: Pick<CourseDoc, "items">, hole: Hole, teeId?: string | null): TeeItem | null => {
+  const t = teeId ? doc.items.find(i => i.id === teeId) : undefined;
+  return t?.type === "tee" && t.holeId === hole.id && t.doglegs ? t : null;
 };
 
 /** The main throw line (the layout's tee and pin). */
@@ -617,7 +638,8 @@ export const teeAim = (doc: Pick<CourseDoc, "items" | "holes">, tee: TeeItem) =>
   if (tee.aimFixed) return tee.rotation;
   const hole = doc.holes.find(h => h.id === tee.holeId);
   if (!hole) return tee.rotation;
-  const next = hole.doglegs[0] ?? basketFor(doc, hole.id);
+  const basket = basketFor(doc, hole.id);
+  const next = (tee.doglegs ?? (basket ? turnsAhead(hole, tee, basket) : hole.doglegs))[0] ?? basket;
   if (!next) return tee.rotation;
   return (Math.atan2(next.y - tee.y, next.x - tee.x) * 180) / Math.PI;
 };
@@ -628,6 +650,7 @@ export const ITEM_LABELS: Record<CourseItem["type"], string> = {
   mando: "Mando",
   dropzone: "Drop zone",
   tree: "Tree",
+  rock: "Rock",
   amenity: "Amenity",
   label: "Label",
   area: "Area",
@@ -746,6 +769,7 @@ export const movedGroup = (doc: Pick<CourseDoc, "items" | "holes">, ids: string[
       if (!set.has(i.id) || i.locked) return i;
       const moved = { ...i, x: i.x + dx, y: i.y + dy } as CourseItem;
       if (moved.type === "area" || moved.type === "line" || moved.type === "structure") moved.points = moved.points.map(shift);
+      if (moved.type === "tee" && moved.doglegs && whole.has(moved.holeId)) moved.doglegs = moved.doglegs.map(shift);
       return moved;
     }),
     holes: doc.holes.map(h => (whole.has(h.id) ? { ...h, doglegs: h.doglegs.map(shift) } : h))
