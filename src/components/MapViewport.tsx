@@ -113,6 +113,7 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
       onPlotEnd: () => useEditor.getState().set({ plotLine: null }),
       onObPickEnd: () => useEditor.getState().set({ obPick: null, pickCut: false }),
       onCutLine: (id, a, b) => cutStretch(id, a, b),
+      onSteepPick: () => useEditor.getState().set({ steepPicked: true }),
       onLidar: patch => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {})),
       onFlyWait: waiting => useEditor.getState().set({ flyLoading: waiting }),
       onFlyKey: i => useEditor.getState().set({ flyKey: i }),
@@ -149,9 +150,9 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   const [shadeUrl, setShadeUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!shadeOn) { setShadeUrl(null); return; }
-    const t = window.setTimeout(() => setShadeUrl(hillshadeUrl(doc.terrainHeights, doc.gridSize, doc.canvas.width, doc.canvas.height, doc.style.reliefScale ?? 1)), 60);
+    const t = window.setTimeout(() => setShadeUrl(hillshadeUrl(doc.terrainHeights, doc.gridSize, doc.canvas.width, doc.canvas.height, doc.style.reliefScale ?? 1, doc.style.steepRock)), 60);
     return () => window.clearTimeout(t);
-  }, [shadeOn, doc.terrainHeights, doc.gridSize, doc.canvas, doc.style.reliefScale]);
+  }, [shadeOn, doc.terrainHeights, doc.gridSize, doc.canvas, doc.style.reliefScale, doc.style.steepRock]);
   const issues = useMemo(() => (ed.step === "design" ? openIssues(doc, courseIssues(doc)).open : null), [ed.step, doc]);
   // From a tee and in flyovers: the ground in the Design look (the painted map), not the photo
   // (from a tee: the editor's own pick, or for a viewer the course's look for viewers)
@@ -224,6 +225,10 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   useEffect(() => { view?.setGroup(ed.group); }, [view, ed.group]);
   useEffect(() => { view?.setPlotLine(ed.plotLine); }, [view, ed.plotLine]);
   useEffect(() => { view?.setObPick(ed.obPick, ed.pickCut); }, [view, ed.obPick, ed.pickCut]);
+  // (steep ground's rock stays picked only while nothing else is, in the Select tool)
+  const steepOn = !!ed.steepPicked && ed.tool === "select" && !ed.selectedId && !ed.group.length;
+  useEffect(() => { view?.setSteepPicked(steepOn); }, [view, steepOn]);
+  useEffect(() => { if (ed.steepPicked && !steepOn) useEditor.getState().set({ steepPicked: false }); }, [ed.steepPicked, steepOn]);
   // (the Tee tool's preview in the color it will go down in: the hole's next one when it has the
   // picked color already)
   const ghostTee = ed.tool === "add-tee" && !ed.holeToBasket ? teeLevelFor(doc, ed.activeHoleId, ed.teeLevel) : ed.teeLevel;

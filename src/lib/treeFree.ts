@@ -9,7 +9,7 @@ import { fieldKindOf, treelessField } from "./fields";
 /** Whether this thing is somewhere no tree stands. */
 export const keepsTreesOut = (it: CourseItem) =>
   (it.type === "area" && (["water", "parking", "building"].includes(it.kind) || (it.kind === "field" && treelessField(fieldKindOf(it))))) ||
-  (it.type === "line" && ["road", "path", "walk", "stream"].includes(it.kind)) ||
+  (it.type === "line" && ["road", "path", "walk", "stream", "wall"].includes(it.kind)) ||
   it.type === "structure";
 
 /** A test: is a spot where no tree could stand, among these things? */

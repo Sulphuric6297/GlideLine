@@ -2,12 +2,13 @@
 // deep it sits, its shape (a profile, an outline drawn on the map), then, folded away, its edges,
 // moss and lichen. The phone's bar has the same names in the same order (mobile/HoleStrip).
 import { Shuffle } from "lucide-react";
-import { ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER } from "../constants";
+import { ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER, stoneShown } from "../constants";
 /** A size to the half foot (or a tenth of a meter), as the panel's other sizes are. */
 const fmtSize = (ft: number, units: "ft" | "m") => (units === "m" ? `${(ft / 3.28084).toFixed(1)} m` : `${Math.round(ft * 2) / 2} ft`);
-import { useCourse } from "../state/course";
+import { toLineWall } from "../state/actions";
+import { changeDoc, useCourse } from "../state/course";
 import { ROCK_BURIED, rockSpan } from "../three/rocks";
-import type { AreaItem, P, RockItem, RockKind, RockLook, RockProfile, RockStone } from "../types";
+import type { AreaItem, LineItem, P, RockItem, RockKind, RockLook, RockProfile, RockStone } from "../types";
 import { Button, ChipPick, Field, Segmented, Slider } from "./ui";
 
 const svg = (d: string, size = 14) => (
@@ -26,7 +27,7 @@ export const ROCK_ICONS: Record<RockKind | "surface", JSX.Element> = {
 /** The Rocks tool's own drawing, at the tool bar's size. */
 export const rocksToolIcon = svg("M1.5 13.5l2-5.5 3.5-2.5 3 1.5 2.5-1 2 7.5z M5 8.5l2 1.5 2.5-1", 18);
 
-const stoneOptions = STONE_ORDER.map(k => ({ value: k, label: ROCK_STONES[k].label, color: ROCK_STONES[k].color }));
+const stoneOptions = STONE_ORDER.map(k => ({ value: k, label: ROCK_STONES[k].label, color: stoneShown(k) }));
 const amount = (v: number) => (v < 0.02 ? "None" : v < 0.25 ? "A little" : v < 0.55 ? "Some" : v < 0.8 ? "Lots" : "Covered");
 const edges = (v: number) => (v < 0.3 ? "Rounded" : v < 0.7 ? "Weathered" : "Jagged");
 /** Can it have a profile and a drawn outline (one rock, not a ledge's beds, a cluster or a wall). */
@@ -56,8 +57,9 @@ export function RockSettings({ item, set }: { item: RockItem; set: (patch: Parti
   return (
     <div data-testid="rock-settings">
       <Field label="Kind" help="rocks">
-        <ChipPick label="Rock kind" testid="rock-kind" value={item.kind} onChange={v => set(kindPatch(item, v))} options={ROCK_ORDER.map(k => ({ value: k, label: ROCK_KINDS[k].label, icon: ROCK_ICONS[k], title: ROCK_KINDS[k].help }))} />
+        <ChipPick label="Rock kind" testid="rock-kind" value={item.kind} onChange={v => set(kindPatch(item, v))} options={ROCK_ORDER.filter(k => k !== "wall" || wall).map(k => ({ value: k, label: ROCK_KINDS[k].label, icon: ROCK_ICONS[k], title: ROCK_KINDS[k].help }))} />
       </Field>
+      {wall && <OldWall id={item.id} level locked={item.locked} />}
       <Field label="Stone">
         <ChipPick label="Stone" testid="rock-stone" value={item.stone} onChange={v => set({ stone: v as RockStone })} options={stoneOptions} />
       </Field>
@@ -89,6 +91,81 @@ export function RockSettings({ item, set }: { item: RockItem; set: (patch: Parti
       <div className="mb-3">
         <Button small onClick={() => set({ seed: Math.floor(Math.random() * 9999) + 1 })} title="A different rock of the same size and stone" testid="rock-new-shape"><Shuffle size={13} /> New shape</Button>
       </div>
+    </div>
+  );
+}
+
+/** A wall's own settings: what it's built of and its stone. */
+export function WallSettings({ item, set }: { item: LineItem; set: (patch: Partial<LineItem>, history?: boolean) => void }) {
+  const dry = item.wallStyle !== "mortared";
+  return (
+    <div data-testid="wall-settings">
+      <Field label="Wall" help="build">
+        <ChipPick label="What the wall is" testid="wall-style" value={dry ? "dry" : "mortared"} onChange={v => set({ wallStyle: v === "dry" ? undefined : "mortared" })}
+          options={[{ value: "dry", label: "Dry stone", title: "Stones stacked without mortar" }, { value: "mortared", label: "Mortared", title: "Cut blocks in mortar, with capstones" }]} />
+      </Field>
+      {dry && (
+        <Field label="Stone">
+          <ChipPick label="Stone" testid="wall-stone" value={item.stone ?? "fieldstone"} onChange={v => set({ stone: v as RockStone })} options={stoneOptions} />
+        </Field>
+      )}
+    </div>
+  );
+}
+/** A dry stone wall's look: moss, lichen, and another arrangement of its stones. */
+export function WallLook({ item, set }: { item: LineItem; set: (patch: Partial<LineItem>, history?: boolean) => void }) {
+  const done = () => useCourse.getState().commit();
+  if (item.wallStyle === "mortared") return null;
+  return (
+    <>
+      <details className="mb-2 group" data-testid="wall-look-details">
+        <summary className="cursor-pointer list-none flex items-center justify-between py-1.5 text-xs font-semibold text-zinc-300 hover:text-zinc-50">Look details <span className="text-zinc-500 group-open:rotate-90 transition-transform">›</span></summary>
+        <div className="pt-1.5">
+          <Slider label="Moss" min={0} max={100} step={1} value={Math.round((item.moss ?? 0.2) * 100)} onChange={v => set({ moss: v / 100 }, false)} onDone={done} format={v => amount(v / 100)} />
+          <Slider label="Lichen" min={0} max={100} step={1} value={Math.round((item.lichen ?? 0.25) * 100)} onChange={v => set({ lichen: v / 100 }, false)} onDone={done} format={v => amount(v / 100)} />
+        </div>
+      </details>
+      <div className="mb-3">
+        <Button small onClick={() => set({ seed: Math.floor(Math.random() * 9999) + 1 })} title="The same wall with its stones laid another way" testid="wall-new-shape"><Shuffle size={13} /> Shuffle stones</Button>
+      </div>
+    </>
+  );
+}
+/** What an older wall says about the new one. */
+export const oldWallNote = (level: boolean) => (level
+  ? "This wall stays level, so on a slope it floats or digs in. Build's wall follows the ground. It can also curve, have gaps and be OB."
+  : "This is an older wall. Build's wall can also be dry stone, curve, have gaps and be OB. Changed, it keeps its blocks until you pick Dry stone.");
+/** A wall made before walls were lines (a rock wall, or a built wall): the button that makes it the new wall. */
+export function OldWall({ id, level, locked }: { id: string; level: boolean; locked?: boolean }) {
+  return (
+    <div className="mb-3 rounded-xl bg-white/[0.05] p-2.5" data-testid="old-wall">
+      <p className="text-[11.5px] text-zinc-300 leading-snug mb-2">{oldWallNote(level)}</p>
+      {!locked && <Button small onClick={() => toLineWall(id)} testid="to-line-wall">Change to Build's wall</Button>}
+    </div>
+  );
+}
+
+/** Steep ground's stone: one of the rocks' stones, or the cliff's own brown (as it was before it
+ * had a choice, and as a course saved without one still shows it). */
+export const STEEP_STONES = [{ value: "own", label: "Brown cliff", color: "#7c5331", title: "The usual color" }, ...stoneOptions];
+export const steepStoneLabel = (s: RockStone | undefined) => (s ? ROCK_STONES[s].label : "Brown cliff");
+export function SteepStonePick() {
+  const stone = useCourse(st => st.doc.style.steepStone);
+  return <ChipPick label="Steep rock's stone" testid="steep-stone" value={stone ?? "own"} onChange={v => changeDoc(d => ({ style: { ...d.style, steepStone: v === "own" ? undefined : (v as RockStone) } }))} options={STEEP_STONES} />;
+}
+
+/** Steep ground's rock: how steep ground must be to show it, and its stone. */
+export function SteepRockSettings() {
+  const s = useCourse(st => st.doc.style);
+  const steep = s.steepRock ?? 90;
+  const setStyle = (patch: Partial<typeof s>, history = true) => changeDoc(d => ({ style: { ...d.style, ...patch } }), history);
+  return (
+    <div data-testid="steep-rock-settings">
+      <Field label="Stone" help="rocks">
+        <SteepStonePick />
+      </Field>
+      <Slider label="Bare rock" min={20} max={90} step={1} value={steep} onChange={v => setStyle({ steepRock: v >= 89 ? undefined : v }, false)} onDone={() => useCourse.getState().commit()} format={v => (v >= 89 ? "Never" : `Steeper than ${Math.round(v)}°`)} />
+      <p className="text-[11.5px] text-zinc-400 leading-snug mb-2">To give one cliff a different stone, draw a rock surface over it with the Rocks tool.</p>
     </div>
   );
 }

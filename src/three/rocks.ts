@@ -9,6 +9,7 @@
 import * as THREE from "three";
 import { mergeGeometries, mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { RockItem, RockKind, RockProfile, RockStone } from "../types";
+import { stoneShown } from "../constants";
 
 type V = [number, number];
 /** What one rock (or one piece of a cluster or wall) is made from, in its own feet. */
@@ -102,6 +103,10 @@ function outlineRock(o: Spec) {
   geo.userData.grounded = true;
   return geo;
 }
+
+/** One stone of a wall, in feet, centred on its middle: a block `p` square (2 an egg), `jag` rough. */
+export const wallStone = (L: number, W: number, H: number, jag: number, seed: number, p: number, detail = 2) => rockGeometry({ kind: "block", L, W, H, jag, seed, sunk: 0, detail, p });
+export const rockRandom = (seed: number) => rng(seed);
 
 /** One rock's geometry in feet, centred on its middle (a drawn one: ground at y = 0). */
 function rockGeometry(o: Spec): THREE.BufferGeometry {
@@ -298,19 +303,30 @@ export function rockFootprint(geo: THREE.BufferGeometry, n = 48): V[] {
 }
 
 // ---------- the stones ----------
-/** Each stone: its layer in public/rocks, a tint (basalt is the granite scan darkened and cooled),
- * how many feet its scan covers, and its average color (sRGB, for the map and before the scans load). */
-export const STONE_LOOK: Record<RockStone, { layer: number; tint: [number, number, number]; tile: number; mean: string }> = {
-  granite: { layer: 0, tint: [1, 1, 1], tile: 6.5, mean: "#a89b8c" },
-  fieldstone: { layer: 1, tint: [0.98, 0.97, 0.95], tile: 5.5, mean: "#71604d" },
-  sandstone: { layer: 2, tint: [1, 0.98, 0.95], tile: 7, mean: "#89683e" },
-  basalt: { layer: 0, tint: [0.4, 0.41, 0.44], tile: 4.5, mean: "#45403b" },
-  redgranite: { layer: 3, tint: [1, 1, 1], tile: 6, mean: "#705341" }
+/** Each stone: its layer in public/rocks (its grain; basalt has granite's), how many feet its
+ * scan covers, and its color. One color a stone, everywhere it shows: the map, a rock, a wall, a
+ * rock surface, steep rock and its swatch are all constants' stoneShown (the scan gives its light
+ * and dark and a little of its own hues: it's laid at its own average, so the average is the
+ * stone's color). */
+export const STONE_LOOK: Record<RockStone, { layer: number; tile: number; mean: string }> = {
+  granite: { layer: 0, tile: 6.5, mean: stoneShown("granite") },
+  fieldstone: { layer: 1, tile: 5.5, mean: stoneShown("fieldstone") },
+  sandstone: { layer: 2, tile: 7, mean: stoneShown("sandstone") },
+  basalt: { layer: 0, tile: 4.5, mean: stoneShown("basalt") },
+  redgranite: { layer: 3, tile: 6, mean: stoneShown("redgranite") }
 };
+/** How bright a rock's own color is against its stone's: in the sun a rock's top then comes out
+ * its stone's color, as the map paints it (measured: mockups/walls/measure.py), and pale granite
+ * stays under white. */
+export const STONE_K = 0.6;
 
 const S = 512, LAYERS = 4;
 // (one set of texture uniforms every rock shares: when the scans arrive, every rock has them)
-const shared = { tStone: { value: null as THREE.DataArrayTexture | null }, tStoneN: { value: null as THREE.DataArrayTexture | null }, uScans: { value: 0 } };
+const shared = {
+  tStone: { value: null as THREE.DataArrayTexture | null }, tStoneN: { value: null as THREE.DataArrayTexture | null }, uScans: { value: 0 },
+  // (one over each scan's own average color, as the light sees it: a scan times this averages 1)
+  uScanInv: { value: Array.from({ length: LAYERS }, () => new THREE.Vector3(1, 1, 1)) }
+};
 let loading: Promise<void> | null = null;
 /** The stones' scans as two stacks of layers, loaded once. */
 const loadStones = () => {
@@ -324,7 +340,17 @@ const loadStones = () => {
       c.width = S; c.height = S * LAYERS;
       const g = c.getContext("2d", { willReadFrequently: true })!;
       g.drawImage(img, 0, 0, S, S * LAYERS);
-      const t = new THREE.DataArrayTexture(new Uint8Array(g.getImageData(0, 0, S, S * LAYERS).data.buffer), S, S, LAYERS);
+      const px = new Uint8Array(g.getImageData(0, 0, S, S * LAYERS).data.buffer);
+      if (srgb) {
+        const lin = (v: number) => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+        for (let l = 0; l < LAYERS; l++) {
+          const sum = [0, 0, 0];
+          let n = 0;
+          for (let i = l * S * S * 4, e = (l + 1) * S * S * 4; i < e; i += 4 * 7) { sum[0] += lin(px[i]); sum[1] += lin(px[i + 1]); sum[2] += lin(px[i + 2]); n++; }
+          shared.uScanInv.value[l].set(n / Math.max(1e-4, sum[0]), n / Math.max(1e-4, sum[1]), n / Math.max(1e-4, sum[2]));
+        }
+      }
+      const t = new THREE.DataArrayTexture(px, S, S, LAYERS);
       t.format = THREE.RGBAFormat;
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
       t.magFilter = THREE.LinearFilter;
@@ -356,26 +382,29 @@ float rkFbm( vec3 p ) { float s = 0.0, a = 0.5; for ( int i = 0; i < 4; i++ ) { 
 /** `surface`: bare rock in the ground (a rock surface's bedrock): no earth at a foot, cracks across
  * it, its edge fading out over a couple of feet (its geometry's aEdge) and grass coming through in
  * patches as much as `gaps` (0 to 1). */
-export function rockMaterial(it: Pick<RockItem, "stone" | "moss" | "lichen" | "seed">, surface?: { gaps: number }): THREE.MeshStandardMaterial {
+/** `foot`: how high each corner is above the ground comes with the geometry (its `foot`), for
+ * stones along a line on a slope (a wall); unset, it's the height above the rock's own middle. */
+export function rockMaterial(it: Pick<RockItem, "stone" | "moss" | "lichen" | "seed">, surface?: { gaps: number }, foot = false): THREE.MeshStandardMaterial {
   loadStones();
   const S0 = STONE_LOOK[it.stone] ?? STONE_LOOK.granite;
-  const mean = new THREE.Color(S0.mean);
+  const mean = new THREE.Color(S0.mean).multiplyScalar(STONE_K);
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
   if (surface) Object.assign(mat, { transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
   const own = {
-    uLayer: { value: S0.layer }, uTile: { value: 1 / S0.tile }, uTint: { value: new THREE.Vector3(...S0.tint) }, uMean: { value: new THREE.Vector3(mean.r, mean.g, mean.b) },
+    uLayer: { value: S0.layer }, uTile: { value: 1 / S0.tile }, uMean: { value: new THREE.Vector3(mean.r, mean.g, mean.b) },
     uMoss: { value: it.moss ?? 0.2 }, uLichen: { value: it.lichen ?? 0.25 }, uSeed: { value: ((it.seed ?? 1) * 0.37) % 50 }, uGaps: { value: surface?.gaps ?? 0 }
   };
   mat.userData.rock = own;
   mat.onBeforeCompile = sh => {
     Object.assign(sh.uniforms, shared, own);
     if (surface) { sh.vertexShader = "#define RK_SURFACE\n" + sh.vertexShader; sh.fragmentShader = "#define RK_SURFACE\n" + sh.fragmentShader; }
+    if (foot) { sh.vertexShader = "#define RK_FOOT\n" + sh.vertexShader; sh.fragmentShader = "#define RK_FOOT\n" + sh.fragmentShader; }
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\n#ifdef RK_SURFACE\nattribute float aEdge; varying float vEdge;\n#else\nattribute float curv;\n#endif\nvarying float vCurv; varying vec3 vRP; varying vec3 vWN; varying float vFoot;")
-      .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\n#ifdef RK_SURFACE\nvCurv = 0.0; vEdge = aEdge;\n#else\nvCurv = curv;\n#endif\nvec4 rkW = modelMatrix * vec4( transformed, 1.0 ); vRP = rkW.xyz - modelMatrix[ 3 ].xyz; vFoot = vRP.y; vWN = normalize( mat3( modelMatrix ) * objectNormal );");
+      .replace("#include <common>", "#include <common>\n#ifdef RK_SURFACE\nattribute float aEdge; varying float vEdge;\n#else\nattribute float curv;\n#endif\n#ifdef RK_FOOT\nattribute float foot;\n#endif\nvarying float vCurv; varying vec3 vRP; varying vec3 vWN; varying float vFoot;")
+      .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\n#ifdef RK_SURFACE\nvCurv = 0.0; vEdge = aEdge;\n#else\nvCurv = curv;\n#endif\nvec4 rkW = modelMatrix * vec4( transformed, 1.0 ); vRP = rkW.xyz - modelMatrix[ 3 ].xyz;\n#ifdef RK_FOOT\nvFoot = foot;\n#else\nvFoot = vRP.y;\n#endif\n vWN = normalize( mat3( modelMatrix ) * objectNormal );");
     sh.fragmentShader = sh.fragmentShader
       .replace("#include <common>", `#include <common>
-uniform highp sampler2DArray tStone; uniform highp sampler2DArray tStoneN; uniform float uScans, uLayer, uTile, uMoss, uLichen, uSeed, uGaps; uniform vec3 uTint, uMean;
+uniform highp sampler2DArray tStone; uniform highp sampler2DArray tStoneN; uniform float uScans, uLayer, uTile, uMoss, uLichen, uSeed, uGaps; uniform vec3 uMean; uniform vec3 uScanInv[ ${LAYERS} ];
 varying float vCurv; varying vec3 vRP; varying vec3 vWN; varying float vFoot;
 #ifdef RK_SURFACE
 varying float vEdge;
@@ -392,10 +421,15 @@ vec3 rkTriN( vec3 p, vec3 n ) {
 }`)
       .replace("#include <map_fragment>", `
 vec3 wn = normalize( vWN );
+#ifdef RK_FOOT
+// (a wall's stones: broken faces, not rounded ones, each face lit as it lies)
+{ vec3 fn = normalize( cross( dFdx( vRP ), dFdy( vRP ) ) ); if ( dot( fn, wn ) < 0.0 ) fn = -fn; wn = normalize( mix( wn, fn, 0.72 ) ); }
+#endif
 rkW3 = pow( abs( wn ), vec3( 5.0 ) ); rkW3 /= rkW3.x + rkW3.y + rkW3.z;
 rkP = vRP * uTile + uSeed;
 vec3 alb = uMean;
-if ( uScans > 0.5 ) alb = mix( rkTri( rkP ), rkTri( rkP * 0.31 + 0.17 ), 0.35 ) * uTint;
+// (the scan's light and dark on the stone's own color: no glint brighter than twice it)
+if ( uScans > 0.5 ) { vec3 sv = min( vec3( 2.0 ), mix( rkTri( rkP ), rkTri( rkP * 0.31 + 0.17 ), 0.35 ) * uScanInv[ int( uLayer ) ] ); alb = uMean * mix( vec3( dot( sv, vec3( 0.3, 0.59, 0.11 ) ) ), sv, 0.6 ); }
 alb *= 0.86 + 0.28 * rkFbm( vRP * 0.18 + uSeed );
 // (worn edges lighter, hollows darker)
 alb *= 1.0 + 0.22 * clamp( vCurv, 0.0, 1.0 ) - 0.38 * clamp( -vCurv, 0.0, 1.0 );
@@ -422,7 +456,7 @@ alb *= 1.0 - 0.25 * ( smoothstep( th - 0.06, th + 0.02, up ) - rkMoss );
 // its edge fading out raggedly, grass coming through in patches)
 float crack = 1.0 - smoothstep( 0.0, 0.035, abs( rkFbm( vRP * 0.11 + 2.0 ) ) );
 alb *= 1.0 - 0.45 * crack;
-alb *= ( 0.6 + 0.16 * smoothstep( 0.5, 3.0, vEdge ) ) * ( 0.85 + 0.3 * rkNoise( vRP * 0.05 + 4.0 ) );
+alb *= ( 1.0 + 0.22 * smoothstep( 0.5, 3.0, vEdge ) ) * ( 0.85 + 0.3 * rkNoise( vRP * 0.05 + 4.0 ) );
 float rkE = smoothstep( 0.0, 2.2, vEdge + ( rkNoise( vRP * 0.35 ) ) * 1.6 );
 float gb = rkFbm( vRP * 0.16 + 11.0 ) + 0.3 * rkNoise( vRP * 0.9 );
 float rkGap = smoothstep( uGaps * 0.9 - 0.44, uGaps * 0.9 - 0.36, gb );
@@ -438,14 +472,22 @@ diffuseColor.rgb *= alb;`)
 float roughnessFactor = clamp( 1.05 - dot( alb, vec3( 0.2 ) ), 0.62, 0.95 );
 roughnessFactor = mix( roughnessFactor, 1.0, max( rkMoss, rkLich * 0.7 ) );`)
       .replace("#include <normal_fragment_maps>", `
+#ifdef RK_FOOT
+vec3 pn = wn;
+#else
 vec3 pn = normalize( vWN );
+#endif
 if ( uScans > 0.5 ) pn = rkTriN( rkP, pn );
 pn = normalize( mix( pn, normalize( vWN ), rkMoss * 0.35 ) );
 vec3 mb = vec3( rkNoise( vRP * 14.0 + 1.0 ), rkNoise( vRP * 14.0 + 7.0 ), rkNoise( vRP * 14.0 + 13.0 ) ) + 0.5 * vec3( rkNoise( vRP * 37.0 ), rkNoise( vRP * 37.0 + 3.0 ), rkNoise( vRP * 37.0 + 5.0 ) );
 pn = normalize( pn + mb * 0.45 * rkMoss );
-normal = normalize( ( viewMatrix * vec4( pn, 0.0 ) ).xyz );`);
+normal = normalize( ( viewMatrix * vec4( pn, 0.0 ) ).xyz );`)
+      // (pale stone facing the sun stays stone: its brightest eases off under white, so its grain
+      // and its faces still show)
+      .replace("#include <opaque_fragment>", `{ float rkL = max( outgoingLight.r, max( outgoingLight.g, outgoingLight.b ) ); if ( rkL > 0.14 ) outgoingLight *= ( 0.14 + 0.11 * ( 1.0 - exp( -( rkL - 0.14 ) / 0.11 ) ) ) / rkL; }
+#include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => (surface ? "rock-stone-surface-v1" : "rock-stone-v1");
+  mat.customProgramCacheKey = () => (surface ? "rock-stone-surface-v7" : foot ? "rock-stone-foot-v8" : "rock-stone-v7");
   return mat;
 }
 

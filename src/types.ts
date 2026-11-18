@@ -260,7 +260,7 @@ export interface AreaItem extends BaseItem {
 /** Lines drawn on the map: OB lines (the line itself is OB), paths, roads, fences, streams. */
 /** The tiers paths and roads stack in where they cross. */
 export type PathTier = "dirt" | "gravel" | "walkway" | "road";
-export type LineKind = "ob" | "path" | "road" | "fence" | "stream" | "walk" | "power" | "hedge";
+export type LineKind = "ob" | "path" | "road" | "fence" | "stream" | "walk" | "power" | "hedge" | "wall";
 /** A fence in 3D: wooden posts with two rails, solid boards, or chain link on metal posts. */
 export type FenceStyle = "rail" | "boards" | "chain";
 /** What a path or a walk between holes is made of. */
@@ -284,6 +284,14 @@ export interface LineItem extends BaseItem {
    * line's wires are, ft (unset: the kind's usual, LINE_KINDS). */
   fenceStyle?: FenceStyle;
   fenceHeight?: number;
+  /** A wall: of mortared blocks with capstones (unset: dry stone, stones stacked without mortar).
+   * A dry stone wall's stone (unset: fieldstone), how much moss and lichen on it (0..1), and
+   * which arrangement of stones. Its thickness is `width`, its height `fenceHeight`. */
+  wallStyle?: "mortared";
+  stone?: RockStone;
+  moss?: number;
+  lichen?: number;
+  seed?: number;
   holeId?: string;
   label?: string;
   /** Out of bounds: a stream is unless set false; a road, fence or path is when true (and then
@@ -646,6 +654,9 @@ export interface MapStyle {
   /** Steep ground shows bare rock (as a cliff face) from this slope up, degrees (a new course: 40;
    * unset or 90: none, so a course made before stays as it was). */
   steepRock?: number;
+  /** The stone steep ground's bare rock is (unset: as it was, the cliff's own color in 3D, and on
+   * the map the nearest rock surface's stone or granite). */
+  steepStone?: RockStone;
   /** Where the legend (and hole table) panel sits on the course map: its top-left corner as a
    * share of the page's width and height (unset: a free corner). */
   legendAt?: { x: number; y: number };

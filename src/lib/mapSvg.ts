@@ -11,7 +11,7 @@ import { GOV_CREDITS } from "./geo/usgov";
 import { latitudeOf, sunFromOf } from "./mapLook";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, FIELD_KINDS, FT_PER_M, LINE_KINDS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER } from "../constants";
 import type { AmenityItem, AreaItem, BasketItem, CourseDoc, DropZoneItem, LabelItem, LineItem, MandoItem, MapStyle, MapTheme, P, PageElementId, PageElementStyle, PaperSize, StructureItem, StructureKind, TeeItem, TreeItem } from "../types";
-import { activeLayout, throwLine, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, taglineOf, titleFontOf, amenityMarked, AMENITY_ROLE } from "./course";
+import { activeLayout, throwLine, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, isWall, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, wallAsBuilt, wallDry, taglineOf, titleFontOf, amenityMarked, AMENITY_ROLE } from "./course";
 import { boundsOf, dist, offsetPath, pathLength, pointAlong, pointInPolygon, polygonArea, rectCorners, rotatePoint, smoothPath, subPath } from "./geom";
 import { courseTotals, holeStats, isOb, isOutOfPlay, playsOf, type HoleStats } from "./holeStats";
 import { forestCanvas, forestCanvasAsync, paintedFrom, paintedLine, paintsAgain, paintsFromPhoto, treesOverOf, type CanopyGrid } from "./forest";
@@ -334,7 +334,8 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
 
   // Paths, roads, streams, fences, walks
   for (const l of lines) {
-    if (l.points.length < 2 || (forest && l.kind !== "fence" && l.kind !== "hedge" && l.kind !== "power")) continue;
+    // (a wall is drawn with the built things, below)
+    if (l.points.length < 2 || l.kind === "wall" || (forest && l.kind !== "fence" && l.kind !== "hedge" && l.kind !== "power")) continue;
     const meta = LINE_KINDS[l.kind];
     const w = l.width ?? meta.width;
     const o = dim(l.holeId, l.alsoHoles);
@@ -389,7 +390,8 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
   }
 
   // Built things: bridges over the creeks, boardwalks, stairs, walls, buildings, shelters and decks
-  const structures = items.filter(i => i.type === "structure") as StructureItem[];
+  // (and the walls drawn as lines; on the painted map a dry stone wall is in the painting, stone by stone)
+  const structures = [...(items.filter(i => i.type === "structure") as StructureItem[]), ...items.filter(isWall).filter(l => l.points.length >= 2 && !(forest && wallDry(l))).map(wallAsBuilt)];
   if (structures.length) {
     // (where the sun really shines from, by the compass; turned with the map below)
     const az = (sunFromOf(s, latitudeOf(doc.site)) * Math.PI) / 180;
@@ -490,7 +492,8 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
         if (piece.length < 2) continue;
         if (pathLength(piece) > pathLength(longest)) longest = piece;
         const sides = l.obBeyond ? beyondSides(l, piece, holeLines, !obPicked(doc, l).length) : null;
-        if (l.kind === "fence" || l.kind === "walk") {
+        // (a fence or a wall is the line itself: one edge along it, not one either side)
+        if (l.kind === "fence" || l.kind === "walk" || l.kind === "wall") {
           edge(pathD(piece), o);
           if (sides?.length === 1) ticks(piece, -sides[0], o);
           continue;
@@ -524,7 +527,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const o = dim(l.holeId, l.alsoHoles);
       const pts = linePath(l), w = l.width ?? LINE_KINDS[l.kind].width;
       const half = Math.max(w, px(2)) / 2 + px(1.6);
-      if (l.kind === "fence" || l.kind === "walk" || w <= 0) hz(pathD(pts), o);
+      if (l.kind === "fence" || l.kind === "walk" || l.kind === "wall" || w <= 0) hz(pathD(pts), o);
       else for (const side of [1, -1]) hz(pathD(offsetPath(pts, () => side * half)), o);
       const len = pathLength(pts);
       if (len * k > 70 * ts) tags.push({ id: `tag:${l.id}`, at: toScreen(pointAlong(pts, len * (l.label ? 0.72 : 0.5)).point), text: "HAZARD", bg: s.hazard, fg: "#1b1d1a", o });
@@ -1714,6 +1717,7 @@ const legend = (doc: CourseDoc, x: number, y: number, w: number, ts: number, pal
   for (const kd of FIELD_ORDER) if (fieldKinds.has(kd)) entries.push({ sym: fieldLegend(kd, sw, sh, inks, `lgf-${kd}`), text: FIELD_KINDS[kd].label });
   // Built things, each drawn as on the map
   const built = new Set(doc.items.filter(i => i.type === "structure").map(i => (i as StructureItem).kind));
+  if (doc.items.some(isWall)) built.add("wall");
   for (const kd of STRUCTURE_ORDER) {
     if (!built.has(kd)) continue;
     const h = STRUCTURE_KINDS[kd].shape === "outline" ? sh * 1.3 : sh;

@@ -74,10 +74,12 @@ export const chainContours = (segments: Contours["segments"]) => {
 export const reliefExaggeration = (p90: number) => Math.max(1.5, Math.min(14, 0.36 / Math.max(1e-6, p90)));
 
 /** The hill shading as a picture's URL (a PNG), worked out once per terrain and settings. */
-export const hillshadeUrl = (heights: Record<string, number>, grid: number, width: number, height: number, scale = 1) =>
-  cached(heights, `h|${grid}|${width}|${height}|${scale}`, () => hillshadeCanvas(heights, grid, width, height, undefined, scale).toDataURL("image/png"));
+/** `bare` (degrees): ground steeper than this gets no shading (the Design view's steep rock: bare
+ * rock is lit as rock is, with nothing laid over it). */
+export const hillshadeUrl = (heights: Record<string, number>, grid: number, width: number, height: number, scale = 1, bare?: number) =>
+  cached(heights, `h|${grid}|${width}|${height}|${scale}|${bare ?? ""}`, () => hillshadeCanvas(heights, grid, width, height, undefined, scale, bare).toDataURL("image/png"));
 
-export const hillshadeCanvas = (heights: Record<string, number>, grid: number, width: number, height: number, exaggerate?: number, scale = 1) => {
+export const hillshadeCanvas = (heights: Record<string, number>, grid: number, width: number, height: number, exaggerate?: number, scale = 1, bare?: number) => {
   const ftPerPx = Math.max(2, Math.max(width, height) / 1200);
   const w = Math.max(2, Math.round(width / ftPerPx));
   const h = Math.max(2, Math.round(height / ftPerPx));
@@ -106,6 +108,7 @@ export const hillshadeCanvas = (heights: Record<string, number>, grid: number, w
     { az: 225, w: 0.1 }
   ].map(l => ({ x: Math.sin((l.az * Math.PI) / 180), y: -Math.cos((l.az * Math.PI) / 180), w: l.w }));
   const alt = (45 * Math.PI) / 180;
+  const bareCos = bare !== undefined && bare < 89 ? Math.cos((bare * Math.PI) / 180) : null;
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       const zl = z[j * w + Math.max(0, i - 1)], zr = z[j * w + Math.min(w - 1, i + 1)];
@@ -127,6 +130,11 @@ export const hillshadeCanvas = (heights: Record<string, number>, grid: number, w
       } else {
         img.data[k] = 255; img.data[k + 1] = 250; img.data[k + 2] = 225;
         img.data[k + 3] = Math.min(90, d * 360);
+      }
+      if (bareCos !== null) {
+        // (the ground's true slope here, the exaggeration taken back out)
+        const s = Math.hypot(dx, dy) / Math.max(1e-6, exaggerate * scale), t = Math.max(0, Math.min(1, (1 / Math.sqrt(1 + s * s) - bareCos + 0.02) / 0.1));
+        img.data[k + 3] *= t * t * (3 - 2 * t);
       }
     }
   }

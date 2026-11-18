@@ -36,6 +36,8 @@ export function linePicture(k: LineKind): ReactNode {
   else if (k === "stream") body = <path d={d} fill="none" stroke={c} strokeWidth={5} strokeLinecap="round" />;
   else if (k === "hedge") body = <><path d={d} fill="none" stroke={c} strokeWidth={6} strokeLinecap="round" />{[[8, 15], [17, 13], [26, 17], [35, 13]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r={2.6} fill="#5a8f45" />)}</>;
   else if (k === "fence") body = <><path d={d} fill="none" stroke={c} strokeWidth={1.6} />{[[6, 17], [14, 12], [22, 16], [30, 17], [38, 11]].map(([x, y], i) => <path key={i} d={`M${x} ${y - 4} V${y + 4}`} stroke={c} strokeWidth={2} />)}</>;
+  // (a wall: a band of stone, its stones' joints across it)
+  else if (k === "wall") body = <><path d={d} fill="none" stroke={c} strokeWidth={7} /><path d={d} fill="none" stroke="#4b463f" strokeWidth={7} strokeDasharray="1 5.5" /></>;
   else if (k === "power") body = <><path d={d} fill="none" stroke={c} strokeWidth={1.2} />{[[3, 22], [22, 16], [41, 9]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r={2.2} fill={c} />)}</>;
   else body = <path d={d} fill="none" stroke={c} strokeWidth={2.5} strokeLinecap="round" />;
   return <svg width="44" height="30" viewBox="0 0 44 30" aria-hidden>{body}</svg>;

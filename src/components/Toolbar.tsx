@@ -71,13 +71,13 @@ export const TOOLS: Tool[] = [
     ]
   },
   {
-    id: "rocks", mode: "add-rock", key: "J", label: "Rocks: boulders, blocks, ledges, outcrops, clusters, rock walls and rock surfaces", short: "Rocks", icon: rocksToolIcon, group: 3,
-    choices: [...ROCK_ORDER.map(rock), { ...area("rock"), color: undefined, swatch: undefined, icon: ROCK_ICONS.surface }]
+    id: "rocks", mode: "add-rock", key: "J", label: "Rocks: boulders, blocks, ledges, outcrops, clusters and rock surfaces", short: "Rocks", icon: rocksToolIcon, group: 3,
+    choices: [...ROCK_ORDER.filter(k => k !== "wall").map(rock), { ...area("rock"), color: undefined, swatch: undefined, icon: ROCK_ICONS.surface }]
   },
   { id: "grass", mode: "draw-area", key: "U", label: "Grass: fairways, landing zones, tall grass, sand and dirt", short: "Grass", icon: <Sprout size={18} />, group: 3, choices: [area("fairway"), area("green"), area("rough"), area("sand")] },
   {
     id: "build", mode: "draw-structure", key: "S", label: "Build: buildings, shelters, decks, bridges, boardwalks, stairs, walls, fences, power lines", short: "Build", icon: <House size={18} />, group: 3,
-    choices: [built("building"), built("shelter"), built("deck"), built("bridge"), built("boardwalk"), built("stairs"), built("wall"), line("fence", "Fence", <Fence size={14} />), line("power", "Power line", <UtilityPole size={14} />)]
+    choices: [built("building"), built("shelter"), built("deck"), built("bridge"), built("boardwalk"), built("stairs"), line("wall", "Wall", <span className="inline-block" dangerouslySetInnerHTML={{ __html: structureIcon("wall", 16, "chip-wall") }} />), line("fence", "Fence", <Fence size={14} />), line("power", "Power line", <UtilityPole size={14} />)]
   },
   { id: "park", mode: "add-field", key: "P", label: "Park: ball fields, courts, playgrounds, pools and more", short: "Park", icon: <LandPlot size={18} />, group: 3, choices: FIELD_ORDER.map(field) },
   { id: "amenities", mode: "add-amenity", key: "A", label: "Amenities: bench, trash can, sign, parking…", short: "Amenities", icon: <Armchair size={18} />, group: 4 },

@@ -45,9 +45,9 @@ test("a boulder put down with the Rocks tool; its panel sets kind, stone and siz
   await page.getByRole("radiogroup", { name: "Outline" }).getByRole("radio", { name: "Oval" }).click();
   await expect.poll(async () => (await rocks(page))[0].outline).toBeUndefined();
   // Another kind: its usual size
-  await page.getByTestId("rock-kind").getByRole("radio", { name: "Rock wall" }).click();
-  await expect.poll(async () => { const w = (await rocks(page))[0]; return [w.kind, w.length, w.width]; }).toEqual(["wall", 22, 2]);
-  await expect(page.getByTestId("inspector-title")).toHaveText("Rock wall");
+  await page.getByTestId("rock-kind").getByRole("radio", { name: "Block" }).click();
+  await expect.poll(async () => { const w = (await rocks(page))[0]; return [w.kind, w.length, w.width]; }).toEqual(["block", 5, 4]);
+  await expect(page.getByTestId("inspector-title")).toHaveText("Block");
   // Undo takes it back step by step
   await page.getByRole("button", { name: "Undo" }).click();
   await expect.poll(async () => (await rocks(page))[0].kind).toBe("boulder");

@@ -265,6 +265,16 @@ export const areaCurves = (a: Pick<AreaItem, "kind" | "straight">) => !a.straigh
 export const areaPath = (a: Pick<AreaItem, "kind" | "straight" | "points">) => (areaCurves(a) ? smoothClosed(a.points, a.points.length > 40 ? 2 : 6) : a.points);
 /** Areas with their outlines as drawn (for drawing them). */
 export const drawnAreas = <T extends CourseItem>(items: T[]): T[] => items.map(i => (i.type === "area" && areaCurves(i) ? ({ ...i, points: areaPath(i) } as T) : i));
+/** The walls drawn as lines, and what each is made of. */
+export const isWall = (i: CourseItem): i is LineItem => i.type === "line" && i.kind === "wall";
+export const wallDry = (l: Pick<LineItem, "wallStyle">) => l.wallStyle !== "mortared";
+export const wallThick = (l: Pick<LineItem, "width">) => l.width ?? LINE_KINDS.wall.width;
+export const wallTall = (l: Pick<LineItem, "fenceHeight">) => l.fenceHeight ?? LINE_KINDS.wall.height!;
+/** A wall drawn as a line, as the built wall the maps draw (along its line as drawn). */
+export const wallAsBuilt = (l: LineItem): StructureItem => ({
+  id: l.id, type: "structure", kind: "wall", points: linePath(l), width: wallThick(l), height: wallTall(l), x: l.x, y: l.y, rotation: 0, holeId: l.holeId, alsoHoles: l.alsoHoles
+});
+
 /** A line as it is drawn: a smooth curve through its points, or straight between them. */
 export const linePath = (l: Pick<LineItem, "kind" | "straight" | "points">, perSegment = 8) => (curves(l) ? smoothPath(l.points, l.points.length > 60 ? 3 : perSegment) : l.points);
 
@@ -494,7 +504,8 @@ export const createArea = (kind: AreaKind, points: P[], holeId?: string): AreaIt
 };
 export const createLine = (kind: LineKind, points: P[], holeId?: string): LineItem => {
   const c = points.length ? { x: points.reduce((s, p) => s + p.x, 0) / points.length, y: points.reduce((s, p) => s + p.y, 0) / points.length } : { x: 0, y: 0 };
-  return { id: generateId(), type: "line", kind, points, holeId, x: c.x, y: c.y, rotation: 0 };
+  // (each new wall its own arrangement of stones)
+  return { id: generateId(), type: "line", kind, points, holeId, x: c.x, y: c.y, rotation: 0, ...(kind === "wall" ? { seed: Math.floor(Math.random() * 9999) + 1 } : {}) };
 };
 /** A bridge, boardwalk, stairs or wall along `points`, or a building, shelter or deck with that outline. */
 export const createStructure = (kind: StructureKind, points: P[], holeId?: string): StructureItem => {

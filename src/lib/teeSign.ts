@@ -87,7 +87,7 @@ export const autoRules = (doc: CourseDoc, holeId: string) => {
   const said = new Set<string>();
   for (const l of doc.items.filter(i => i.type === "line" && i.kind !== "ob" && i.kind !== "walk" && i.ob === true && obFor(doc, i, holeId)) as LineItem[]) {
     if (!obPieces(l).some(close)) continue;
-    const name = l.label?.trim() || { road: "Road", path: "Path", fence: "Fence", stream: "Creek", ob: "", walk: "", power: "Power line", hedge: "Hedge" }[l.kind];
+    const name = l.label?.trim() || { road: "Road", path: "Path", fence: "Fence", stream: "Creek", ob: "", walk: "", power: "Power line", hedge: "Hedge", wall: "Wall" }[l.kind];
     const text = `${name}${l.obBeyond ? " and beyond" : ""} is OB.`;
     if (!said.has(text)) out.push(text);
     said.add(text);
