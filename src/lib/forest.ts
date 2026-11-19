@@ -12,7 +12,8 @@ import type { AreaItem, CourseDoc, LineItem, MapStyle, P, PathSurface, ReliefLoo
 import { toUnits } from "./units";
 import { canopyMask } from "./geo/detect";
 import { boundsOf, corridor, dist, pathLength, pointInPolygon, smoothPath } from "./geom";
-import { areaPath, autoWalks, drawnAreas, fairwayShiftAt, fairwayWidthAt, linePath, teeLines, widthAlong, widthFactors, widthVaries } from "./course";
+import { areaPath, autoWalks, drawnAreas, fairwayShiftAt, fairwayWidthAt, isWall, linePath, teeLines, wallAsBuilt, wallDry, wallTall, wallThick, widthAlong, widthFactors, widthVaries } from "./course";
+import { wallRun } from "./wallJoin";
 import type { HoleStats } from "./holeStats";
 import { conifersOf, style3dOf, tallGrassOf, treeMixOf } from "./landscapes";
 import { reliefExaggeration } from "./relief";
@@ -553,6 +554,9 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
       } else if (l.kind === "hedge") {
         // (drawn on top by the map; no treetops in its row)
         line(CLEAR, pts, (l.width ?? 4) + (crownR * 0.8) / k);
+      } else if (l.kind === "wall") {
+        // (no treetops over a wall, as over a built one)
+        line(CLEAR, pts, wallThick(l) + ftOf(3) + (crownR * 0.4) / k);
       } else if (l.kind === "stream") {
         const cw = widthAt ?? lw;
         wobblyLine(WATER, pts, cw, idSeed(l.id) + 1);
@@ -1089,7 +1093,8 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     if (v > built[i]) built[i] = v;
     if (v > tallest) tallest = v;
   };
-  for (const st of doc.items.filter(i => i.type === "structure") as StructureItem[]) {
+  // (and the mortared walls drawn as lines; a dry stone wall is painted stone by stone, below)
+  for (const st of [...(doc.items.filter(i => i.type === "structure") as StructureItem[]), ...doc.items.filter(isWall).filter(l => !wallDry(l)).map(wallAsBuilt)]) {
     if (st.points.length < 2) continue;
     const tall = structureHeight(st);
     if (isLineKind(st.kind)) {
@@ -1162,6 +1167,38 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     };
     if (idx) for (let t = 0; t < idx.count; t += 3) tri(idx.getX(t), idx.getX(t + 1), idx.getX(t + 2));
     else for (let t = 0; t < n; t += 3) tri(t, t + 1, t + 2);
+  }
+  // Dry stone walls: a row of stones along the line, painted as the rocks are (their stone, lit
+  // from the side, a shadow on the ground beside them)
+  for (const st of opts.under ? [] : doc.items.filter(isWall).filter(l => wallDry(l) && l.points.length >= 2)) {
+    const path = wallRun(st, linePath(st), doc.items).pts, tall = wallTall(st), halfFt = wallThick(st) / 2;
+    rocks.push({ id: st.id, type: "rock", kind: "wall", stone: st.stone ?? "fieldstone", moss: st.moss, lichen: st.lichen, x: st.x, y: st.y, rotation: 0, length: 1, width: halfFt * 2, height: tall, drawn: true } as RockItem);
+    const id = rocks.length, sd = st.seed ?? 1, half = Math.max(halfFt * k, 1.1);
+    const rnd = (n: number, q: number) => { let h = Math.imul(n ^ Math.imul(q + sd * 7919, 0x9e3779b1), 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+    let s0 = 0;
+    for (let j = 1; j < path.length; j++) {
+      const pa = path[j - 1], pc = path[j], lenFt = Math.hypot(pc.x - pa.x, pc.y - pa.y);
+      const a = toScreen(pa), c = toScreen(pc), dx = c.x - a.x, dy = c.y - a.y, l2 = dx * dx + dy * dy || 1, reach = half + 1;
+      for (let y = Math.max(0, Math.floor(Math.min(a.y, c.y) - reach)); y <= Math.min(H - 1, Math.ceil(Math.max(a.y, c.y) + reach)); y++) {
+        for (let x = Math.max(0, Math.floor(Math.min(a.x, c.x) - reach)); x <= Math.min(W - 1, Math.ceil(Math.max(a.x, c.x) + reach)); x++) {
+          const t = Math.max(0, Math.min(1, ((x + 0.5 - a.x) * dx + (y + 0.5 - a.y) * dy) / l2));
+          const ox = x + 0.5 - a.x - dx * t, oy = y + 0.5 - a.y - dy * t, side = ox * dy - oy * dx > 0 ? 1 : 0;
+          const along = s0 + t * lenFt;
+          // (the topstones: one after another along the wall, each its own length, width and height)
+          // (two faces of stones, each stone its own length: here and there two run together)
+          const u = along / 1.5 + rnd(side, 3) * 0.7, c0 = Math.floor(u), pair = rnd(c0 >> 1, side + 20) < 0.4;
+          const cell = pair ? (c0 >> 1) * 2 : c0, f = pair ? (u - cell) / 2 : u - c0, lenFtC = pair ? 3 : 1.5;
+          const wide = half * (0.84 + 0.32 * rnd(cell, side + 40)), d = Math.hypot(ox, oy);
+          if (d > wide) continue;
+          const joint = Math.min(f, 1 - f) * lenFtC < 0.13 ? 0.7 : 1;
+          // (flat on top, falling away at its two faces; a seam where the faces meet)
+          const e = Math.max(0, (d / wide - 0.66) / 0.34), seam = d < Math.max(0.5, half * (0.1 + 0.12 * rnd(cell, 9))) ? 0.84 : 1;
+          const z = tall * (0.78 + 0.22 * rnd(cell, side + 5)) * (1 - 0.5 * e * e) * joint * seam, i = y * W + x;
+          if (z > rockTop[i]) { rockTop[i] = z; rockOf[i] = id; }
+        }
+      }
+      s0 += lenFt;
+    }
   }
   if (rocks.some(r => r.kind === "ledge")) {
     const rr = Math.max(1.5, 0.5 * k), off: number[] = [];
@@ -1432,7 +1469,7 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     // Stone: its color in tones from a crack's dark to a sunlit edge (as the trees' and the grass's)
     const hexOf = (c: number[]) => "#" + c.map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
     const stonePalOf = (st: string | undefined) => { const c = hexRgbOf((ROCK_STONES[st as keyof typeof ROCK_STONES] ?? ROCK_STONES.granite).color); return palette(hexOf([c[0] * 0.85 + 186 * 0.15, c[1] * 0.85 + 172 * 0.15, c[2] * 0.85 + 152 * 0.15]), [0.36, 0.48, 0.6, 0.73, 0.86, 0.98, 1.1], -5, 0.5).map((t, j) => { const u = Math.max(0, 1 - j / 3); return [t[0] * (1 - 0.07 * u), t[1] * (1 - 0.02 * u), t[2] * (1 + 0.07 * u)] as RGB; }); };
-    const areaPals = rockAreas.map(a => stonePalOf(a.stone)), cliffPal = stonePalOf(rockAreas[0]?.stone);
+    const areaPals = rockAreas.map(a => stonePalOf(a.stone)), cliffPal = stonePalOf(s.steepStone ?? rockAreas[0]?.stone);
     const stonePals = new Map<string, RGB[]>();
     const palOfStone = (st: string | undefined) => { const key = st ?? "granite"; let pl = stonePals.get(key); if (!pl) stonePals.set(key, (pl = stonePalOf(st))); return pl; };
     const soilPal = palette("#7a6444", [0.7, 0.86, 1, 1.14, 1.28], -4, 1.1);
@@ -2079,7 +2116,10 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
             const sunR = sunlit(x, y, rt * k * 0.85);
             const sxp = (x - W / 2) / k, syp = (y - H / 2) / k, PX = view.cx + sxp * cos + syp * sin, PY = view.cy - sxp * sin + syp * cos;
             const edge = (x > 0 && hAt(i - 1) <= 0) || (x < W - 1 && hAt(i + 1) <= 0) || (y > 0 && hAt(i - W) <= 0) || (y < H - 1 && hAt(i + W) <= 0);
-            const v = 0.26 + 0.24 * smooth(0.6, 0.66, lamR) + 0.14 * smooth(0.99, 1.04, lamR) + 0.1 * smooth(1.2, 1.25, lamR) + (cellOf(PX / 1.5 + 3.1, PY / 1.5 + 7.7).tone - 0.5) * 0.07 + (grain - 0.5) * 0.02 - (edge ? 0.03 : 0);
+            const v = 0.26 + 0.24 * smooth(0.6, 0.66, lamR) + 0.14 * smooth(0.99, 1.04, lamR) + 0.1 * smooth(1.2, 1.25, lamR) + (cellOf(PX / 1.5 + 3.1, PY / 1.5 + 7.7).tone - 0.5) * 0.07 + (grain - 0.5) * 0.02 - (edge ? 0.03 : 0)
+              // (a wall drawn as a line: its top light, each topstone its own tone; a Rock wall
+              // from before is painted as it always was)
+              + ((rk as { drawn?: boolean }).drawn ? 0.17 + ((rt * 7.31) % 1 - 0.5) * 0.2 : 0);
             tone(palOfStone(rk.stone), v);
             const sl = 0.38 + 0.62 * Math.min(1.25, rf * (1 - shadowK * 0.7 * (1 - sunR)));
             let rr = tr0 * sl, rg = tg0 * sl, rb = tb0 * sl;

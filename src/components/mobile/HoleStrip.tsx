@@ -7,14 +7,14 @@
 import { useRef, type ReactNode } from "react";
 import { Brush, Navigation, Plus, RotateCw, Scissors, Shuffle, Video } from "lucide-react";
 import { editFlyover } from "../FlyoverSettings";
-import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint, ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER } from "../../constants";
+import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, stoneShown, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint, ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER } from "../../constants";
 import { bendOwner, holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
 import { holeStats } from "../../lib/holeStats";
 import { MARKED_FIELDS, fieldKindOf, isBallField } from "../../lib/fields";
 import { structureHeight, structureWidth } from "../../lib/structures";
 import { standShape } from "../../lib/treeMix";
 import { fmtDist } from "../../lib/units";
-import { addHoleOb, nextHomeCorner, obChoiceOf, pinsFull, select, setFieldKind, setFieldPlay, setLineKind, setPinPosition, setTeeLevel, shareBasket, startAnotherPin, startAnotherTee, startHoleToBasket, teesFull } from "../../state/actions";
+import { addHoleOb, nextHomeCorner, obChoiceOf, toLineWall, pinsFull, select, setFieldKind, setFieldPlay, setLineKind, setPinPosition, setTeeLevel, shareBasket, startAnotherPin, startAnotherTee, startHoleToBasket, teesFull } from "../../state/actions";
 import { setBends, updateHole, updateItem, useCourse, useEditor } from "../../state/course";
 import type { AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseItem, FieldKind, Hole, LabelItem, LineItem, LineKind, MandoItem, PathSurface, StructureItem, StructureKind, TeeItem, TeeSurface, TreeItem, RockItem, RockKind, RockLook, RockStone } from "../../types";
 import { BRUSH_LEVELS, useTeeOwn, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
@@ -30,6 +30,9 @@ import { ROCK_BURIED, rockSpan } from "../../three/rocks";
 import { SPECIES } from "../../three/ezShapes";
 import { ChipPick, ColorInput, OnlyGroup, PickRow, Segmented, Select, TextInput, Toggle } from "../ui";
 import { ActRow, type BarSetting } from "./GlassBar";
+
+/** A wall from before walls were lines: the row that makes it the new wall. */
+const newWall = (id: string, level: boolean): BarSetting => ({ id: "newwall", name: "Change to", value: "Build's wall", run: () => toLineWall(id), testid: "to-line-wall" });
 
 /** A dial: drag it sideways (or the arrow keys) to change a number; the needle stays put and the
  * marks slide under it. `onChange` live while dragging, `onDone` once let go. */
@@ -275,11 +278,17 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
       const brush = item.kind === "woods" && (item.bushes ?? 0) >= 1;
       useEditor.getState().set({ tool: "draw-area", areaKind: item.kind, standOf: brush ? "bush" : null, ...(brush ? { treeKind: "bush" as const } : {}), drawShape: "paint", reshapeId: item.id, areaBrush: "add" });
     }, testid: "reshape-brush" });
+    // (a wall: what it is and its stone, as in its panel)
+    if (item.type === "line" && item.kind === "wall") {
+      const dry = item.wallStyle !== "mortared", stone = item.stone ?? "fieldstone";
+      out.push({ id: "wall", name: "Wall", value: dry ? "Dry stone" : "Mortared", control: <ChipPick label="What the wall is" value={dry ? "dry" : "mortared"} onChange={(v: string) => set({ wallStyle: v === "dry" ? undefined : "mortared" })} options={[{ value: "dry", label: "Dry stone" }, { value: "mortared", label: "Mortared" }]} /> });
+      if (dry) out.push({ id: "stone", name: "Stone", value: ROCK_STONES[stone].label, control: <ChipPick label="Stone" value={stone} onChange={(v: RockStone) => set({ stone: v })} options={STONE_ORDER.map(k => ({ value: k, label: ROCK_STONES[k].label, color: stoneShown(k) }))} /> });
+    }
     // (a next-tee route can have none: a dashed line)
     if (item.type === "line" && (LINE_KINDS[item.kind].width > 0 || item.kind === "walk")) {
       const meta = LINE_KINDS[item.kind];
-      const w = item.width ?? meta.width;
-      dial("width", "Width", w ? fmtSize(w, u) : "None", { label: "Width", value: w, min: item.kind === "walk" ? 0 : 1, max: meta.maxWidth, step: 0.5, format: v => (v ? `${fmtSize(v, u)} wide` : "Just a dashed line"), onChange: v => live({ width: v || undefined }), onDone: done });
+      const w = item.width ?? meta.width, name = item.kind === "wall" ? "Thickness" : "Width";
+      dial("width", name, w ? fmtSize(w, u) : "None", { label: name, value: w, min: item.kind === "walk" ? 0 : 1, max: meta.maxWidth, step: 0.5, format: v => (v ? `${fmtSize(v, u)} ${item.kind === "wall" ? "thick" : "wide"}` : "Just a dashed line"), onChange: v => live({ width: v || undefined }), onDone: done });
     }
     if (item.type === "line" && (item.kind === "path" || item.kind === "walk")) {
       const l = item as LineItem;
@@ -313,8 +322,9 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     const s = item as StructureItem;
     const meta = STRUCTURE_KINDS[s.kind];
     // (a line can only become another line, an outline another outline)
-    const kinds = STRUCTURE_ORDER.filter(k => STRUCTURE_KINDS[k].shape === meta.shape);
+    const kinds = STRUCTURE_ORDER.filter(k => STRUCTURE_KINDS[k].shape === meta.shape && (k !== "wall" || s.kind === "wall"));
     out.push({ id: "kind", name: "Kind", value: meta.label, wide: true, control: <KindTiles label="Structure kind" value={s.kind} onChange={(v: StructureKind) => set({ kind: v })} options={kinds.map(k => ({ value: k, label: STRUCTURE_KINDS[k].label, picture: bigIcon(builtIcon(k)) }))} /> });
+    if (s.kind === "wall" && !s.locked) out.push(newWall(s.id, false));
     if (s.kind === "building" || s.kind === "shelter") out.push({ id: "look", name: "Look", value: "Roof and walls", wide: true, control: <div className="p-1.5"><StructureLook item={s} /></div> });
     if (meta.heightLabel) {
       const h = structureHeight(s);
@@ -330,8 +340,9 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
   if (item.type === "rock") {
     const r = item as RockItem, wall = r.kind === "wall";
     const amount = (v: number) => (v < 0.02 ? "None" : v < 0.25 ? "A little" : v < 0.55 ? "Some" : v < 0.8 ? "Lots" : "Covered");
-    out.push({ id: "kind", name: "Kind", value: ROCK_KINDS[r.kind].label, wide: true, control: <KindTiles label="Rock kind" value={r.kind} onChange={(v: RockKind) => set(kindPatch(r, v) as Record<string, unknown>)} options={ROCK_ORDER.map(k => ({ value: k, label: ROCK_KINDS[k].label, picture: bigIcon(ROCK_ICONS[k]) }))} /> });
-    out.push({ id: "stone", name: "Stone", value: ROCK_STONES[r.stone].label, control: <ChipPick label="Stone" value={r.stone} onChange={(v: RockStone) => set({ stone: v })} options={STONE_ORDER.map(k => ({ value: k, label: ROCK_STONES[k].label, color: ROCK_STONES[k].color }))} /> });
+    out.push({ id: "kind", name: "Kind", value: ROCK_KINDS[r.kind].label, wide: true, control: <KindTiles label="Rock kind" value={r.kind} onChange={(v: RockKind) => set(kindPatch(r, v) as Record<string, unknown>)} options={ROCK_ORDER.filter(k => k !== "wall" || wall).map(k => ({ value: k, label: ROCK_KINDS[k].label, picture: bigIcon(ROCK_ICONS[k]) }))} /> });
+    if (wall && !r.locked) out.push(newWall(r.id, true));
+    out.push({ id: "stone", name: "Stone", value: ROCK_STONES[r.stone].label, control: <ChipPick label="Stone" value={r.stone} onChange={(v: RockStone) => set({ stone: v })} options={STONE_ORDER.map(k => ({ value: k, label: ROCK_STONES[k].label, color: stoneShown(k) }))} /> });
     dial("length", "Length", fmtSize(r.length, u), { label: "Length", value: r.length, min: 1, max: Math.max(wall ? 120 : 40, r.length), step: 0.5, format: v => `${fmtSize(v, u)} long`, onChange: v => live(sizePatch(r, "length", v) as Record<string, unknown>), onDone: done });
     dial("width", wall ? "Thickness" : "Width", fmtSize(r.width, u), { label: wall ? "Thickness" : "Width", value: r.width, min: wall ? 0.5 : 1, max: Math.max(wall ? 6 : 30, r.width), step: 0.5, format: v => `${fmtSize(v, u)} ${wall ? "thick" : "wide"}`, onChange: v => live(sizePatch(r, "width", v) as Record<string, unknown>), onDone: done });
     dial("height", "Height", fmtSize(r.height, u), { label: "Height", value: r.height, min: 0.5, max: Math.max(wall ? 8 : 20, r.height), step: 0.5, format: v => `${fmtSize(v, u)} tall`, onChange: v => live({ height: v }), onDone: done });
@@ -360,7 +371,7 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     const a = item as AreaItem, look = a.rockLook ?? "bedrock", meta = ROCK_LOOKS[look];
     const amount = (v: number) => (v < 0.05 ? "None" : v < 0.3 ? "A little" : v < 0.6 ? "Some" : "Lots");
     out.push({ id: "look", name: "Look", value: meta.label, control: <ChipPick label="Rock surface look" value={look} onChange={(v: RockLook) => set({ rockLook: v === "bedrock" ? undefined : v, grassBetween: undefined, looseStones: undefined })} options={ROCK_LOOK_ORDER.map(k => ({ value: k, label: ROCK_LOOKS[k].label }))} /> });
-    out.push({ id: "stone", name: "Stone", value: ROCK_STONES[a.stone ?? "granite"].label, control: <ChipPick label="Stone" value={a.stone ?? "granite"} onChange={(v: RockStone) => set({ stone: v === "granite" ? undefined : v })} options={STONE_ORDER.map(k => ({ value: k, label: ROCK_STONES[k].label, color: ROCK_STONES[k].color }))} /> });
+    out.push({ id: "stone", name: "Stone", value: ROCK_STONES[a.stone ?? "granite"].label, control: <ChipPick label="Stone" value={a.stone ?? "granite"} onChange={(v: RockStone) => set({ stone: v === "granite" ? undefined : v })} options={STONE_ORDER.map(k => ({ value: k, label: ROCK_STONES[k].label, color: stoneShown(k) }))} /> });
     const gb = Math.round((a.grassBetween ?? meta.grass) * 100);
     dial("grass", "Grass between", amount(gb / 100), { label: "Grass between", value: gb, min: 0, max: 100, step: 1, format: v => amount(v / 100), onChange: v => live({ grassBetween: v / 100 }), onDone: done });
     if (look !== "cliff") {
@@ -375,6 +386,14 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
   }
   if ((item.type === "area" || item.type === "line" || item.type === "structure") && !item.locked) out.push({ id: "turnshape", name: "Turn", value: "15° · 90°", wide: true, control: <div className="p-1.5"><TurnButtons item={item} /></div> });
   if (item.type === "line" && !item.locked) out.push({ id: "cut", name: "Remove", value: "A stretch", icon: <Scissors size={16} />, run: () => useEditor.getState().set({ obPick: item.id, pickCut: true, tool: "select" }) });
+  // (a dry stone wall's look, as in its panel)
+  if (item.type === "line" && item.kind === "wall" && item.wallStyle !== "mortared") {
+    const amount = (v: number) => (v < 0.02 ? "None" : v < 0.25 ? "A little" : v < 0.55 ? "Some" : v < 0.8 ? "Lots" : "Covered");
+    const mo = Math.round((item.moss ?? 0.2) * 100), li = Math.round((item.lichen ?? 0.25) * 100);
+    dial("moss", "Moss", amount(mo / 100), { label: "Moss", value: mo, min: 0, max: 100, step: 1, format: v => amount(v / 100), onChange: v => live({ moss: v / 100 }), onDone: done });
+    dial("lichen", "Lichen", amount(li / 100), { label: "Lichen", value: li, min: 0, max: 100, step: 1, format: v => amount(v / 100), onChange: v => live({ lichen: v / 100 }), onDone: done });
+    out.push({ id: "newshape", name: "Shuffle", value: "Stones", icon: <Shuffle size={16} />, run: () => set({ seed: Math.floor(Math.random() * 9999) + 1 }) });
+  }
   // (the holes it's for: belongs to, OB for, or counts for)
   const role = item.type === "mando" || item.type === "dropzone" || item.type === "structure" ? { label: "Belongs to", all: "Whole course" }
     : (item.type === "area" || item.type === "line") && item.kind === "ob" ? { label: "OB for", all: "All holes" }

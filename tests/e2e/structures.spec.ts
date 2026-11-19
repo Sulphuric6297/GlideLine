@@ -71,11 +71,12 @@ const MATERIALS: Record<StructureKind, string[]> = {
   building: ["door", "glass", "shingle", "siding", "stone", "trim"], shelter: ["concrete", "metal", "timber"], deck: ["deck", "timber"]
 };
 
-test("a boardwalk, stairs and a wall drawn from the Features list, click by click", async ({ page }) => {
+// (a wall is a line now, drawn from Build beside the fence: tests/e2e/walls.spec.ts)
+test("a boardwalk and stairs drawn from the Features list, click by click", async ({ page }) => {
   await blankCourse(page);
   await page.getByRole("button", { name: "2 Design" }).click();
   let x = 250;
-  for (const kind of ["boardwalk", "stairs", "wall"] as const) {
+  for (const kind of ["boardwalk", "stairs"] as const) {
     await page.keyboard.press("s");
     await page.getByTestId(`structure-kind-${kind}`).click();
     await expect.poll(async () => (await editorState(page)).tool).toBe("draw-structure");
@@ -85,7 +86,7 @@ test("a boardwalk, stairs and a wall drawn from the Features list, click by clic
     x += 250;
   }
   const all = await structures(page);
-  expect(all.map((s: any) => s.kind)).toEqual(["boardwalk", "stairs", "wall"]);
+  expect(all.map((s: any) => s.kind)).toEqual(["boardwalk", "stairs"]);
   for (const s of all) {
     expect(s.points, s.kind).toHaveLength(2);
     await expect.poll(async () => (await model(page, s.id))?.parts, s.kind).toEqual(MATERIALS[s.kind as StructureKind]);
@@ -123,6 +124,8 @@ test("a building, a shelter and a deck dragged out as rectangles; kind and roof 
 });
 
 test("reshaping a building with its corner and mid handles, moving it, deleting it", async ({ page }) => {
+  // (a long test: 45 s by itself on the test machine, twice that with others running beside it)
+  test.setTimeout(180_000);
   await blankCourse(page);
   await page.evaluate(() => (window as any).__dgView.fitBounds({ minX: 340, minY: 340, maxX: 560, maxY: 520 }, { animate: false }));
   await page.keyboard.press("s");
@@ -151,6 +154,8 @@ test("reshaping a building with its corner and mid handles, moving it, deleting 
 });
 
 test("buildings like the Security Camera Planner's: looks, roofs, colors, turning, height; a shelter as a gazebo", async ({ page }) => {
+  // (a long test: 45 s by itself on the test machine, twice that with others running beside it)
+  test.setTimeout(180_000);
   await blankCourse(page);
   await page.evaluate(() => (window as any).__dgView.fitBounds({ minX: 300, minY: 300, maxX: 700, maxY: 600 }, { animate: false }));
   await page.getByRole("button", { name: "2 Design" }).click();

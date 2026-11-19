@@ -100,7 +100,8 @@ export const LINE_KINDS: Record<LineKind, { label: string; color: string; width:
   fence: { label: "Fence", color: "#78716c", width: 0, maxWidth: 60, height: 4, heights: [2, 12], help: "A fence that stands up in 3D: posts and rails, boards or chain link." },
   stream: { label: "Stream", color: "#2b8fd6", width: 6, maxWidth: 200, help: "A creek or a ditch. It counts as OB unless you set Not OB. Drag the squares on its banks to make it wider in places." },
   power: { label: "Power line", color: "#a8a29e", width: 0, maxWidth: 60, height: 30, heights: [15, 80], help: "Wires on poles overhead." },
-  hedge: { label: "Hedge", color: "#3f6b35", width: 4, maxWidth: 20, height: 5, heights: [2, 12], help: "A row of bushes grown close together." }
+  hedge: { label: "Hedge", color: "#3f6b35", width: 4, maxWidth: 20, height: 5, heights: [2, 12], help: "A row of bushes grown close together." },
+  wall: { label: "Wall", color: "#8d877c", width: 2, maxWidth: 6, height: 3, heights: [1, 12], help: "A stone wall that follows the ground: dry stone or mortared blocks." }
 };
 
 /** A park's fields, courts and play areas: the name, the usual size (ft, for one placed by hand),
@@ -187,6 +188,15 @@ export const ROCK_STONES: Record<RockStone, { label: string; color: string }> = 
   redgranite: { label: "Red granite", color: "#8a5f4a" }
 };
 export const STONE_ORDER: RockStone[] = ["granite", "fieldstone", "sandstone", "basalt", "redgranite"];
+/** A stone's color as it shows. The map paints a stone softened (a little warm gray in it, half
+ * its saturation: lib/forest's stonePalOf); a rock, a wall, a rock surface and steep rock in 3D,
+ * and the stone's swatch, are this same color, so a stone looks one way wherever it is. */
+export const stoneShown = (stone: RockStone): string => {
+  const n = parseInt(ROCK_STONES[stone].color.slice(1), 16);
+  const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v, i) => v * 0.85 + [186, 172, 152][i] * 0.15);
+  const gray = c[0] * 0.299 + c[1] * 0.587 + c[2] * 0.114;
+  return "#" + c.map(v => Math.round(gray + (v - gray) * 0.5).toString(16).padStart(2, "0")).join("");
+};
 /** What a rock surface is: its name, its ground scan (three/groundDetail's LAYERS) and how much
  * grass grows through it and how many loose stones lie on it by default. */
 export const ROCK_LOOKS: Record<RockLook, { label: string; layer: "bedrock" | "broken" | "rocky" | "cliff"; grass: number; stones: number; help: string }> = {

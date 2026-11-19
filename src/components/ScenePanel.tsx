@@ -12,6 +12,7 @@ import { setStyle } from "./DesignPanel";
 import { STEEP_NEVER } from "../constants";
 import { Segmented, Toggle } from "./ui";
 import { LandscapePicker } from "./LandscapePicker";
+import { SteepStonePick } from "./RockSettings";
 import { SunFromSlider } from "./MapLookPanel";
 import { SHOW_EVENT } from "./showSetting";
 import { BAND_COLORS, BASKET_BAND } from "../three/courseModels";
@@ -191,6 +192,8 @@ function ScenePanel({ onClose, big, place, sheet }: { onClose: () => void; big?:
           <LandscapePicker />
           <Look3d s={s} />
           <Look3dSlider label="Bare rock on steep ground" value={s.steepRock ?? STEEP_NEVER} min={20} max={90} step={1} format={x => (x >= 89 ? "Never" : `Steeper than ${Math.round(x)}°`)} put={(x, h) => setStyle({ steepRock: x >= 89 ? undefined : x }, h)} />
+          {/* (its stone: here, and in the panel that opens when you click the rock itself) */}
+          {(s.steepRock ?? STEEP_NEVER) < 89 && <><div className="text-xs text-zinc-400 mt-2 mb-1">Steep rock's stone</div><SteepStonePick /></>}
           <div className="text-xs text-zinc-400 mt-2 mb-1">Basket band</div>
           {/* (a finger's 44 px round each swatch: six to the row, touching) */}
           <div className="flex gap-1.5 touch:gap-0" role="radiogroup" aria-label="Basket band" data-testid="basket-band">

@@ -123,6 +123,8 @@ export type ViewCallbacks = {
   onObPickEnd: () => void;
   /** A stretch of a line to take out (fractions of it as drawn). */
   onCutLine: (id: string, a: number, b: number) => void;
+  /** Steep ground's bare rock was clicked (it has no item of its own: its panel opens). */
+  onSteepPick: () => void;
   /** Trees measured from the air kept standing where they'd be cleared, or taken out (one undo step). */
   onLidar: (patch: { kept?: number[]; removed?: number[] }) => void;
   /** A flyover waiting for everything to be drawn (what it waits on), then flying (null). */

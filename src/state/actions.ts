@@ -19,6 +19,8 @@ import { keepsTreesOut, treeFree } from "../lib/treeFree";
 /** Selects an item or a hole; selecting a hole's part makes that hole the one being worked on. */
 export const select = (id: string | null, add = false) => {
   const doc = getDoc();
+  // (steep ground's rock is picked only while nothing else is)
+  if (editor().steepPicked) useEditor.getState().set({ steepPicked: false });
   if (add && id) {
     // Shift+click: into the things picked together, or out of them (a hole with its tees and baskets)
     const ed = editor();
@@ -563,8 +565,29 @@ export const setLineKind = (id: string, kind: LineKind) => {
     ...(kind === "path" || kind === "walk" ? {} : { surface: undefined }),
     // (a fence's, a hedge's or a power line's height starts at the new kind's usual)
     fenceHeight: undefined,
-    ...(kind === "fence" ? {} : { fenceStyle: undefined })
+    ...(kind === "fence" ? {} : { fenceStyle: undefined }),
+    // (and a wall's make, stone and look)
+    ...(kind === "wall" ? {} : { wallStyle: undefined, stone: undefined, moss: undefined, lichen: undefined, seed: undefined })
   } as Partial<CourseItem>);
+};
+
+/** A wall from before walls were lines made the new wall, where it stands: a built wall keeps its
+ * mortared blocks, a rock wall its stone, moss and lichen; both keep their size, hole and name.
+ * It is the same thing still (its id), so what points at it still does. One undo step. */
+export const toLineWall = (id: string) => {
+  const it = getDoc().items.find(i => i.id === id);
+  if (!it || it.locked) return;
+  let wall: LineItem | null = null;
+  if (it.type === "structure" && it.kind === "wall" && it.points.length >= 2) {
+    wall = { id, type: "line", kind: "wall", points: it.points.map(p => ({ ...p })), x: it.x, y: it.y, rotation: 0, straight: true, wallStyle: "mortared", width: it.width, fenceHeight: it.height, holeId: it.holeId, alsoHoles: it.alsoHoles, label: it.label };
+  } else if (it.type === "rock" && it.kind === "wall") {
+    const a = (it.rotation * Math.PI) / 180, dx = (Math.cos(a) * it.length) / 2, dy = (Math.sin(a) * it.length) / 2;
+    wall = { id, type: "line", kind: "wall", points: [{ x: it.x - dx, y: it.y - dy }, { x: it.x + dx, y: it.y + dy }], x: it.x, y: it.y, rotation: 0, straight: true, stone: it.stone, moss: it.moss, lichen: it.lichen, seed: it.seed, width: it.width, fenceHeight: it.height };
+  }
+  if (!wall) return;
+  const made = wall;
+  changeDoc(d => ({ items: d.items.map(i => (i.id === id ? made : i)) }));
+  select(id);
 };
 
 /** A field in play or out of play. One undo step. */

@@ -166,6 +166,10 @@ export type GroundDetailUniforms = {
   /** Steep ground shows bare rock (the cliff scan, in its own color) where the slope's cosine is
    * below this (0: none). */
   steepCos: { value: number };
+  /** Its stone's color, and whether it has one (0: the scan's own). */
+  steepStone: { value: THREE.Color };
+  steepOwn: { value: number };
+  steepPick: { value: number };
 };
 
 export const groundDetailUniforms = (): GroundDetailUniforms => ({
@@ -189,7 +193,10 @@ export const groundDetailUniforms = (): GroundDetailUniforms => ({
   growTint: { value: null },
   growRect: { value: new THREE.Vector4(0, 0, 1, 1) },
   growOn: { value: 0 },
-  steepCos: { value: 0 }
+  steepCos: { value: 0 },
+  steepStone: { value: new THREE.Color("#a89b8c") },
+  steepOwn: { value: 0 },
+  steepPick: { value: 0 }
 });
 
 /** Whether there's a graphics card: without one, the ground's own real ground at every distance
@@ -231,6 +238,16 @@ const SCAN_GLSL = /* glsl */ `
     col = max( vec3( 0.15 ), 1.0 + ( col - 1.0 ) * DG_GRAIN[ int( layer ) ] );
     nrm = ( textureGrad( detailNormal, vec3( u1, layer ), dx, dy ).xyz * w.x + textureGrad( detailNormal, vec3( u2, layer ), dx, dy ).xyz * w.y + textureGrad( detailNormal, vec3( u3, layer ), dx, dy ).xyz * w.z ) * 2.0 - 1.0;
   }
+  // A cliff's scan laid on a rock face itself, at feet f along the face and up it: its beds lie
+  // level, as a cliff's do (never turned, never smeared down the slope), with the same scan again
+  // three times larger so no stretch of face repeats the last
+  void dgFace( vec2 f, out vec3 col, out vec3 nrm ) {
+    vec2 uv = f / DG_TILE[ 12 ], uv2 = uv * 0.29 + 0.37;
+    vec2 dx = dFdx( uv ), dy = dFdy( uv );
+    vec3 a = textureGrad( detailMap, vec3( uv, 12.0 ), dx, dy ).rgb * 2.0, b = textureGrad( detailMap, vec3( uv2, 12.0 ), dx * 0.29, dy * 0.29 ).rgb * 2.0;
+    col = max( vec3( 0.2 ), 1.0 + ( a * mix( vec3( 1.0 ), b, 0.55 ) - 1.0 ) * 1.6 );
+    nrm = textureGrad( detailNormal, vec3( uv, 12.0 ), dx, dy ).xyz * 2.0 - 1.0;
+  }
   float dgNoise( vec2 p ) {
     vec2 i = floor( p ), u = fract( p ); u = u * u * ( 3.0 - 2.0 * u );
     return mix( mix( dgHash( i ).x, dgHash( i + vec2( 1.0, 0.0 ) ).x, u.x ), mix( dgHash( i + vec2( 0.0, 1.0 ) ).x, dgHash( i + vec2( 1.0, 1.0 ) ).x, u.x ), u.y );
@@ -247,6 +264,10 @@ const SCAN_GLSL = /* glsl */ `
     return mix( c, c * vec3( 1.1, 1.02, 0.78 ), dry * 0.4 * green * amount );
   }
   vec3 dgNrm = vec3( 0.0, 0.0, 1.0 );
+  // (a rock face's bumps, as the world lies: steep ground's bare rock)
+  vec3 dgFaceN = vec3( 0.0 );
+  // (how much of this spot is steep rock: its brightest eases off under white)
+  float dgStone = 0.0;
   float dgFade = 0.0;
   // (how much of the scans' real color the ground has taken: near the eye, or all of its own ground)
   float dgCol = 0.0;
@@ -315,6 +336,8 @@ const SCAN_GLSL = /* glsl */ `
       c1 = min( c1 * g, vec3( 1.3 ) ); c2 = min( c2 * g, vec3( 1.3 ) );
     }
     #endif
+    // (a rock surface keeps its stone's color whole: the scan's light and dark, half its hues)
+    if ( keep > 0.99 ) c1 = mix( vec3( dot( c1, vec3( 0.3, 0.59, 0.11 ) ) ), c1, 0.25 );
     vec3 nrm = ( n1 * w1 + n2 * w2 ) / sum;
     vec3 real = ( dgReal( l1, base, keep ) * c1 * w1 + ( w2 > 0.004 ? dgReal( l2, base, keep ) * c2 * w2 : vec3( 0.0 ) ) ) / sum;
     float cov = clamp( sum, 0.0, 1.0 );
@@ -332,6 +355,7 @@ const BUMPS_GLSL = /* glsl */ `
     vec3 dgT = normalize( ( viewMatrix * vec4( 1.0, 0.0, 0.0, 0.0 ) ).xyz ), dgB = normalize( ( viewMatrix * vec4( 0.0, 0.0, -1.0, 0.0 ) ).xyz );
     normal = normalize( normal + ( dgT * dgNrm.x + dgB * dgNrm.y ) * 1.1 );
   }
+  if ( dgFaceN != vec3( 0.0 ) ) normal = normalize( normal + ( viewMatrix * vec4( dgFaceN, 0.0 ) ).xyz );
 `;
 const worldVertex = (vs: string) => vs
   .replace("#include <common>", "#include <common>\nvarying vec3 vGroundW;")
@@ -351,7 +375,7 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
         uniform sampler2D coverMap; uniform vec4 coverRect; uniform float coverOn; uniform float coverFromColor;
         uniform sampler2D paintColorMap; uniform sampler2D paintCoverMap; uniform vec4 paintRect; uniform float paintOn;
         uniform sampler2D floorMap; uniform vec4 floorRect; uniform float floorOn;
-        uniform sampler2D growMap; uniform sampler2D growTint; uniform vec4 growRect; uniform float growOn; uniform float steepCos;
+        uniform sampler2D growMap; uniform sampler2D growTint; uniform vec4 growRect; uniform float growOn; uniform float steepCos; uniform vec3 steepStone; uniform float steepOwn; uniform float steepPick;
         // (clumps of grass, fixed to the ground: a couple of feet across near the eye, and farther
         // off, where those would shimmer, the next size up, twice as wide each time, one fading
         // into the next (k: how far between two sizes), so nothing slides or swells as the eye moves)
@@ -449,11 +473,12 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
           diffuseColor.rgb = dgMacro( diffuseColor.rgb, f, max( coverFromColor, paintOn ) );
           // Steep ground: bare rock, a cliff's layers, broken up along its edge (over the grass,
           // the photo or the painted map alike)
-          float dgSteep = 0.0;
+          float dgSteep = 0.0, dgCy = 1.0;
           if ( steepCos > 0.0 ) {
             vec3 dgUp = normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz );
             float cy = dot( normalize( vNormal ), dgUp ) + ( dgNoise( f / 9.0 + 3.0 ) - 0.5 ) * 0.12 + ( dgNoise( f / 2.3 ) - 0.5 ) * 0.05;
             dgSteep = 1.0 - smoothstep( steepCos - 0.05, steepCos + 0.03, cy );
+            dgCy = dot( normalize( vNormal ), dgUp ) + ( dgNoise( f / 9.0 + 3.0 ) - 0.5 ) * 0.12;
             vec3 cliffC = DG_MEAN[ 12 ] * ( 0.85 + 0.3 * dgNoise( vec2( f.x / 30.0, vGroundW.y * groundFeet / 4.0 ) ) );
             diffuseColor.rgb = mix( diffuseColor.rgb, cliffC, dgSteep );
           }
@@ -466,12 +491,38 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
             }
             float under = min( 1.0, fl.x + fl.y );
             // grass, concrete, asphalt, dirt; leaves, needles: the two that most cover this spot
-            float w[7] = float[7]( cover.r * ( 1.0 - under ) * ( 1.0 - dgSteep ), cover.g * ( 1.0 - dgSteep ), cover.b * ( 1.0 - dgSteep ), cover.a * ( 1.0 - dgSteep ), cover.r * fl.x * ( 1.0 - dgSteep ), cover.r * fl.y * ( 1.0 - dgSteep ), dgSteep );
+            float w[7] = float[7]( cover.r * ( 1.0 - under ) * ( 1.0 - dgSteep ), cover.g * ( 1.0 - dgSteep ), cover.b * ( 1.0 - dgSteep ), cover.a * ( 1.0 - dgSteep ), cover.r * fl.x * ( 1.0 - dgSteep ), cover.r * fl.y * ( 1.0 - dgSteep ), 0.0 );
             const float L[7] = float[7]( 0.0, 1.0, 2.0, 3.0, 6.0, 7.0, 12.0 );
             int a1 = 0, a2 = -1;
             for ( int i = 1; i < 7; i++ ) if ( w[ i ] > w[ a1 ] ) a1 = i;
             for ( int i = 0; i < 7; i++ ) if ( i != a1 && ( a2 < 0 || w[ i ] > w[ a2 ] ) ) a2 = i;
             diffuseColor.rgb = dgLay( diffuseColor.rgb, L[ a1 ], w[ a1 ], L[ a2 ], w[ a2 ], 1.0, dgKeep );
+          }
+          // (a rock face: the cliff's scan on the face itself, along it and up it, so its beds lie
+          // level and nothing smears down the slope. In the course's stone: the scan's light and
+          // dark on the stone's own color, out to the rock's edge)
+          if ( dgSteep > 0.0 ) {
+            vec3 dgWN = normalize( ( vec4( normalize( vNormal ), 0.0 ) * viewMatrix ).xyz );
+            vec2 hw = pow( abs( dgWN.xz ) + 1e-3, vec2( 4.0 ) ); hw /= hw.x + hw.y;
+            vec3 pf = vGroundW * groundFeet, fc = vec3( 0.0 ), fn = vec3( 0.0 ), c1, n1;
+            if ( hw.x > 0.03 ) { dgFace( pf.zy, c1, n1 ); fc += c1 * hw.x; fn += vec3( 0.0, n1.y, n1.x ) * hw.x; }
+            if ( hw.y > 0.03 ) { dgFace( pf.xy, c1, n1 ); fc += c1 * hw.y; fn += vec3( n1.x, n1.y, 0.0 ) * hw.y; }
+            float hs = ( hw.x > 0.03 ? hw.x : 0.0 ) + ( hw.y > 0.03 ? hw.y : 0.0 );
+            fc /= hs; fn /= hs;
+            float lumF = dot( fc, vec3( 0.3, 0.59, 0.11 ) );
+            // (the brown cliff keeps its brown: a little of the scan's reds and yellows in its beds)
+            vec3 rock = mix( mix( vec3( dot( DG_MEAN[ 12 ], vec3( 0.3, 0.59, 0.11 ) ) ), DG_MEAN[ 12 ], 0.72 ) * 0.6 * mix( vec3( lumF ), fc, 0.4 ), steepStone * mix( 1.0, lumF, 0.9 ), steepOwn );
+            float amt = smoothstep( 0.0, 0.5, dgSteep );
+            diffuseColor.rgb = mix( diffuseColor.rgb, rock, amt );
+            dgNrm = normalize( mix( dgNrm, vec3( 0.0, 0.0, 1.0 ), amt ) );
+            dgFaceN = fn * 0.9 * amt;
+            dgStone = amt;
+          }
+          // (picked: a light line along its edge)
+          if ( steepPick > 0.0 && steepCos > 0.0 ) {
+            float dLine = abs( dgCy - ( steepCos - 0.01 ) ) / max( 1e-5, fwidth( dgCy ) );
+            float dNear = 1.0 - smoothstep( 0.035, 0.08, abs( dgCy - ( steepCos - 0.01 ) ) );
+            diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.016, 0.65, 0.86 ), steepPick * dNear * ( 1.0 - smoothstep( 1.0, 2.1, dLine ) ) );
           }
           // (how long it grows shows from any way off: a mown fairway brighter and even, tall grass
           // straw at its tips and dark down between its clumps)
@@ -482,7 +533,9 @@ export const addGroundDetail = (m: THREE.Material, u: GroundDetailUniforms) => {
           // (mown: the mower's light and dark bands)
           if ( dgMownK > 0.0 ) diffuseColor.rgb *= 1.0 + 0.1 * dgMownK * smoothstep( -0.15, 0.15, sin( ( f.y + f.x * 0.2 ) / 4.5 ) ) - 0.05 * dgMownK;
         }`)
-      .replace("#include <normal_fragment_maps>", BUMPS_GLSL);
+      .replace("#include <normal_fragment_maps>", BUMPS_GLSL)
+      .replace("#include <opaque_fragment>", `if ( dgStone > 0.0 ) { vec3 dgLit = outgoingLight; { float dgL = max( outgoingLight.r, max( outgoingLight.g, outgoingLight.b ) ); if ( dgL > 0.14 ) outgoingLight *= ( 0.14 + 0.11 * ( 1.0 - exp( -( dgL - 0.14 ) / 0.11 ) ) ) / dgL; } outgoingLight = mix( dgLit, outgoingLight, dgStone ); }
+#include <opaque_fragment>`);
   };
   m.customProgramCacheKey = () => `dg-ground-scans${groundShader.card ? "" : "-plain"}`;
 };

@@ -13,8 +13,8 @@ import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
-import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp, ROCK_KINDS, ROCK_LOOKS, ROCK_STONES, STEEP_NEVER } from "../constants";
-import { FAIRWAY_STATIONS, bendOwner, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
+import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp, ROCK_KINDS, ROCK_LOOKS, stoneShown, STEEP_NEVER } from "../constants";
+import { FAIRWAY_STATIONS, wallThick, bendOwner, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
 import { boundsOf, centroid, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
 import { heightAt } from "../lib/terrainGrid";
@@ -27,7 +27,7 @@ import { DrapeCache, drapedPoints, drapedPolygon, drapedRibbon } from "../three/
 import { dab, strokeOutline } from "../lib/brush";
 import { disposeObjectDeep } from "../three/dispose";
 import { create3dTree, getTreeSignature, retuneTrees } from "../three/trees";
-import { createRock, rockItemGeometry, rockMaterial, rockSignature, ROCK_BURIED, rockOutlinePoints, rockSpan } from "../three/rocks";
+import { createRock, rockItemGeometry, rockMaterial, rockSignature, ROCK_BURIED, rockOutlinePoints, rockSpan, STONE_LOOK, STONE_K } from "../three/rocks";
 import { createMeasuredWoods, createUnderbrush, createWoods, createWoodsWhere } from "../three/woods";
 import { standingTrees, grownTree, grownTrees } from "../lib/lidar";
 import type { WoodedGrid } from "../lib/forest";
@@ -46,7 +46,9 @@ import { setWaterSky, waterMaterial, waterUniforms } from "../three/water";
 import { addSurfaceDetail, groundShader, layerOf, type SurfaceLayer } from "../three/groundDetail";
 import { softenShadows } from "../three/softShadows";
 import { treeNearFade } from "../three/ezShapes";
-import { createFence, createStructure, onPartLoaded } from "../three/structures";
+import { createBlockWall, createFence, createStructure, onPartLoaded } from "../three/structures";
+import { createDryWall, wallDetail } from "../three/walls";
+import { wallRun } from "../lib/wallJoin";
 import { measuredStanding, setMeasuredStanding } from "../lib/standing";
 import { createFieldGround, createFieldProps, createHedge, createPowerLine } from "../three/parkProps";
 import { LEAGUES, cornerFrame, fieldInks, fieldPartAt, fieldPartShape, fieldPlan } from "../lib/fieldPlan";
@@ -595,7 +597,7 @@ export class CourseView {
     on(container, "pointerdown", e => this.onPointerDown(e), { capture: true });
     on(container, "wheel", e => this.onWheel(e), { capture: true, passive: false });
     on(container, "pointermove", e => this.onHoverMove(e));
-    on(container, "pointerleave", () => { this.lastPointer = null; this.cb.onHover(null); this.setHover(null); this.restKey = ""; window.clearTimeout(this.restTimer); this.updateGhost(null); this.showStep(null); this.tip(null); this.invalidate(); });
+    on(container, "pointerleave", () => { this.lastPointer = null; this.cb.onHover(null); this.setHover(null); this.setSteepHover(false); this.restKey = ""; window.clearTimeout(this.restTimer); this.updateGhost(null); this.showStep(null); this.tip(null); this.invalidate(); });
     on(container, "dblclick", e => this.onDoubleClick(e));
     on(window, "pointerup", e => this.touchUp(e));
     on(window, "pointercancel", e => this.touchUp(e));
@@ -854,6 +856,30 @@ export class CourseView {
   invalidate(shadows = false) {
     this.dirty = true;
     if (shadows) this.shadowsDirty = true;
+  }
+
+  /** Steep ground's rock is picked (a light line along its edge), or the pointer is over it (a
+   * fainter one: a click would pick it). */
+  private steepPicked = false;
+  private steepHover = false;
+  setSteepPicked(on: boolean) {
+    if (this.steepPicked === on) return;
+    this.steepPicked = on;
+    this.invalidate();
+  }
+  /** Whether the ground here shows steep ground's bare rock, as the ground's own shading decides
+   * it (the slope against the course's "steeper than"). */
+  private steepAt(x: number, y: number) {
+    const cos = this.ground.detail.steepCos.value;
+    if (cos <= 0) return false;
+    const e = 1.5, dx = (this.h(x + e, y) - this.h(x - e, y)) / (2 * e), dy = (this.h(x, y + e) - this.h(x, y - e)) / (2 * e);
+    return 1 / Math.sqrt(1 + dx * dx + dy * dy) < cos + 0.01;
+  }
+  private setSteepHover(on: boolean) {
+    if (this.steepHover === on) return;
+    this.steepHover = on;
+    this.updateCursor();
+    this.invalidate();
   }
 
   /** Look straight down (2D) or tilt into 3D, animated. */
@@ -2526,6 +2552,8 @@ export class CourseView {
     forestDetail.all = false;
     forestDetail.version++;
     retuneTrees(this.itemsGroup);
+    // (a wall's stones in full only from closer, where frames are dear)
+    wallDetail.scale = (this.software ? 4 : this.mobile ? 1.5 : 1) * [1, 1.25, 1.6, 2.2, 3][this.tier];
     this.invalidate();
   }
 
@@ -2547,6 +2575,7 @@ export class CourseView {
     if (this.software) return;
     forestDetail.all = true;
     forestDetail.version++;
+    wallDetail.scale = 0.5;
     retuneTrees(this.itemsGroup);
     const shadow = Math.min(this.mobile ? 2048 : 4096, this.renderer.capabilities.maxTextureSize);
     if (this.sun.shadow.mapSize.x !== shadow) {
@@ -2767,6 +2796,14 @@ export class CourseView {
     // (the ground's own, no photo or painted map over it, paints itself from the same maps: from
     // straight above too)
     const grown = !!doc && !this.software && this.ground.detail.groundPlain.value > 0;
+    // (steep ground's bare rock, whatever else the ground shows: from straight above and over the
+    // photo too. Not without a graphics card: there the ground is drawn the cheapest way, as it
+    // always was)
+    const steep = doc?.course.style.steepRock ?? STEEP_NEVER, steepStone = doc?.course.style.steepStone, sd = this.ground.detail;
+    sd.steepCos.value = this.software || steep >= 89 ? 0 : Math.cos(steep * DEG);
+    sd.steepOwn.value = steepStone ? 1 : 0;
+    if (steepStone) sd.steepStone.value.set(STONE_LOOK[steepStone].mean).multiplyScalar(STONE_K * STEEP_K);
+    sd.steepPick.value = this.steepPicked ? 1 : this.steepHover ? 0.5 : 0;
     if (!doc || ((!on || !q) && !grown)) {
       this.ground.detail.growOn.value = 0;
       this.grass.group.visible = false;
@@ -2775,7 +2812,7 @@ export class CourseView {
     }
     // What grows where: painted again when the course changed (at most a few times a second
     // while something is dragged)
-    const key = [doc.course.items, doc.stats, doc.groundPaint, doc.course.style, doc.groundColor, doc.canvas, doc.course.holes];
+    const key = [doc.course.items, doc.stats, doc.groundPaint, doc.course.style, doc.groundColor, doc.canvas, doc.course.holes, doc.heights];
     if (key.some((k, i) => (this.grassInputs[i] ?? null) !== k)) {
       const now = performance.now();
       if (now - this.grassBuilt > 300 || !this.grassInputs.length) {
@@ -2796,8 +2833,6 @@ export class CourseView {
       gd.growRect.value.copy(gm.rect);
     }
     gd.growOn.value = grown && gm ? 1 : 0;
-    const steep = this.doc?.course.style.steepRock ?? STEEP_NEVER;
-    gd.steepCos.value = steep >= 89 ? 0 : Math.cos(steep * DEG);
     if (!on || !q) {
       this.grass.group.visible = false;
       this.tufts.group.visible = false;
@@ -3669,7 +3704,8 @@ export class CourseView {
       }
       for (const it of course.items) {
         if (it.type === "area" && (play ? ["fairway", "green"] : ["fairway", "green", "water", "parking", "building", "sand", "rock", ...(tallGrass ? ["rough"] : []), "nogo", "field"]).includes(it.kind)) polys.push(this.shapeOf(it).pts);
-        else if (it.type === "line" && !play && it.kind !== "ob" && it.kind !== "fence") lines.push({ pts: this.shapeOf(it).pts, half: ((it.width ?? LINE_KINDS[it.kind].width) * Math.max(...widthFactors(it))) / 2 + 3 });
+        // (a wall: none in it, but right beside it, as trees grow along an old wall)
+        else if (it.type === "line" && !play && it.kind !== "ob" && it.kind !== "fence") lines.push({ pts: this.shapeOf(it).pts, half: ((it.width ?? LINE_KINDS[it.kind].width) * Math.max(...widthFactors(it))) / 2 + (it.kind === "wall" ? 1.5 : 3) });
         else if (it.type === "tee") discs.push({ p: it, r: Math.max(12, it.padLength) });
         else if (it.type === "basket") discs.push({ p: it, r: CIRCLE_ONE_FT * 0.6 });
         else if (it.type === "structure" && !play) {
@@ -3780,7 +3816,7 @@ export class CourseView {
       for (const it of course.items) {
         // (and woods given drawn trees or none: no measured ones there)
         if (it.type === "area" && (["water", "parking", "building"].includes(it.kind) || fieldKeepsTreesOut(it) || (it.kind === "woods" && (it.trees === "drawn" || it.trees === "none")))) polys.push(this.shapeOf(it).pts);
-        else if (it.type === "line" && ["road", "path", "walk", "stream", "hedge"].includes(it.kind)) lines.push({ pts: this.shapeOf(it).pts, half: ((it.width ?? LINE_KINDS[it.kind].width) * Math.max(...widthFactors(it))) / 2 });
+        else if (it.type === "line" && ["road", "path", "walk", "stream", "hedge", "wall"].includes(it.kind)) lines.push({ pts: this.shapeOf(it).pts, half: ((it.width ?? LINE_KINDS[it.kind].width) * Math.max(...widthFactors(it))) / 2 });
         else if (it.type === "structure") {
           // (a building's outline: none inside it, nor with its trunk against the walls)
           if (STRUCTURE_KINDS[it.kind].shape === "outline") { polys.push(it.points); lines.push({ pts: [...it.points, it.points[0]], half: 3 }); }
@@ -4022,7 +4058,7 @@ export class CourseView {
           // (up close, what it's made of: a fairway's mown grass, a parking lot's asphalt, a woods' floor)
           const scan: [SurfaceLayer, number] | null = a.kind === "fairway" || a.kind === "green" ? ["grass", 0.9] : a.kind === "rough" ? ["grass", 1] : a.kind === "sand" ? ["sand", 1]
             : a.kind === "parking" ? ["asphalt", 1] : a.kind === "rock" ? [ROCK_LOOKS[a.rockLook ?? "bedrock"].layer, 1] : null;
-          if (scan) addSurfaceDetail(mat, this.ground.detail, layerOf(scan[0]), scan[1], a.kind === "fairway" || a.kind === "green", soft, a.kind === "rock" ? (a.grassBetween ?? ROCK_LOOKS[a.rockLook ?? "bedrock"].grass) : 0, a.kind === "rock" ? 0.8 : 0.25);
+          if (scan) addSurfaceDetail(mat, this.ground.detail, layerOf(scan[0]), scan[1], a.kind === "fairway" || a.kind === "green", soft, a.kind === "rock" ? (a.grassBetween ?? ROCK_LOOKS[a.rockLook ?? "bedrock"].grass) : 0, a.kind === "rock" ? 1 : 0.25);
           const mesh: THREE.Mesh = new THREE.Mesh(geo, mat);
           // (bedrock: bare rock of its stone, as rocks are made of; the other looks the ground's scans)
           if (a.kind === "rock" && (a.rockLook ?? "bedrock") === "bedrock") {
@@ -4142,7 +4178,9 @@ export class CourseView {
         const piece = subPath(this.shapeOf(l).pts, a, b);
         return { a, b, piece, sides: l.obBeyond ? beyondSides(l, piece, doc.stats.filter(st => st.complete && obFor(course, l, st.holeId)).map(st => st.line), !obPicked(course, l).length) : null };
       }).filter(o => o.piece.length >= 2) : [];
-      put(`line:${l.id}`, JSON.stringify([l.points, l.straight, l.kind, width, l.widths, hv, c, l.ob, l.obToward, l.kind === "stream" ? this.waterShore(l.points) : 0, obParts.map(o => [o.a, o.b, o.sides]), st.pathOrder, l.fenceStyle, l.fenceHeight, l.hazard]), () => {
+      // (a dry stone wall that meets another wall stops at its face)
+      const run = l.kind === "wall" && l.wallStyle !== "mortared" && l.points.length >= 2 ? wallRun(l, this.shapeOf(l).pts, course.items) : null;
+      put(`line:${l.id}`, JSON.stringify([run && [run.pts[0], run.pts[run.pts.length - 1], run.butt], l.points, l.straight, l.kind, width, l.widths, hv, c, l.ob, l.obToward, l.kind === "stream" ? this.waterShore(l.points) : 0, obParts.map(o => [o.a, o.b, o.sides]), st.pathOrder, l.fenceStyle, l.fenceHeight, l.hazard, l.wallStyle, l.stone, l.moss, l.lichen, l.seed]), () => {
         const g = new THREE.Group();
         const pts = this.shapeOf(l).pts;
         // (wider or narrower along the way: a creek that opens out)
@@ -4158,7 +4196,14 @@ export class CourseView {
         const obMat = () => new THREE.MeshLambertMaterial({ color: color("ob")!, transparent: true, opacity: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 });
         for (const { a, b, piece, sides } of obParts) {
           const at = (u: number) => along(a + (b - a) * u);
-          if (width > 0 && !sides) {
+          if (l.kind === "wall") {
+            // (the wall is the line: a thin edge at its foot, either side or on the side that's out)
+            for (const side of sides ?? [1, -1]) {
+              const edge = new THREE.Mesh(drapedRibbon(offsetPath(piece, u => side * (at(u) / 2 + 0.9)), () => 1.1, (x, y) => this.h(x, y), Math.max(3, doc.gridSize / 2), 0.16), obMat());
+              edge.renderOrder = 1.9;
+              g.add(edge);
+            }
+          } else if (width > 0 && !sides) {
             const edge = new THREE.Mesh(drapedRibbon(piece, u => at(u) + 5, (x, y) => this.h(x, y), Math.max(3, doc.gridSize / 2), 0.16), obMat());
             edge.renderOrder = 1.9;
             g.add(edge);
@@ -4170,7 +4215,16 @@ export class CourseView {
             }
           } else g.add(this.fatLine(this.drapeLine(piece), color("ob")!, 5, { order: 4.9 }));
         }
-        if (width > 0 && l.points.length >= 2) {
+        if (l.kind === "wall") {
+          // (a wall stands on the ground along its line: stones stacked dry, or mortared blocks)
+          if (l.points.length >= 2) {
+            const wall = l.wallStyle === "mortared"
+              ? createBlockWall(pts, (x, y) => this.h(x, y), width || 2, l.fenceHeight ?? meta.height ?? 3)
+              : createDryWall(run?.pts ?? pts, (x, y) => this.h(x, y), width || 2, l.fenceHeight ?? meta.height ?? 3, { stone: l.stone ?? "fieldstone", moss: l.moss, lichen: l.lichen, seed: l.seed, butt: run?.butt });
+            this.shadowsDirty = true;
+            g.add(wall);
+          }
+        } else if (width > 0 && l.points.length >= 2) {
           const ribbon = new THREE.Mesh(
             drapedRibbon(pts, along, (x, y) => this.h(x, y), Math.max(3, doc.gridSize / 2), 0.18),
             l.kind === "stream" ? waterMaterial(c, ...this.waterShore(l.points)) : this.surfaceMaterial(c, l.kind === "road" ? "asphalt" : l.kind === "path" || l.kind === "walk" ? ({ gravel: "gravel", woodchips: "chips", paved: "concrete", grass: "grass" } as Record<string, SurfaceLayer>)[l.surface ?? ""] ?? "dirt" : null)
@@ -4564,6 +4618,15 @@ export class CourseView {
       for (const r of rings) g.add(this.fatLine(this.drapeLine(r, LIFT + 0.3, true), color, 3 + grow, { opacity, order, depthTest: false }));
     } else if (item.type === "area") {
       g.add(this.fatLine(this.drapeLine(item.points, LIFT + 0.2, true), color, 3.5 + grow, { opacity, order }));
+    }
+    else if (item.type === "line" && item.kind === "wall") {
+      // (round its foot, both sides: its own line is under its stones)
+      const pts = linePath(item), w = wallThick(item) / 2 + 0.7;
+      const edge = (off: number) => pts.map((p, i) => {
+        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)], l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        return { x: p.x - ((b.y - a.y) / l) * off, y: p.y + ((b.x - a.x) / l) * off };
+      });
+      g.add(this.fatLine(this.drapeLine([...edge(w), ...edge(-w).reverse()], LIFT + 0.3, true), color, 2.5 + grow, { opacity, order }));
     }
     else if (item.type === "line") g.add(this.fatLine(this.drapeLine(item.points, LIFT + 0.2), color, 5 + grow, { opacity: opacity * 0.6, order }));
     else {
@@ -7272,8 +7335,11 @@ export class CourseView {
         return;
       }
       stop();
+      // (bare rock on steep ground: a click picks it, for its stone)
+      const g = this.readOnly ? null : this.groundAt(e.clientX, e.clientY);
+      const steep = !!g && this.steepAt(g.x, g.z);
       this.gesture(e, {
-        click: () => this.cb.onSelect(null),
+        click: () => { this.cb.onSelect(null); if (steep) this.cb.onSteepPick(); },
         drag: s => this.panDrag(s)
       });
       return;
@@ -8428,7 +8494,10 @@ export class CourseView {
         if (this.readOnly) this.setHover(this.holeFor(dom ?? (target?.closest?.("[data-handle]") ? null : this.pick(p.x, p.y))));
         else if (target?.closest?.("[data-handle]")) this.setHover(null);
         else { const t = this.clickTarget(p.x, p.y, dom); this.setHover(t.id, t.tree); this.restTip(p, t.id, t.tree); }
+        // (over bare steep rock and nothing else: its edge lights, as a click would pick it)
+        this.setSteepHover(!this.readOnly && !this.povHole && !this.hoverId && !this.hoverTree && !target?.closest?.("[data-handle]") && !!g && this.steepAt(g.x, g.z));
       } else {
+        this.setSteepHover(false);
         this.setHover(null);
         this.updateGhost(g);
       }
@@ -8444,7 +8513,7 @@ export class CourseView {
     else if (this.hoverId) {
       const it = this.item(this.hoverId);
       c = !it || ((it.type === "area" || it.type === "line" || it.type === "structure") && this.hoverId !== this.selectedId && !this.group.includes(this.hoverId)) ? "pointer" : it.type === "area" && !this.hoverEdge && !this.group.includes(this.hoverId) ? "grab" : "move";
-    } else if (this.hoverTree) c = "pointer";
+    } else if (this.hoverTree || this.steepHover) c = "pointer";
     this.container.style.cursor = c;
   }
 
@@ -8508,10 +8577,12 @@ export class CourseView {
   }
 }
 
+/** How bright steep rock is against a rock of the same stone (a face gets less of the sky). */
+const STEEP_K = 0.65;
 /** A rock surface's color: its stone, darker for broken rock, earthier for rocky ground. */
 const rockGroundColor = (a: AreaItem) => {
-  const st = new THREE.Color(ROCK_STONES[a.stone ?? "granite"].color), look = a.rockLook ?? "bedrock";
-  st.multiplyScalar(look === "broken" ? 0.62 : 0.72);
+  const st = new THREE.Color(stoneShown(a.stone ?? "granite")), look = a.rockLook ?? "bedrock";
+  st.multiplyScalar(look === "broken" ? 0.58 : look === "cliff" ? 0.64 : 0.72);
   if (look === "rocky") st.lerp(new THREE.Color("#6a5644"), 0.55);
   return `#${st.getHexString()}`;
 };

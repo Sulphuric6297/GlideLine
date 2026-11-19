@@ -144,6 +144,8 @@ type EditorStore = {
   plotLine: string | null;
   /** The line (a road, a path...) a stretch of OB is being marked along: where it starts, then ends. */
   obPick: string | null;
+  /** Steep ground's rock is picked (its panel shows; it has no item of its own). */
+  steepPicked?: boolean;
   /** What that stretch is for: taken out of the line (instead of marked OB). */
   pickCut: boolean;
   /** How far measuring the trees and ground from the air has got (0..1; null: not measuring). */

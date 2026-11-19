@@ -435,6 +435,8 @@ export default function App() {
         if (view?.cancelDrawing()) return;
         if (s.tool !== "select") { s.set({ tool: "select" }); return; }
         if (s.selectedId || s.group.length) { select(null); return; }
+        // (steep ground's rock, picked: put away as a selection is)
+        if (s.steepPicked) { s.set({ steepPicked: false }); return; }
         if (s.dragSelect) { s.set({ dragSelect: false }); return; }
         if (s.problemsOpen) { s.set({ problemsOpen: false }); return; }
         return;

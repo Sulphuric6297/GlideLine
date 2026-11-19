@@ -525,15 +525,29 @@ const stairs = (st: StructureItem, g: Ground, parts: Parts) => {
   }
 };
 
-const wall = (st: StructureItem, g: Ground, parts: Parts) => {
-  const samples = samplePath(st.points, 2);
+/** A wall of mortared blocks along `pts`: its top the wall's height above the ground all along. */
+const blockWall = (pts: P[], H: number, half: number, g: Ground, stone: Mesher) => {
+  const samples = samplePath(pts, 2);
   if (samples.length < 2) return;
-  const H = structureHeight(st), half = structureWidth(st) / 2;
   const ground = samples.map(p => g(p.x, p.y));
-  const stone = (parts.stone ??= new Mesher());
   sweep(stone, samples, ground.map(y => y - 0.8), ground.map(y => y + H), 0, half);
   // Capstones, a little wider
   sweep(stone, samples, ground.map(y => y + H), ground.map(y => y + H + 0.3), 0, half + 0.14);
+};
+const wall = (st: StructureItem, g: Ground, parts: Parts) => blockWall(st.points, structureHeight(st), structureWidth(st) / 2, g, (parts.stone ??= new Mesher()));
+
+/** A mortared wall along a line (a wall drawn as a line), as the built wall is made. */
+export const createBlockWall = (pts: P[], groundAt: Ground, width: number, height: number) => {
+  const group = new THREE.Group(), m = new Mesher();
+  group.name = "wall";
+  blockWall(pts, height, width / 2, groundAt, m);
+  if (m.empty) return group;
+  const mesh = new THREE.Mesh(m.geometry(), material("stone"));
+  mesh.name = "stone";
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+  return group;
 };
 
 /** The roof over an outline: its faces at `eave + pitch × run`, and a fascia board round the eaves. */

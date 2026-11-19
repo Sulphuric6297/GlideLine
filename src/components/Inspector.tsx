@@ -27,7 +27,7 @@ import type { TeeItem, AmenityKind, AreaItem, CourseDoc, CourseItem, FenceStyle,
 import { fieldInks, fieldPlan, LEAGUE_ORDER, LEAGUES } from "../lib/fieldPlan";
 import { ElevationProfile } from "./ElevationProfile";
 import { TreeSettings } from "./TreeSettings";
-import { RockSettings, RockSurfaceSettings } from "./RockSettings";
+import { OldWall, RockSettings, RockSurfaceSettings, SteepRockSettings, WallLook, WallSettings } from "./RockSettings";
 import { FlyoverRow } from "./FlyoverSettings";
 import { HoleChips } from "./ApplyToHoles";
 import { HoleSteps } from "./HoleSteps";
@@ -956,7 +956,8 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
           <Field label="Kind" help={item.kind === "ob" ? "ob" : "lines"}>
             <ChipPick label="Line kind" value={item.kind} onChange={v => setLineKind(item.id, v)} options={(Object.keys(LINE_KINDS) as LineKind[]).map(k => ({ value: k, label: LINE_KINDS[k].label, color: LINE_KINDS[k].color }))} />
           </Field>
-          {(meta.width > 0 || walk) && <Slider label={widthVaries(item) ? "Width (all along)" : "Width"} min={walk ? 0 : 1} max={meta.maxWidth} step={0.5} value={w} onChange={v => set({ width: v || undefined }, false)} onDone={commit} format={v => (v ? fmtSize(v, u) : "Just a dashed line")} />}
+          {item.kind === "wall" && <WallSettings item={item} set={(patch, history = true) => set(patch as Record<string, unknown>, history)} />}
+          {(meta.width > 0 || walk) && <Slider label={item.kind === "wall" ? "Thickness" : widthVaries(item) ? "Width (all along)" : "Width"} min={walk ? 0 : 1} max={meta.maxWidth} step={0.5} value={w} onChange={v => set({ width: v || undefined }, false)} onDone={commit} format={v => (v ? fmtSize(v, u) : "Just a dashed line")} />}
           {item.kind === "stream" && widthVaries(item) && (
             <div className="flex items-center justify-between gap-2 -mt-1 mb-2" data-testid="line-widths">
               <p className="text-[11px] text-zinc-400 leading-snug tabular-nums">{fmtDist(Math.min(...factors) * w, u, false)} to {fmtDist(Math.max(...factors) * w, u)}</p>
@@ -975,6 +976,7 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
           <Toggle label="Curved" checked={!item.straight} onChange={v => set({ straight: v ? undefined : true })} />
           <TurnButtons item={item} />
           {!item.locked && <div className="mb-3"><Button small onClick={() => useEditor.getState().set({ obPick: item.id, pickCut: true, tool: "select" })} testid="line-cut">Remove a stretch</Button></div>}
+          {item.kind === "wall" && <WallLook item={item} set={(patch, history = true) => set(patch as Record<string, unknown>, history)} />}
           <Field label="Name on the map (optional)"><TextInput label="Line name" value={item.label ?? ""} onChange={v => set({ label: v || undefined }, false)} onDone={commit} /></Field>
           <div className="text-xs text-zinc-400">{fmtDist(pathLength(linePath(item)), u)} long</div>
         </>
@@ -985,13 +987,15 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
       const meta = STRUCTURE_KINDS[item.kind];
       const line = meta.shape === "line";
       // (A line can only become another line, an outline another outline)
-      const kinds = STRUCTURE_ORDER.filter(k => STRUCTURE_KINDS[k].shape === meta.shape);
+      // (the built wall is an older course's: walls are lines now, so nothing else can be made one)
+      const kinds = STRUCTURE_ORDER.filter(k => STRUCTURE_KINDS[k].shape === meta.shape && (k !== "wall" || item.kind === "wall"));
       const width = structureWidth(item), height = structureHeight(item);
       body = (
         <>
           <Field label="Kind" help="build">
             <ChipPick label="Structure kind" value={item.kind} onChange={v => set({ kind: v as StructureKind })} options={kinds.map(k => ({ value: k, label: STRUCTURE_KINDS[k].label, icon: builtIcon(k) }))} />
           </Field>
+          {item.kind === "wall" && <OldWall id={item.id} level={false} locked={item.locked} />}
           {line && <Slider label={item.kind === "wall" ? "Thickness" : "Width"} min={meta.widths[0]} max={Math.max(meta.widths[1], width)} step={0.5} value={width} onChange={v => set({ width: v }, false)} onDone={commit} format={v => fmtSize(v, u)} />}
           {meta.heightLabel && <Slider label={meta.heightLabel} min={meta.heights[0]} max={Math.max(meta.heights[1], height)} step={0.5} value={height} onChange={v => set({ height: v }, false)} onDone={commit} format={v => fmtSize(v, u)} />}
           {(item.kind === "building" || item.kind === "shelter") && <StructureLook item={item} />}
@@ -1082,13 +1086,15 @@ export function useSelection() {
   const teeEditing = useEditor(e => !e.flyover && !e.flyCam);
   const tool = useEditor(e => e.tool);
   const ids = useEditor(e => e.group);
+  // (steep ground's rock picked: its panel is open, with no item of its own)
+  const steep = useEditor(e => !!e.steepPicked);
   const hole = doc.holes.find(h => h.id === selectedId);
   const item = doc.items.find(i => i.id === selectedId);
   const group = useMemo(() => {
     const set = new Set(ids);
     return set.size ? doc.items.filter(i => set.has(i.id)) : [];
   }, [doc.items, ids]);
-  return { hole, item, group, open: !!(hole || item || group.length) && (!teeView || (teeEditing && !hole)) && tool === "select" };
+  return { hole, item, group, open: (!!(hole || item || group.length) || steep) && (!teeView || (teeEditing && !hole)) && tool === "select" };
 }
 
 /** What things picked together are, by kind ("Tree ×12"), whole holes first. */
@@ -1204,7 +1210,20 @@ export function SelectionHeader({ back }: { back?: string }) {
 export function Inspector() {
   const { open, hole, item, group } = useSelection();
   const teeView = useEditor(e => !!e.teeView);
+  const steep = useEditor(e => !!e.steepPicked);
   // (tee view: the hole is in its Flyover panel; a thing selected there, its panel at the left edge)
+  if (steep && !item && !hole && !group.length) return (
+    <aside className="absolute top-3 left-[76px] w-[300px] max-h-[calc(100%-24px)] flex flex-col glass rounded-[22px] shadow-xl shadow-black/40 z-20" data-testid="inspector" aria-label="Selection">
+      <div className="flex items-center gap-0.5 px-2 pt-2">
+        <div className="flex-1" />
+        <button className="p-1.5 rounded text-zinc-400 hover:bg-white/[0.09] hover:text-zinc-50" title="Close (Esc)" aria-label="Close" onClick={() => useEditor.getState().set({ steepPicked: false })}><X size={15} /></button>
+      </div>
+      <div className="overflow-y-auto min-h-0">
+        <Section testid="item-title"><div className="text-sm font-bold text-zinc-50" data-testid="inspector-title">Steep rock</div><div className="text-xs text-zinc-400 mt-0.5">Every steep slope on the course</div></Section>
+        <Section><SteepRockSettings /></Section>
+      </div>
+    </aside>
+  );
   if (!open || (teeView && hole && !item && !group.length)) return null;
   return (
     <aside className={`absolute top-3 ${teeView ? "left-3" : "left-[76px]"} w-[300px] max-h-[calc(100%-24px)] flex flex-col glass rounded-[22px] shadow-xl shadow-black/40 z-20`} data-testid="inspector" aria-label="Selection">

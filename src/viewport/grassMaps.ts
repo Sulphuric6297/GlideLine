@@ -5,7 +5,7 @@
 import { heightAt } from "../lib/terrainGrid";
 import { corridor, rectCorners, smoothPath } from "../lib/geom";
 import { GROUND_MATERIALS, PAINT_CELL_FT } from "../lib/groundPaint";
-import { LINE_KINDS } from "../constants";
+import { LINE_KINDS, STEEP_NEVER } from "../constants";
 import { drawnAreas, fairwayOutline, linePath, teeAim, teeLines, widthAlong, widthVaries } from "../lib/course";
 import { landscapeOf } from "../lib/landscapes";
 import { GRASS_INKS, fieldPlan } from "../lib/fieldPlan";
@@ -136,6 +136,9 @@ export const grassMaps = (doc: ViewDoc): GrassMaps | null => {
     f.g.fillStyle = m.id === "grass" ? field(land.lawn, 1) : field(0, 0);
     f.g.fillRect(i * cell, j * cell, cell, cell);
   }
+  // Nothing grows on steep ground's bare rock
+  const bare = steepBare(doc, st.steepRock ?? STEEP_NEVER);
+  if (bare) f.g.drawImage(bare, 0, 0, width, height);
   // Soft edges (a lawn's edge isn't a ruled line)
   const soft = (c: HTMLCanvasElement, px: number) => {
     const out = document.createElement("canvas");
@@ -147,6 +150,37 @@ export const grassMaps = (doc: ViewDoc): GrassMaps | null => {
     return out;
   };
   return { field: soft(f.c, Math.max(0.6, scale * 1.2)), color: soft(t.c, Math.max(1, scale * 3)), rect: { x: 0, y: 0, width, height } };
+};
+
+let bareKept: { heights: unknown; key: string; canvas: HTMLCanvasElement | null } | null = null;
+/** Where the ground is steeper than `steep` degrees (steep ground's bare rock, as the ground's own
+ * shading draws it): black there, clear elsewhere, a pixel every half square of the ground's grid.
+ * Null where there is none. Kept until the ground or the angle changes. */
+const steepBare = (doc: ViewDoc, steep: number): HTMLCanvasElement | null => {
+  // (level ground has none: nothing to work out)
+  if (steep >= 89 || !(doc.terrain.relief > 1)) return null;
+  const { width, height } = doc.canvas, step = (doc.gridSize || 20) / 2;
+  const key = [width, height, step, steep].join(",");
+  if (bareKept && bareKept.heights === doc.heights && bareKept.key === key) return bareKept.canvas;
+  const W = Math.max(1, Math.ceil(width / step)), H = Math.max(1, Math.ceil(height / step));
+  const img = new ImageData(W, H), cos = Math.cos((steep * Math.PI) / 180) + 0.02;
+  // (the ground read once at each pixel's corners: its slope across the pixel from those)
+  const z = new Float32Array((W + 1) * (H + 1));
+  for (let j = 0; j <= H; j++) for (let i = 0; i <= W; i++) z[j * (W + 1) + i] = heightAt(doc.heights, doc.gridSize, i * step, j * step);
+  let any = false;
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    const k = j * (W + 1) + i, a = z[k], b = z[k + 1], c = z[k + W + 1], d = z[k + W + 2];
+    const dx = (b + d - a - c) / (2 * step), dy = (c + d - a - b) / (2 * step);
+    if (1 / Math.sqrt(1 + dx * dx + dy * dy) < cos) { img.data[(j * W + i) * 4 + 3] = 255; any = true; }
+  }
+  let canvas: HTMLCanvasElement | null = null;
+  if (any) {
+    canvas = document.createElement("canvas");
+    canvas.width = W; canvas.height = H;
+    canvas.getContext("2d")!.putImageData(img, 0, 0);
+  }
+  bareKept = { heights: doc.heights, key, canvas };
+  return canvas;
 };
 
 /** The ground's heights at the ground mesh's own vertices (see viewport/ground: draped). */

@@ -331,6 +331,64 @@ test("a pond made a hazard: never OB as well", async () => {
   await page.keyboard.press("Control+z");
 });
 
+test("a wall drawn across the course's steepest ground stands on it all along (never through the hill), and moving one of its points is quick", async () => {
+  await draw(page, false);
+  await page.keyboard.press("2");
+  await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "select" }));
+  // (the 300 ft west to east with the most rise and fall on it, anywhere on the site)
+  const line = await page.evaluate(() => {
+    const v = (window as any).__dgView, c = (window as any).__dgCourse().canvas;
+    let best = { y: 0, x: 0, relief: -1 };
+    for (let y = 100; y < c.height - 100; y += 26) for (let x = 100; x + 300 < c.width - 100; x += 52) {
+      let lo = Infinity, hi = -Infinity;
+      for (let u = 0; u <= 300; u += 10) { const h = v.h(x + u, y); lo = Math.min(lo, h); hi = Math.max(hi, h); }
+      if (hi - lo > best.relief) best = { y, x, relief: hi - lo };
+    }
+    return best;
+  });
+  expect(line.relief).toBeGreaterThan(8);
+  await frame(page, { minX: line.x - 40, minY: line.y - 120, maxX: line.x + 340, maxY: line.y + 120 });
+  await page.waitForTimeout(800);
+  const walls = async () => (await course(page)).items.filter((i: any) => i.type === "line" && i.kind === "wall");
+  await page.keyboard.press("s");
+  await page.getByTestId("line-kind-wall").click();
+  for (const x of [line.x, line.x + 150, line.x + 300]) { const c = await at(page, x, line.y); await page.mouse.click(c.x, c.y); }
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
+  await expect.poll(async () => (await walls()).length).toBe(1);
+  const id = (await walls())[0].id;
+  // (every corner of its far-off shape: its foot in the ground, its top 3 ft above it)
+  const fit = () => page.evaluate(id => {
+    const v = (window as any).__dgView, out = { low: 0, high: 0, n: 0 };
+    v.scene.traverse((o: any) => {
+      if (o.name !== `line:${id}`) return;
+      o.traverse((m: any) => {
+        if (!m.isMesh || m.name !== "solid") return;
+        const p = m.geometry.attributes.position, o2 = m.parent.position;
+        for (let i = 0; i < p.count; i++) { const up = p.getY(i) + o2.y - v.h(p.getX(i) + o2.x, p.getZ(i) + o2.z); out.low = Math.min(out.low, up); out.high = Math.max(out.high, up); out.n++; }
+      });
+    });
+    return out;
+  }, id);
+  await expect.poll(async () => (await fit()).n).toBeGreaterThan(100);
+  const f = await fit();
+  expect(f.low).toBeGreaterThan(-3);
+  expect(f.high).toBeGreaterThan(2.3);
+  expect(f.high).toBeLessThan(3.6);
+  // A point moved: the wall made again in good time
+  const ms = await page.evaluate(async id => {
+    const w = window as any, wall = w.__dgCourse().items.find((i: any) => i.id === id), t = performance.now();
+    w.__dgActions.updateItem(id, { points: wall.points.map((p: any, k: number) => (k === 1 ? { x: p.x, y: p.y + 30 } : p)) });
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(0))));
+    return performance.now() - t;
+  }, id);
+  expect(ms).toBeLessThan(600);
+  // (taken out again: the checks after this one find the course as it was)
+  await page.evaluate(id => { const w = window as any; w.__dgActions.select(id); }, id);
+  await page.keyboard.press("Delete");
+  await expect.poll(async () => (await walls()).length).toBe(0);
+});
+
 test("a flyover's keyframes: two set, the timeline scrubbed (the camera follows it), and a keyframe added at that moment", async () => {
   await draw(page, false);
   await page.evaluate(() => (window as any).__dgEditor().set({ step: "design", tool: "select" }));

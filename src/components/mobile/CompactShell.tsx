@@ -50,6 +50,8 @@ import { ViewToggle } from "../ViewToggle";
 import { groupActions, groundActions, itemActions, type ItemAction } from "../itemActions";
 import { treeActions, treesAt, treeTitle, underAction } from "../treeActions";
 import { HelpLink, askHelp, PickRow } from "../ui";
+import { SteepStonePick, steepStoneLabel } from "../RockSettings";
+import { Dial } from "./HoleStrip";
 import { ago } from "../../auth/Home";
 import { goDemoHome } from "../DemoHome";
 import { startTour } from "../Tour";
@@ -124,7 +126,8 @@ function useMode() {
   const tool = useEditor(e => e.tool);
   const onMap = useEditor(e => e.step === "site" || e.step === "design");
   const { open } = useSelection();
-  return tool !== "select" ? "tool" : open && onMap ? "selection" : "step";
+  const steep = useEditor(e => !!e.steepPicked);
+  return tool !== "select" ? "tool" : (open || steep) && onMap ? "selection" : "step";
 }
 
 /** The course's one-line summary: holes and par. */
@@ -650,6 +653,19 @@ function PhoneHoleBar({ hole, faded, side, onHeight }: BarProps & { hole: Hole }
   return <GlassBar remember="hole" pill={pill} pillMenu={<PillActions id={hole.id} />} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} testid="hole-strip" />;
 }
 
+/** Steep ground's rock picked: its stone, and how steep ground must be to show it. */
+function PhoneSteepBar({ faded, side, onHeight }: BarProps) {
+  const s = useCourse(st => st.doc.style);
+  const steep = s.steepRock ?? 90;
+  const setStyle = (patch: Partial<typeof s>, history = true) => changeDoc(d => ({ style: { ...d.style, ...patch } }), history);
+  const says = (v: number) => (v >= 89 ? "Never" : `Steeper than ${Math.round(v)}°`);
+  const settings: BarSetting[] = [
+    { id: "stone", name: "Stone", value: steepStoneLabel(s.steepStone), control: <SteepStonePick /> },
+    { id: "steep", name: "Bare rock", value: says(steep), wide: true, control: <Dial label="Bare rock on steep ground" value={steep} min={20} max={90} step={1} format={says} onChange={v => setStyle({ steepRock: v >= 89 ? undefined : v }, false)} onDone={() => useCourse.getState().commit()} /> }
+  ];
+  return <GlassBar remember="steep" pill={{ name: "Steep rock", small: "Every steep slope", testid: "selection-header" }} settings={settings} onDone={() => useEditor.getState().set({ steepPicked: false })} doneLabel="Done" faded={faded} side={side} onHeight={onHeight} testid="steep-strip" />;
+}
+
 /** Anything else picked: its pill (its hole, and what can be done with it), every setting it has. */
 function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: CourseItem }) {
   const doc = useCourse(s => s.doc);
@@ -703,7 +719,9 @@ function PhoneBar(props: BarProps) {
   const { hole, item, group } = useSelection();
   // (a site being looked over before it comes in: its own bar has the place)
   const reviewing = useEditor(s => s.reviewing);
+  const steep = useEditor(s => !!s.steepPicked);
   if (reviewing) return null;
+  if (steep && !hole && !item && !group.length) return <PhoneSteepBar {...props} />;
   if (mode === "tool") return <PhoneToolBar {...props} />;
   if (hole) return <PhoneHoleBar key={hole.id} hole={hole} {...props} />;
   if (item) return <PhoneItemBar key={item.id} item={item} {...props} />;
