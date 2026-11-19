@@ -5,7 +5,7 @@ import { AmenityItem } from "../types";
 import { PlaceByGps } from "./PlaceByGps";
 import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, TreeDeciduous, Unlock, X, Plus } from "lucide-react";
+import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, Unlock, X, Plus } from "lucide-react";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, ROCK_KINDS } from "../constants";
 import { activeLayout, basketFor, bendOwner, turnsAhead, areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries, AMENITY_ROLE } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
@@ -15,7 +15,7 @@ import { courseStats, holeStats } from "../lib/holeStats";
 import { COURT_FIELDS, FIELD_ORDER, MARKED_FIELDS, courtCount, fieldHome, fieldKindOf, isBallField } from "../lib/fields";
 import { fieldIcon } from "./fieldIcons";
 import { fmtArea, fmtDist } from "../lib/units";
-import { fairwayTrees } from "../lib/lidar";
+import { fairwayTrees, holeClears } from "../lib/lidar";
 import { toast } from "../state/toast";
 import { turnable } from "../lib/turn";
 import { conifersOf } from "../lib/landscapes";
@@ -33,7 +33,7 @@ import { HoleChips } from "./ApplyToHoles";
 import { HoleSteps } from "./HoleSteps";
 import { getView } from "../state/view";
 import { useLayout } from "./useLayout";
-import { Button, ChipPick, chipCls, ColorInput, Field, HelpLink, NumberInput, Section, Segmented, Select, Slider, Stat, TextInput, Toggle } from "./ui";
+import { Button, ChipPick, chipCls, ColorInput, Field, FOCUS, HelpLink, NumberInput, Section, Segmented, Select, Slider, Stat, TextInput, Toggle } from "./ui";
 
 const shapeText = { straight: "Straight", left: "Turns left", right: "Turns right", "s-curve": "S-curve" };
 /** A small size to the half foot (or tenth of a meter): "2.5 ft". */
@@ -84,9 +84,10 @@ export function HoleNumberInput({ holeId, value }: { holeId: string; value: stri
   );
 }
 
-/** The measured trees on this hole's fairway (where it plays): how many are cut down, kept or in
- * the way, and the button to bring them back, clear them, or cut them again. Near the top of the
- * hole's panel, and a chip on a phone. */
+/** The measured trees on this hole's fairway (where it plays), and the hole's own switch for them:
+ * cleared (cut down, but for any kept by hand) or left standing. It follows the course's switch
+ * (Site's Clear trees from the fairways) until it's set here. Near the top of the hole's panel,
+ * and a setting in a phone's bar. */
 export const useHoleTrees = (hole: Hole, line: P[] | null) => {
   const lidar = useCourse(s => s.doc.lidar);
   return useMemo(() => (lidar && line ? fairwayTrees({ lidar }, hole, line) : { cut: [], kept: [], standing: [] }), [lidar, hole, line]);
@@ -94,32 +95,40 @@ export const useHoleTrees = (hole: Hole, line: P[] | null) => {
 export function HoleTrees({ hole, line }: { hole: Hole; line: P[] }) {
   const lidar = useCourse(s => s.doc.lidar);
   const { cut, kept, standing } = useHoleTrees(hole, line);
-  if (!cut.length && !kept.length && !standing.length) return null;
+  if (!lidar) return null;
+  const on = holeClears({ lidar }, hole);
   const setLidar = (patch: { kept?: number[]; removed?: number[] }) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {}));
   const list = (v: number[]) => (v.length ? [...new Set(v)].sort((a, b) => a - b) : undefined);
+  const name = () => holeLabel(useCourse.getState().doc, hole.id);
+  const trees = (n: number) => `${n.toLocaleString()} ${n === 1 ? "tree" : "trees"}`;
+  // (left unset where it's as the course's: the course's switch still carries it then)
+  const flip = (v: boolean) => {
+    changeDoc(d => ({ holes: d.holes.map(h => (h.id === hole.id ? { ...h, clearTrees: v === (d.lidar?.clearFairways === true) ? undefined : v } : h)) }));
+    toast(v ? `Trees on hole ${name()}'s fairway, tees and basket are cut down.` : `Trees on hole ${name()} are standing again.`, "info", true);
+  };
+  // (cut down by hand before, where the fairway isn't cleared: the way to bring them back)
   const back = () => {
-    // (kept, so the fairways' clearing leaves them, only where the course clears its fairways)
-    setLidar({ ...(lidar?.clearFairways === true ? { kept: list([...(lidar?.kept ?? []), ...cut]) } : {}), removed: list((lidar?.removed ?? []).filter(k => !cut.includes(k))) });
-    toast(`${cut.length === 1 ? "1 tree" : `${cut.length} trees`} back on hole ${holeLabel(useCourse.getState().doc, hole.id)}.`, "success", true);
+    setLidar({ removed: list((lidar.removed ?? []).filter(k => !cut.includes(k))) });
+    toast(`${cut.length === 1 ? "1 tree" : `${cut.length} trees`} back on hole ${name()}.`, "success", true);
   };
-  // (trees left standing in the way: cut down only when asked, and said)
-  const clear = () => {
-    setLidar({ removed: list([...(lidar?.removed ?? []), ...standing]) });
-    toast(`Cut down ${standing.length === 1 ? "1 tree" : `${standing.length} trees`} on hole ${holeLabel(useCourse.getState().doc, hole.id)}. Bring them back here, or click a stump.`, "info", true);
-  };
+  const link = "text-orange-300 hover:text-orange-200 touch:py-1";
+  const none = !cut.length && !kept.length && !standing.length;
   return (
-    <div className="flex items-center gap-2.5 rounded-[14px] bg-white/[0.06] ring-1 ring-white/[0.08] px-3 py-2.5 mt-2" data-testid="fairway-trees">
-      <TreeDeciduous size={20} className="text-[#a2cf6a] shrink-0" />
-      <div className="flex-1 min-w-0 leading-tight">
-        <div className="text-[13.5px] font-semibold text-zinc-50 flex items-center gap-1.5">{cut.length ? `${cut.length.toLocaleString()} ${cut.length === 1 ? "tree" : "trees"} cut down` : standing.length ? `${standing.length.toLocaleString()} ${standing.length === 1 ? "tree" : "trees"} in the way` : `${kept.length.toLocaleString()} ${kept.length === 1 ? "tree" : "trees"} kept`}<HelpLink topic="lidar-settings" label="Trees cut for holes" /></div>
-        {cut.length > 0 && kept.length > 0 && <div className="text-[11.5px] text-zinc-400">{kept.length.toLocaleString()} kept</div>}
-        {cut.length > 0 && standing.length > 0 && <div className="text-[11.5px] text-zinc-400">{standing.length.toLocaleString()} still in the way</div>}
+    <div className="rounded-[14px] bg-white/[0.06] ring-1 ring-white/[0.08] px-2.5 py-2 mt-2" data-testid="fairway-trees">
+      {/* (the switch and its name are the label; the help and what's said under it stand outside it,
+          so a click on them never flips the switch) */}
+      <div className="flex items-start gap-1.5">
+        <label className="dg-toggle flex-1 min-w-0 flex items-start gap-2.5 pt-1 touch:pt-2.5 cursor-pointer select-none">
+          <input type="checkbox" className={`switch mt-0.5 ${FOCUS}`} checked={on} onChange={e => flip(e.target.checked)} data-testid="hole-clear-trees" />
+          <span className="text-[13.5px] touch:text-sm text-zinc-200 whitespace-nowrap">Clear trees from the fairway</span>
+        </label>
+        <span className="pt-1 touch:pt-2.5 shrink-0"><HelpLink topic="lidar-settings" label="Trees cut for holes" /></span>
       </div>
-      {cut.length > 0
-        ? <Button small onClick={back} testid="trees-back"><RotateCcw size={14} /> Bring them back</Button>
-        : standing.length > 0
-          ? <Button small onClick={clear} testid="trees-clear">Clear them</Button>
-          : <Button small onClick={() => setLidar({ kept: list((lidar?.kept ?? []).filter(k => !kept.includes(k))) })} testid="trees-down">Cut them down</Button>}
+      <div className="text-xs text-zinc-400 mt-[3px] pb-1 touch:pb-2.5 pl-[44px]" data-testid="fairway-trees-said">
+        {none ? "No measured trees on this fairway"
+          : on ? <>{trees(cut.length)} cut down on this hole{kept.length > 0 && <> · {kept.length.toLocaleString()} kept · <button type="button" className={link} onClick={() => setLidar({ kept: list((lidar.kept ?? []).filter(k => !kept.includes(k))) })} data-testid="trees-down">Cut {kept.length === 1 ? "it" : "them"} down</button></>}</>
+          : <>{trees(standing.length)} stand{standing.length === 1 ? "s" : ""} on this fairway{cut.length > 0 && <> · {cut.length.toLocaleString()} cut down by hand · <button type="button" className={link} onClick={back} data-testid="trees-back">Bring {cut.length === 1 ? "it" : "them"} back</button></>}</>}
+      </div>
     </div>
   );
 }

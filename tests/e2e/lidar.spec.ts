@@ -2,9 +2,9 @@ import { test as plain, expect as plainExpect } from "@playwright/test";
 import { readFileSync } from "fs";
 import { createLazPerf } from "laz-perf";
 import { test, expect, addHole, blankCourse, importSite, course, editorState, screenOf, withLidar, SITE } from "./fixtures";
-import { createEmptyCourse, newHole } from "../../src/lib/course";
+import { createEmptyCourse, newHole, normalizeCourse } from "../../src/lib/course";
 import { getGeoBounds } from "../../src/lib/geo/core";
-import { claim, flownOn, gather, gatherer, grownTree, grownTrees, leafOnAt, roofHeights, saplings, fairwayTrees, findTrees, groundOnGrid, measureSite, readTile, siteBox, standingTrees, surveyYear, tilesFor, tilesOver, depthFor, withoutWires, type LazReader, type TilePoints } from "../../src/lib/lidar";
+import { claim, flownOn, gather, gatherer, growthSaid, grownTree, grownTrees, holeClears, leafOnAt, playClearing, roofHeights, saplings, fairwayTrees, findTrees, groundOnGrid, measureSite, readTile, siteBox, standingTrees, surveyYear, tilesFor, tilesOver, depthFor, withoutWires, type LazReader, type TilePoints } from "../../src/lib/lidar";
 import { canopyStands } from "../../src/lib/canopy";
 import { summerFills, treesFromSummer } from "../../src/lib/summerTrees";
 import type { CourseItem, LidarTree } from "../../src/types";
@@ -81,11 +81,13 @@ plain("trees on a fairway stand unless taken out; with the fairways cleared, cut
   const cleared = (p: { x: number; y: number }, reach: number) => Math.abs(p.y - 300) < 15 + reach;
   const hole = newHole({ fairwayWidth: 30 });
   const line = [{ x: 50, y: 300 }, { x: 350, y: 300 }];
-  // (left alone by default: every one stands, those on the fairway in the way)
-  plainExpect(standingTrees(doc.lidar, cleared)).toEqual({ stand: [0, 1, 2, 3], cut: [] });
+  // (left alone by default: every one stands, those on the fairway in the way; where nothing is
+  // cleared the view hands no clearing in, see playClearing)
+  const none = () => false;
+  plainExpect(standingTrees(doc.lidar, none)).toEqual({ stand: [0, 1, 2, 3], cut: [] });
   plainExpect(fairwayTrees(doc, hole, line)).toEqual({ cut: [], kept: [], standing: [0, 1, 2] });
   doc.lidar = { ...doc.lidar, removed: [0, 3] };
-  plainExpect(standingTrees(doc.lidar, cleared)).toEqual({ stand: [1, 2], cut: [0, 3] });
+  plainExpect(standingTrees(doc.lidar, none)).toEqual({ stand: [1, 2], cut: [0, 3] });
   plainExpect(fairwayTrees(doc, hole, line)).toEqual({ cut: [0], kept: [], standing: [1, 2] });
   // (the fairways cleared: cut down unless kept)
   doc.lidar = { ...doc.lidar, clearFairways: true, kept: [1], removed: [3] };
@@ -93,7 +95,7 @@ plain("trees on a fairway stand unless taken out; with the fairways cleared, cut
   plainExpect(fairwayTrees(doc, hole, line)).toEqual({ cut: [0, 2], kept: [1], standing: [] });
 });
 
-test("trees measured from the air on import: left standing on a fairway, cleared by the hole when asked; with the fairways cleared, cut down, a stump to bring each back, all at once from the hole; cut down by hand; flyovers keep clear", async ({ page }) => {
+test("trees measured from the air on import: left standing on a fairway, cleared by the hole's own switch; with the fairways cleared, cut down, a stump to bring each back, the hole's switch standing its own again; cut down by hand; flyovers keep clear", async ({ page }) => {
   test.setTimeout(240_000);
   await withLidar(page);
   await importSite(page);
@@ -114,21 +116,34 @@ test("trees measured from the air on import: left standing on a fairway, cleared
   const hole = await addHole(page, at(-75, -40), at(35, -40));
   await page.keyboard.press("Escape");
   await page.evaluate(id => (window as any).__dgActions.select(id), hole.id);
-  // (left standing: the hole says they're in the way, and clears them when asked; back again)
-  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees in the way");
+  // (left standing: the hole says so, and its own switch clears them, for this hole alone; off again)
+  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees stand on this fairway");
   await expect(page.locator("[data-stump]")).toHaveCount(0);
-  await page.getByTestId("trees-clear").click();
+  await page.getByTestId("hole-clear-trees").check();
   // (said: on a slow machine other messages can take its place on screen before it's looked for)
-  await expect.poll(() => page.evaluate(() => ((window as any).__dgSaid as string[]).some(t => /^Cut down 5 trees on hole 1/.test(t)))).toBe(true);
-  await expect.poll(async () => (await course(page)).lidar.removed).toEqual([...row].sort((a, b) => a - b));
-  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees cut down");
+  await expect.poll(() => page.evaluate(() => ((window as any).__dgSaid as string[]).some(t => /^Trees on hole 1's fairway, tees and basket are cut down/.test(t)))).toBe(true);
+  await expect.poll(async () => (await course(page)).holes[0].clearTrees).toBe(true);
+  // (the hole's own setting, not a list of trees taken out: they follow the fairway if it moves)
+  expect((await course(page)).lidar.removed).toBeUndefined();
+  expect((await course(page)).lidar.clearFairways).toBeUndefined();
+  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees cut down on this hole");
+  for (const k of row) await expect(page.locator(`[data-stump="${k}"]`)).toHaveAttribute("data-testid", "stump");
+  await page.getByTestId("hole-clear-trees").uncheck();
+  await expect.poll(async () => (await course(page)).holes[0].clearTrees).toBeUndefined();
+  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees stand on this fairway");
+  await expect(page.locator("[data-stump]")).toHaveCount(0);
+  // (trees cut down by hand on a hole that isn't cleared: said under its switch, with the way back)
+  await page.evaluate(r => (window as any).__dgActions.lidar({ removed: r }), [row[0], row[1]].sort((a, b) => a - b));
+  await expect(page.getByTestId("fairway-trees")).toContainText("3 trees stand on this fairway");
+  await expect(page.getByTestId("fairway-trees")).toContainText("2 cut down by hand");
   await page.getByTestId("trees-back").click();
   await expect.poll(async () => (await course(page)).lidar.removed).toBeUndefined();
-  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees in the way");
+  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees stand on this fairway");
   // The fairways cleared for the whole course
   await page.evaluate(() => (window as any).__dgActions.lidar({ clearFairways: true }));
   for (const k of row) await expect(page.locator(`[data-stump="${k}"]`)).toHaveAttribute("data-testid", "stump");
-  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees cut down");
+  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees cut down on this hole");
+  await expect(page.getByTestId("hole-clear-trees")).toBeChecked();
   const before = await forest() + 5;
   // One brought back with a click on its stump (one undo step); one not under the hole's label or handles
   const free = await page.evaluate(row => row.find(k => {
@@ -146,12 +161,20 @@ test("trees measured from the air on import: left standing on a fairway, cleared
   await expect(page.getByTestId("fairway-trees")).toContainText("1 kept");
   await page.keyboard.press("Control+z");
   await expect.poll(async () => (await course(page)).lidar.kept).toBeUndefined();
-  // All at once from the hole, and down again
-  await page.getByTestId("trees-back").click();
-  await expect.poll(async () => (await course(page)).lidar.kept).toEqual([...row].sort((a, b) => a - b));
+  // The hole's own switch off while the course clears: its trees stand again; on, as the course's
+  await page.getByTestId("hole-clear-trees").uncheck();
+  await expect.poll(async () => (await course(page)).holes[0].clearTrees).toBe(false);
   await expect.poll(forest).toBe(before);
+  await expect(page.getByTestId("fairway-trees")).toContainText("5 trees stand on this fairway");
+  await page.getByTestId("hole-clear-trees").check();
+  await expect.poll(async () => (await course(page)).holes[0].clearTrees).toBeUndefined();
+  await expect.poll(forest).toBe(before - 5);
+  // One kept by its stump, and cut down again from the hole
+  await page.locator(`[data-stump="${free}"]`).click();
+  await expect.poll(async () => (await course(page)).lidar.kept).toEqual([free]);
   await page.getByTestId("trees-down").click();
   await expect.poll(async () => (await course(page)).lidar.kept).toBeUndefined();
+  await expect.poll(forest).toBe(before - 5);
   // A tree off the fairway cut down from its right-click menu, and back with its stump
   await page.keyboard.press("Escape");
   // (one standing: not on the footpath across the site)
@@ -620,4 +643,128 @@ plain("a power line is no row of trees: small crowns in a dead straight row, as 
   const kept = withoutWires(all, density);
   plainExpect(kept).toHaveLength(row.length + other.length);
   plainExpect(kept.every(t => t[1] !== 100 && !wire.includes(t))).toBe(true);
+});
+
+plain("which holes clear their trees: each by its own switch, or the course's; a hole's tees, basket and drawn fairway go with it, and what belongs to no hole with the course (pure logic)", () => {
+  const doc = createEmptyCourse();
+  const a = newHole(), b = newHole(), c = newHole();
+  const trees: LidarTree[] = [[10, 10, 30, 6, 0]];
+  const tee = (id: string, holeId: string) => ({ id, type: "tee", holeId, x: 0, y: 0, rotation: 0 }) as unknown as CourseItem;
+  const basket = (id: string, holeId: string, alsoHoles?: string[]) => ({ id, type: "basket", holeId, alsoHoles, x: 0, y: 0, rotation: 0 }) as unknown as CourseItem;
+  const loose = { id: "f", type: "area", kind: "fairway", points: [], x: 0, y: 0, rotation: 0 } as unknown as CourseItem;
+  // (the course as it was before a hole had a switch: all or nothing, as ever)
+  const off = playClearing({ holes: [a, b, c], lidar: { source: "s", trees } });
+  plainExpect(off.any).toBe(false);
+  plainExpect([a, b, c].map(h => off.hole(h.id))).toEqual([false, false, false]);
+  plainExpect(off.item(loose)).toBe(false);
+  const on = playClearing({ holes: [a, b, c], lidar: { source: "s", trees, clearFairways: true } });
+  plainExpect([a, b, c].map(h => on.hole(h.id))).toEqual([true, true, true]);
+  plainExpect(on.item(loose)).toBe(true);
+  // (a tee whose hole is gone: with the course, as before)
+  plainExpect(on.item(tee("t0", "gone"))).toBe(true);
+  // (one hole cleared on a course that isn't)
+  const one = playClearing({ holes: [a, { ...b, clearTrees: true }, c], lidar: { source: "s", trees } });
+  plainExpect(one.any).toBe(true);
+  plainExpect([a, b, c].map(h => one.hole(h.id))).toEqual([false, true, false]);
+  plainExpect(one.item(tee("t1", b.id))).toBe(true);
+  plainExpect(one.item(tee("t2", a.id))).toBe(false);
+  plainExpect(one.item(loose)).toBe(false);
+  // (a basket two holes play to: cleared while either does)
+  plainExpect(one.item(basket("k1", a.id, [b.id]))).toBe(true);
+  plainExpect(one.item(basket("k2", a.id, [c.id]))).toBe(false);
+  // (one hole left standing on a course that clears)
+  const but = playClearing({ holes: [a, { ...b, clearTrees: false }, c], lidar: { source: "s", trees, clearFairways: true } });
+  plainExpect([a, b, c].map(h => but.hole(h.id))).toEqual([true, false, true]);
+  plainExpect(but.item(tee("t1", b.id))).toBe(false);
+  plainExpect(but.key).not.toBe(on.key);
+  plainExpect(holeClears({ lidar: { source: "s", trees, clearFairways: true } }, { clearTrees: false })).toBe(false);
+  plainExpect(holeClears({ lidar: { source: "s", trees } }, { clearTrees: true })).toBe(true);
+  plainExpect(holeClears({ lidar: { source: "s", trees } }, {})).toBe(false);
+  // (kept through a save and a load, either way round; a hole with none has none)
+  const saved = normalizeCourse(JSON.parse(JSON.stringify({ ...doc, holes: [{ ...a, clearTrees: false }, { ...b, clearTrees: true }, c] })));
+  plainExpect(saved.holes.map(h => h.clearTrees)).toEqual([false, true, undefined]);
+  // (a hole's count of its trees follows its own switch)
+  const hole = { ...newHole(), fairwayWidth: 30 }, line = [{ x: 0, y: 10 }, { x: 200, y: 10 }];
+  const d = { ...doc, lidar: { source: "s", trees } };
+  plainExpect(fairwayTrees(d, hole, line)).toEqual({ cut: [], kept: [], standing: [0] });
+  plainExpect(fairwayTrees(d, { ...hole, clearTrees: true }, line)).toEqual({ cut: [0], kept: [], standing: [] });
+  plainExpect(fairwayTrees({ ...d, lidar: { ...d.lidar, clearFairways: true as const } }, { ...hole, clearTrees: false }, line)).toEqual({ cut: [], kept: [], standing: [0] });
+});
+
+plain("Growth since the survey says why it's there: the survey's year, that the trees have grown since, and what the setting did (pure logic)", () => {
+  const src = "USGS LiDAR 2017";
+  plainExpect(growthSaid(src, 0, 2026)).toEqual({ text: "These trees were measured from the air in 2017. They've grown since.", today: 9 });
+  plainExpect(growthSaid(src, 9, 2026)).toEqual({ text: "Measured from the air in 2017, then grown 9 years to match today. It's an estimate.", today: 0 });
+  plainExpect(growthSaid(src, 4, 2026)).toEqual({ text: "Measured from the air in 2017, then grown 4 years, to 2021. It's an estimate.", today: 9 });
+  plainExpect(growthSaid(src, 15, 2026)).toEqual({ text: "Measured from the air in 2017, then grown 15 years, to 2032: 6 years from now. It's an estimate.", today: 9 });
+  plainExpect(growthSaid(src, 1, 2026).text).toContain("grown 1 year, to 2018");
+  plainExpect(growthSaid(src, 0, 2017)).toEqual({ text: "These trees were measured from the air this year.", today: 0 });
+  // (a survey with no year in its name: said without one, and no step to today)
+  plainExpect(growthSaid("Aerial survey", 0, 2026)).toEqual({ text: "These trees were measured from the air a while ago. They've grown since.", today: 0 });
+  plainExpect(growthSaid("Aerial survey", 6, 2026)).toEqual({ text: "Grown 6 years since they were measured from the air. It's an estimate.", today: 0 });
+});
+
+test("the import's Trees step has Site's tree settings, and they come in with the site; Site says why growth is there, names underbrush as underbrush, and keeps what the import found", async ({ page }) => {
+  test.setTimeout(240_000);
+  await withLidar(page);
+  await importSite(page, { review: async p => {
+    // (looked over in 3D where the machine can keep up: they're on its Trees step; on the flat map, in the panel)
+    const step = p.getByTestId("review-step-trees");
+    if (await step.isVisible().catch(() => false)) await step.click();
+    await p.getByTestId("review-tree-measured-open").click();
+    const why = p.getByTestId("growth-why");
+    await expect(why).toContainText(/These trees were measured from the air in \d{4}\. They've grown since\./);
+    await p.getByTestId("grow-today").click();
+    await expect(why).toContainText(/then grown \d+ years? to match today\. It's an estimate\./);
+    await p.getByTestId("review-lidar-clear").getByRole("switch").click();
+    await p.getByTestId("review-tree-kinds-open").click();
+    // (one row open at a time)
+    await expect(p.getByTestId("growth-why")).toHaveCount(0);
+    await p.getByTestId("review-tree-kinds").getByRole("button", { name: "Maple", exact: true }).click();
+    await p.getByTestId("review-tree-woods-open").click();
+    await p.getByTestId("review-tree-woods").getByRole("radio", { name: "Everywhere" }).click();
+    // (said on its row once it's closed)
+    await p.getByTestId("review-tree-woods-open").click();
+    await expect(p.getByTestId("review-tree-woods")).toContainText("Everywhere");
+    await expect(p.getByTestId("review-tree-measured")).toContainText(/Grown \d+ years? \+1/);
+  } });
+  const doc = await course(page);
+  const since = new Date().getFullYear() - surveyYear(doc.lidar.source);
+  expect(since).toBeGreaterThan(0);
+  expect(doc.lidar.growYears).toBe(since);
+  expect(doc.lidar.clearFairways).toBe(true);
+  expect(doc.style.treeKinds).toContain("maple");
+  expect(doc.style.forestMeasured).toBe("everywhere");
+  // Site: the same settings as they came in, the growth's why, and what came in
+  await page.evaluate(() => (window as any).__dgStore.getState().change((d: any) => ({ items: [...d.items, { id: "ub1", type: "area", kind: "woods", importSource: "lidar", bushes: 1, x: 60, y: 60, rotation: 0, points: [{ x: 40, y: 40 }, { x: 80, y: 40 }, { x: 80, y: 80 }, { x: 40, y: 80 }] }] }), false));
+  await page.getByRole("button", { name: /^1\s*Site$/ }).click();
+  await page.getByTestId("site-trees").locator("summary").click();
+  await expect(page.getByTestId("lidar-settings").getByTestId("growth-why")).toContainText("to match today");
+  await expect(page.getByTestId("lidar-settings").getByTestId("grow-today")).toHaveCount(0);
+  await expect(page.getByTestId("lidar-clear").locator("input")).toBeChecked();
+  await page.getByTestId("came-in").locator("summary").first().click();
+  await expect(page.getByTestId("brush-found")).toContainText("1 patch of underbrush");
+  await expect(page.getByTestId("stands-found")).toHaveCount(0);
+  await expect(page.getByTestId("import-notes")).toContainText(/What the import found \(\d+\)/);
+  // A hole that differs from the course: Site says which, and puts them back in step
+  const W2 = doc.canvas.width, H2 = doc.canvas.height;
+  await page.getByRole("button", { name: /^2\s*Design$/ }).click();
+  const hole = await addHole(page, { x: W2 / 2 - 250, y: H2 / 2 + 130 }, { x: W2 / 2 + 110, y: H2 / 2 + 130 });
+  await page.keyboard.press("Escape");
+  await page.evaluate(id => (window as any).__dgActions.select(id), hole.id);
+  await expect(page.getByTestId("hole-clear-trees")).toBeChecked();
+  await page.getByTestId("hole-clear-trees").uncheck();
+  await expect.poll(async () => (await course(page)).holes[0].clearTrees).toBe(false);
+  await page.getByRole("button", { name: /^1\s*Site$/ }).click();
+  // (the fold is shut again on coming back to the step)
+  await page.getByTestId("site-trees").locator("summary").click();
+  await expect(page.getByTestId("clear-own")).toBeVisible();
+  await expect(page.getByTestId("clear-own")).toContainText("Not on hole 1");
+  await page.getByTestId("clear-same").click();
+  await expect.poll(async () => (await course(page)).holes[0].clearTrees).toBeUndefined();
+  await expect(page.getByTestId("clear-own")).toHaveCount(0);
+  // (the course's switch: every hole takes it)
+  await page.evaluate(id => (window as any).__dgActions.hole(id, { clearTrees: true }), hole.id);
+  await page.getByTestId("lidar-clear").locator("input").uncheck();
+  await expect.poll(async () => { const d = await course(page); return [d.lidar.clearFairways, d.holes[0].clearTrees]; }).toEqual([undefined, undefined]);
 });

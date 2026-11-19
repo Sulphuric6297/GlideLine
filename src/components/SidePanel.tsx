@@ -16,9 +16,12 @@ import type { CourseDoc, Layout, PinPosition, TeeLevel } from "../types";
 import { refreshOsm, useOsm } from "../state/osm";
 import { measureLidar } from "../state/lidar";
 import { newCourse } from "../state/files";
-import { saplings, yearsSince } from "../lib/lidar";
+import { sourceOf } from "../lib/importReview";
+import { photoDateText } from "../lib/geo/photoSources";
+import { holeLabel } from "../lib/course";
+import { MeasuredTuning, type MeasuredTune } from "./MeasuredTrees";
 import { getView } from "../state/view";
-import { Button, FOCUS, Facts, Field, Fold, HelpLink, Section, Segmented, Slider, TextInput, Toggle } from "./ui";
+import { Button, FOCUS, Facts, Field, Fold, HelpLink, Section, Segmented, TextInput } from "./ui";
 import { DesignPanel, TreeKinds, WoodsOptions } from "./DesignPanel";
 import { CourseFileButton } from "./CourseFileDialog";
 import { OnSiteButton } from "./OnSite";
@@ -102,19 +105,24 @@ function CameIn() {
   const fromPhoto = came(i => (i.type === "tree" || i.type === "area") && i.importSource === "photo");
   const fromOsm = came(i => (i.type === "area" || i.type === "line" || i.type === "structure") && i.importSource === "osm");
   const traced = came(i => i.type === "structure" && i.importSource === "traced");
-  const stand = came(i => i.type === "area" && i.importSource === "lidar");
+  // (underbrush: woods with bushes under them, from the survey and satellite; a stand: woods an
+  // older import made from the measured trees)
+  const brush = came(i => sourceOf(i) === "underbrush");
+  const stand = came(i => i.type === "area" && i.importSource === "lidar" && sourceOf(i) !== "underbrush");
   const fromGov = came(i => (i.type === "area" || i.type === "line" || i.type === "structure") && (i.importSource === "usgs" || i.importSource === "nwi" || i.importSource === "fema"));
   const count = (f: (i: Item) => boolean) => doc.items.filter(f).length;
   const photoTrees = count(i => i.type === "tree" && fromPhoto(i));
   const photoAreas = count(i => i.type === "area" && fromPhoto(i));
-  const stands = count(stand), osm = count(fromOsm), air = count(traced), gov = count(fromGov);
+  const stands = count(stand), brushN = count(brush), osm = count(fromOsm), air = count(traced), gov = count(fromGov);
+  const notes = doc.site.notes ?? [];
   const remove = (out: (i: Item) => boolean, said: string) => { changeDoc(d => ({ items: d.items.filter(i => !out(i)) })); toast(said, "info", true); };
   const lidar = doc.lidar;
   const site = doc.site;
   const measuring = lidarBusy !== null;
   const lidarRow = lidar || (placed && (site.noLidar || site.lidarFailed));
   const osmRow = placed || osm > 0;
-  if (!lidarRow && !stands && !photoTrees && !photoAreas && !site.tilesMissing && !osmRow && !air && !gov) return null;
+  if (!lidarRow && !stands && !brushN && !photoTrees && !photoAreas && !site.tilesMissing && !osmRow && !air && !gov && !notes.length) return null;
+  const summer = lidar?.fromPhoto ?? 0;
   const warned = (!lidar && (site.noLidar || site.lidarFailed)) || site.tilesMissing || (site.osmFailed && !osm);
   return (
     <Fold testid="came-in" title={<span className="inline-flex items-center gap-1.5">What came in {warned && <AlertTriangle size={13} className="text-amber-400" aria-label="Something didn't come in" />}<HelpLink topic="brought-in" label="What came in" /></span>}>
@@ -128,6 +136,24 @@ function CameIn() {
           </CameRow>
         )}
         {measuring && lidarRow && <div data-testid="lidar-busy" className="pb-1.5"><ProgressBar fraction={lidarBusy} label="Measuring trees and ground" /></div>}
+        {summer > 0 && (
+          <CameRow testid="from-photo" text={`${many(summer, "tree", "trees")} filled in from the summer photo`} sub="Bare trees the survey missed">
+            <Button small tone="danger" onClick={() => {
+              changeDoc(d => {
+                if (!d.lidar?.fromPhoto) return {};
+                // (they're the last ones: the measured trees, and which are kept or taken out, stay)
+                const n = d.lidar.trees.length - d.lidar.fromPhoto, within = (k: number) => k < n;
+                return { lidar: { ...d.lidar, trees: d.lidar.trees.slice(0, n), fromPhoto: undefined, kept: d.lidar.kept?.filter(within), removed: d.lidar.removed?.filter(within) } };
+              });
+              toast("Took out the trees from the summer photo.", "info", true);
+            }}>Remove</Button>
+          </CameRow>
+        )}
+        {brushN > 0 && (
+          <CameRow testid="brush-found" text={`${many(brushN, "patch", "patches")} of underbrush`} sub="From the survey and satellite">
+            <Button small tone="danger" onClick={() => remove(brush, "Took out the underbrush that came in.")}>Remove</Button>
+          </CameRow>
+        )}
         {stands > 0 && (
           <CameRow testid="stands-found" text={`${many(stands, "stand", "stands")} of woods from the measured trees`}>
             {/* (the measured trees stay, each on its own) */}
@@ -158,6 +184,12 @@ function CameIn() {
             <Button small tone="danger" onClick={() => remove(fromGov, "Took out what came from the US maps.")}>Remove</Button>
           </CameRow>
         )}
+        {notes.length > 0 && (
+          <details className="py-1.5 border-t border-white/[0.07] first:border-t-0 text-xs text-zinc-400" data-testid="import-notes">
+            <summary className="cursor-pointer text-zinc-200 hover:text-zinc-50">What the import found ({notes.length})</summary>
+            <ul className="mt-1.5 flex flex-col gap-1 list-disc pl-4 leading-snug">{notes.map((n, k) => <li key={k}>{n}</li>)}</ul>
+          </details>
+        )}
       </div>
     </Fold>
   );
@@ -180,68 +212,44 @@ function SiteTrees() {
 }
 
 /** The measured trees' own settings: which are left out, growth since the survey, the ones cut
- * down by hand, the fairways cleared. */
+ * down by hand, the fairways cleared (the course's switch sets every hole; a hole's own can differ). */
 function MeasuredSettings() {
   const doc = useCourse(s => s.doc);
-  const u = doc.units;
   const lidar = doc.lidar;
   if (!lidar || !lidar.trees.length) return null;
   // (trees placed by hand standing on a measured one: the survey has them already)
   const doubled = doc.items.filter(i => i.type === "tree" && !i.importSource && lidar.trees.some(t => Math.hypot(t[0] - i.x, t[1] - i.y) < Math.max(6, t[3] * 0.5)));
-  const m = lidar.minHeight ?? 0;
-  const keptN = m ? lidar.trees.filter(t => t[2] >= m).length : lidar.trees.length;
+  // (holes whose own switch differs from the course's)
+  const own = doc.holes.filter(h => h.clearTrees !== undefined && h.clearTrees !== (lidar.clearFairways === true));
+  const ownSaid = own.length > 3 ? `${own.length} holes` : `hole${own.length === 1 ? "" : "s"} ${own.map(h => holeLabel(doc, h.id)).join(", ").replace(/, ([^,]*)$/, " and $1")}`;
+  const everyHole = (d: CourseDoc) => (d.holes.some(h => h.clearTrees !== undefined) ? { holes: d.holes.map(h => (h.clearTrees === undefined ? h : { ...h, clearTrees: undefined })) } : {});
+  const change = (patch: MeasuredTune, done: boolean) => {
+    if ("clearFairways" in patch) {
+      // (the course's switch: every hole takes it)
+      const v = patch.clearFairways === true;
+      changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, clearFairways: v ? true : undefined }, ...everyHole(d) } : {}));
+      toast(v ? "Trees on every hole's fairway, tees and basket are cut down. A hole's own switch leaves its trees standing." : "Trees on the fairways are standing again.", "info", true);
+      return;
+    }
+    const { saplings: young, clearFairways: _course, ...rest } = patch;
+    changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...rest, ...("saplings" in patch ? { saplings: young ? (true as const) : undefined } : {}) } } : {}), done);
+  };
   return (
     <div className="mt-4" data-testid="lidar-settings">
       <div className="text-[13px] font-semibold text-zinc-200 mb-1.5 flex items-center gap-1.5">Measured trees <HelpLink topic="lidar-settings" label="Measured trees" /></div>
-      <div data-testid="lidar-min">
-        <Slider label="Leave out trees shorter than" min={0} max={60} step={1} value={m}
-          format={v => (v ? fmtElev(v, u).replace(/^[+−-]/, "") : "None")}
-          onChange={v => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, minHeight: v || undefined } } : {}), false)} onDone={() => useCourse.getState().commit()} />
-        <div className="text-[11px] text-zinc-500">{`${keptN.toLocaleString()} of ${lidar.trees.length.toLocaleString()} kept`}</div>
-      </div>
-      <div className="mt-2" data-testid="lidar-crown">
-        <Slider label="Crown size" min={0.6} max={1.5} step={0.05} value={lidar.crownSize ?? 1}
-          format={v => (Math.abs(v - 1) < 0.001 ? "As measured" : `${Math.round(v * 100)}%`)}
-          onChange={v => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, crownSize: Math.abs(v - 1) < 0.001 ? undefined : v } } : {}), false)} onDone={() => useCourse.getState().commit()} />
-      </div>
-      <div className="mt-2" data-testid="lidar-grow">
-        <Slider label="Growth since the survey" min={0} max={25} step={1} value={lidar.growYears ?? 0}
-          format={v => (v ? `${v} year${v === 1 ? "" : "s"}${lidar.saplings ? ` · ${saplings(lidar.trees, v).length.toLocaleString()} new` : ""}` : "As measured")}
-          onChange={v => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, growYears: v || undefined } } : {}), false)} onDone={() => useCourse.getState().commit()} />
-        {yearsSince(lidar.source) > 0 && (lidar.growYears ?? 0) !== yearsSince(lidar.source) && (
-          <button className="text-[12px] text-orange-300 hover:text-orange-200 touch:min-h-[44px]" onClick={() => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, growYears: yearsSince(d.lidar.source) } } : {}))} data-testid="grow-today">Grow to today ({yearsSince(lidar.source)} years)</button>
-        )}
-      </div>
-      {(lidar.growYears ?? 0) > 0 && (
-        <div className="mt-2" data-testid="lidar-saplings">
-          <Toggle label="Saplings in the gaps" checked={lidar.saplings === true}
-            onChange={v => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, saplings: v ? true : undefined } } : {}))} />
-        </div>
-      )}
-      {(lidar.fromPhoto ?? 0) > 0 && (
-        <div className="mt-2 text-[11px] text-zinc-400" data-testid="from-photo">{lidar.fromPhoto!.toLocaleString()} of them from the summer photo, where the survey couldn't tell bare trees apart · <button className="text-orange-300 hover:text-orange-200 touch:min-h-[44px]" onClick={() => {
-          changeDoc(d => {
-            if (!d.lidar?.fromPhoto) return {};
-            // (they're the last ones: the measured trees, and which are kept or taken out, stay)
-            const n = d.lidar.trees.length - d.lidar.fromPhoto, within = (k: number) => k < n;
-            return { lidar: { ...d.lidar, trees: d.lidar.trees.slice(0, n), fromPhoto: undefined, kept: d.lidar.kept?.filter(within), removed: d.lidar.removed?.filter(within) } };
-          });
-          toast("Took out the trees from the summer photo.", "info", true);
-        }}>Remove them</button></div>
-      )}
-      {(doc.cutTrees?.length ?? 0) > 0 && (
-        <div className="mt-2 text-[11px] text-zinc-400" data-testid="cut-by-hand">{doc.cutTrees!.length} sapling{doc.cutTrees!.length === 1 ? "" : "s"} or planted tree{doc.cutTrees!.length === 1 ? "" : "s"} cut down by hand · <button className="text-orange-300 hover:text-orange-200 touch:min-h-[44px]" onClick={uncutTrees}>Bring them back</button></div>
-      )}
-      {doubled.length > 0 && (
-        <div className="mt-2 text-[11px] text-zinc-400" data-testid="doubled-trees">{doubled.length} tree{doubled.length === 1 ? "" : "s"} placed by hand stand{doubled.length === 1 ? "s" : ""} on a measured one · <button className="text-orange-300 hover:text-orange-200 touch:min-h-[44px]" onClick={() => { const ids = new Set(doubled.map(i => i.id)); changeDoc(d => ({ items: d.items.filter(i => !ids.has(i.id)) })); toast(`Took out ${doubled.length === 1 ? "the tree" : `${doubled.length} trees`} placed by hand.`, "info", true); }}>Remove those placed by hand</button></div>
-      )}
-      <div className="mt-2" data-testid="lidar-clear">
-        <Toggle label="Clear trees from the fairways" checked={lidar.clearFairways === true}
-          onChange={v => {
-            changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, clearFairways: v ? true : undefined } } : {}));
-            toast(v ? "Trees on the fairways, tees and baskets are cut down. Each hole's panel brings them back." : "Trees on the fairways are standing again.", "info", true);
-          }} />
-      </div>
+      <MeasuredTuning trees={lidar.trees} source={lidar.source} units={doc.units} onChange={change} onDone={() => useCourse.getState().commit()}
+        value={{ minHeight: lidar.minHeight, crownSize: lidar.crownSize, growYears: lidar.growYears, saplings: lidar.saplings, clearFairways: lidar.clearFairways }}
+        notes={<>
+          {(doc.cutTrees?.length ?? 0) > 0 && (
+            <div className="mt-2 text-[11px] text-zinc-400" data-testid="cut-by-hand">{doc.cutTrees!.length} sapling{doc.cutTrees!.length === 1 ? "" : "s"} or planted tree{doc.cutTrees!.length === 1 ? "" : "s"} cut down by hand · <button className="text-orange-300 hover:text-orange-200 touch:min-h-[44px]" onClick={uncutTrees}>Bring them back</button></div>
+          )}
+          {doubled.length > 0 && (
+            <div className="mt-2 text-[11px] text-zinc-400" data-testid="doubled-trees">{doubled.length} tree{doubled.length === 1 ? "" : "s"} placed by hand stand{doubled.length === 1 ? "s" : ""} on a measured one · <button className="text-orange-300 hover:text-orange-200 touch:min-h-[44px]" onClick={() => { const ids = new Set(doubled.map(i => i.id)); changeDoc(d => ({ items: d.items.filter(i => !ids.has(i.id)) })); toast(`Took out ${doubled.length === 1 ? "the tree" : `${doubled.length} trees`} placed by hand.`, "info", true); }}>Remove those placed by hand</button></div>
+          )}
+        </>}
+        after={own.length > 0 && (
+          <div className="text-[11px] touch:text-[12.5px] text-zinc-400 -mt-1" data-testid="clear-own">{lidar.clearFairways === true ? "Not on" : "Only on"} {ownSaid} · <button className="text-orange-300 hover:text-orange-200 touch:min-h-[44px]" onClick={() => changeDoc(everyHole)} data-testid="clear-same">Same for every hole</button></div>
+        )} />
     </div>
   );
 }
@@ -274,9 +282,9 @@ function SiteStep({ onFindSite }: { onFindSite: () => void }) {
     <>
       {example ? (
         <Section title="Example course" testid="example-site" help="example-course">
-          <div className="flex flex-col items-start gap-1.5">
+          {/* (it opens Find your park for the new course: the help's "Find your park" points here) */}
+          <div data-testid="find-site">
             <Button tone="primary" full onClick={ownCourse} testid="example-new-course"><Plus size={16} /> Start your own course</Button>
-            <Button small onClick={ownCourse} testid="find-site"><MapPinned size={14} /> Find your park</Button>
           </div>
         </Section>
       ) : !placed && (
@@ -303,7 +311,7 @@ function SiteStep({ onFindSite }: { onFindSite: () => void }) {
           {(doc.site.elevationSource || picture) && (
             <div className="mt-1.5 text-xs text-zinc-400 space-y-0.5">
               {doc.site.elevationSource && <div>Elevation: {doc.site.elevationSource}</div>}
-              {picture && <div>{street ? "Street map" : `Photo: ${picture}`}</div>}
+              {picture && <div data-testid="site-photo">{street ? "Street map" : `Photo: ${picture}${doc.site.photo?.date ? `, ${photoDateText(doc.site.photo)}` : ""}`}</div>}
             </div>
           )}
           {placed && (

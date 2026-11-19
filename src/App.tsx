@@ -181,7 +181,7 @@ function saveByHand() {
 
 /** How a fetched site comes in: with the course mapped there, the frame's turn, the tree colours
  * picked while looking it over; `live`/`shown`: it was built in front of you already. */
-type SiteOpts = { course?: boolean; turn?: number; live?: boolean; shown?: boolean; look?: { trees: string; treeMix: string[] }; hand?: HandEdits };
+type SiteOpts = { course?: boolean; turn?: number; live?: boolean; shown?: boolean; look?: { trees: string; treeMix: string[] }; treeStyle?: Partial<CourseDoc["style"]>; hand?: HandEdits };
 
 export default function App() {
   const ed = useEditor();
@@ -313,7 +313,8 @@ export default function App() {
     const keptOsm = (i: CourseItem) => !!site.osmFailed && fromMaps(i);
     const designed = d0.items.filter(i => !isImported(i) || keptOsm(i));
     const carried = from && site.site.bounds ? reframeDesign({ holes: d0.holes, items: designed }, from, { ...site.site.bounds, ...site.canvas }) : { holes: d0.holes, items: designed, outside: 0 };
-    const style = opts?.turn !== undefined || opts?.look ? { ...d0.style, ...(opts?.turn !== undefined ? { rotation: opts.turn } : {}), ...(opts?.look ? { look3d: { ...d0.style.look3d, ...opts.look } } : {}) } : undefined;
+    // (the kinds of trees and where the woods are painted, picked while it was looked over, too)
+    const style = opts?.turn !== undefined || opts?.look || opts?.treeStyle ? { ...d0.style, ...(opts?.treeStyle ?? {}), ...(opts?.turn !== undefined ? { rotation: opts.turn } : {}), ...(opts?.look ? { look3d: { ...d0.style.look3d, ...opts.look } } : {}) } : undefined;
     const patch: Partial<CourseDoc> = {
       canvas: site.canvas,
       gridSize: site.gridSize,

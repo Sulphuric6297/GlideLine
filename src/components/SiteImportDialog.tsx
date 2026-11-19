@@ -19,8 +19,11 @@ import type { PhotoSourceId } from "../lib/geo/photoSources";
 import { fmtArea, fmtDist } from "../lib/units";
 import { getDoc, useCourse, useEditor } from "../state/course";
 import { getView } from "../state/view";
-import type { CourseDoc, CourseItem } from "../types";
-import { ImportReview3d, type ReviewGroup, type TreeLook3d } from "./ImportReview3d";
+import type { CourseDoc, CourseItem, MapStyle } from "../types";
+import { FoldRows, ImportReview3d, type ReviewGroup, type TreeLook3d, type TreeRow } from "./ImportReview3d";
+import { TreeKinds, WOODS_PICKS, WoodsOptions, kindsSaid, woodsPick } from "./DesignPanel";
+import { MeasuredTuning, measuredSaid, type MeasuredTune, type SwitchRow } from "./MeasuredTrees";
+import { kindsOf } from "../lib/treeMix";
 import { HelpLink, Slider } from "./ui";
 import { playImportShow, startLiveImport } from "../viewport/importShow";
 import { startImportMusic, stopImportMusic } from "../lib/importSound";
@@ -126,7 +129,17 @@ const drawnAs = (i: CourseItem): { area?: string; line?: string; weight?: number
   return {};
 };
 
-type BringOpts = { trees: boolean; osm: boolean; course?: boolean; turn?: number; live?: boolean; shown?: boolean; look?: TreeLook3d; hand?: HandEdits };
+type BringOpts = { trees: boolean; osm: boolean; course?: boolean; turn?: number; live?: boolean; shown?: boolean; look?: TreeLook3d; treeStyle?: Partial<MapStyle>; hand?: HandEdits };
+
+/** A switch in the look-over's own look: its name, then the switch (the measured trees' settings). */
+const cardSwitch: SwitchRow = o => (
+  <div key={o.testid} className="flex items-center gap-2 text-[12.5px] touch:text-[14px] text-zinc-100 py-[3px] touch:py-1.5" data-testid={`review-${o.testid}`}>
+    <span>{o.label}</span><span className="ml-auto" />
+    <button type="button" role="switch" aria-checked={o.checked} aria-label={o.label} onClick={() => o.onChange(!o.checked)} className={`relative w-[30px] h-[17px] rounded-full shrink-0 ${o.checked ? "bg-[#a2cf6a]" : "bg-white/[0.14]"}`}>
+      <span className={`absolute top-[2px] w-[13px] h-[13px] rounded-full ${o.checked ? "right-[2px] bg-zinc-900" : "left-[2px] bg-zinc-400"}`} />
+    </button>
+  </div>
+);
 
 export function SiteImportDialog({ onClose, onImported, onPreview, near }: { near?: GeoBounds; onClose: () => void; onImported: (site: ImportedSite, opts: BringOpts) => void;
   /** The site as it would come in, shown in the course (as it was: `d0`) while it's looked over in 3D. */
@@ -173,8 +186,13 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   const [left, setLeft] = useState<LeftOut[]>([]);
   // (the finer choices: kinds of a source switched off, the measured trees' own settings)
   const [offKinds, setOffKinds] = useState<string[]>([]);
-  const [lidarTune, setLidarTune] = useState<{ minHeight?: number; crownSize?: number }>({});
-  const [lidarOpen, setLidarOpen] = useState(false);
+  // (the measured trees' settings start as the course has them, where it has measured trees
+  // already: bringing the site in again keeps them)
+  const courseTune = (): MeasuredTune => { const l = (base.current?.doc ?? getDoc()).lidar; return l ? { minHeight: l.minHeight, crownSize: l.crownSize, growYears: l.growYears, saplings: l.saplings, clearFairways: l.clearFairways } : {}; };
+  const [lidarTune, setLidarTune] = useState<MeasuredTune>(courseTune);
+  // (the kinds of trees and where the woods are painted, picked while it's looked over: they come
+  // in with the site)
+  const [treeStyle, setTreeStyle] = useState<Partial<MapStyle>>({});
   const ropts = useMemo<ReviewOpts>(() => ({ offKinds, lidar: lidarTune }), [offKinds, lidarTune]);
   const in3dRef = useRef(false);
   const [look, setLook] = useState<TreeLook3d | null>(null);
@@ -428,7 +446,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     setStatus({ state: "loading", text: "Starting…" });
     // (its music, softly, from this press till the site's brought in)
     if (!prev) startImportMusic();
-    if (!prev) { played.current = false; setLeft([]); setLook(null); setOffKinds([]); setLidarTune({}); hand.current = NO_HAND; }
+    if (!prev) { played.current = false; setLeft([]); setLook(null); setTreeStyle({}); setOffKinds([]); setLidarTune(courseTune()); hand.current = NO_HAND; }
     builtIn.current = false;
     const live = !onPreview || prev ? null : startLiveImport({ name: label.split(",")[0].trim() || "your site", hide: on => { liveHid.current = on; setLiveOn(on); if (!on && landed.current) setArrived({ ...landed.current }); } });
     // (built in the 3D view from this moment, the photo under it: the course as it was kept to go
@@ -488,8 +506,8 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   useEffect(() => {
     if (!in3d || !shownSite || !base.current || !onPreview) return;
     if (builtIn.current) { builtIn.current = false; return; }
-    preview(base.current.doc, shownSite, { trees, osm, course: course && !!outline?.course?.holes, turn: angle, ...(look ? { look } : {}) });
-  }, [in3d, shownSite, look]);
+    preview(base.current.doc, shownSite, { trees, osm, course: course && !!outline?.course?.holes, turn: angle, ...(look ? { look } : {}), treeStyle });
+  }, [in3d, shownSite, look, treeStyle]);
   // Into the 3D view with the photo under it; built in front of you once, then looked over.
   // (no graphics card, or no view: looked over on the flat map as before)
   useEffect(() => {
@@ -695,7 +713,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   const shared = review ? sharedBuildings(review.site) : 0;
   const choices = (here?.photos ?? []).filter(c => c.id !== "esri" || (here?.photos ?? []).length < 3);
   const setOn = (k: SourceKey, v: boolean) => setReview(r => (r ? { ...r, on: { ...r.on, [k]: v } } : r));
-  const bringOpts = (): BringOpts => ({ trees, osm, course: course && !!outline?.course?.holes, turn: angle, ...(look ? { look } : {}) });
+  const bringOpts = (): BringOpts => ({ trees, osm, course: course && !!outline?.course?.holes, turn: angle, ...(look ? { look } : {}), treeStyle });
   const bring = () => {
     if (!review || !shownSite) return;
     // (looked over in 3D: the course as it was, so it comes in as one step; the view stays as it is, in 3D with the photo)
@@ -766,17 +784,6 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
                             className={`relative w-[26px] h-[15px] rounded-full shrink-0 ${kon ? "bg-[#a2cf6a]" : "bg-white/[0.14]"}`}><span className={`absolute top-[2px] w-[11px] h-[11px] rounded-full ${kon ? "right-[2px] bg-zinc-900" : "left-[2px] bg-zinc-400"}`} /></button>
                         </div>); })}
                     </div>); })()}
-                  {on && k === "lidarTrees" && (
-                    <div className="pl-[27px] pr-2 pb-1" data-testid="review-lidar-tune">
-                      <button className="text-[12px] text-zinc-300 hover:text-zinc-50 py-1" aria-expanded={lidarOpen} onClick={() => setLidarOpen(o => !o)} data-testid="review-lidar-more">{lidarOpen ? "▾" : "▸"} Fine-tune</button>
-                      {lidarOpen && (() => { const lt = review.site.lidar?.trees ?? [], m = lidarTune.minHeight ?? 0, keptN = m ? lt.filter(t => t[2] >= m).length : lt.length; return (
-                        <div>
-                          <Slider label="Leave out trees shorter than" min={0} max={60} step={1} value={m} onChange={v => setLidarTune(t => ({ ...t, minHeight: v || undefined }))} format={v => (v ? fmtDist(v, units) : "None")} />
-                          <div className="text-[11.5px] text-zinc-500 -mt-1 mb-1">{keptN.toLocaleString()} of {lt.length.toLocaleString()} kept</div>
-                          <Slider label="Crown size" min={0.6} max={1.5} step={0.05} value={lidarTune.crownSize ?? 1} onChange={v => setLidarTune(t => ({ ...t, crownSize: v }))} format={v => (Math.abs(v - 1) < 0.001 ? "As measured" : `${Math.round(v * 100)}%`)} />
-                        </div>); })()}
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -794,6 +801,17 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
         );
         return [{ id: g.id, label: g.label, total, el }];
       });
+  // Site's tree options, here too (the same names and order): the kinds of trees, where the woods
+  // are painted, and the measured trees' own settings. Each a row that opens.
+  const styleNow = { ...(base.current?.doc ?? getDoc()).style, ...treeStyle } as MapStyle;
+  const onStyle = (p: Partial<MapStyle>) => setTreeStyle(t => ({ ...t, ...p }));
+  const measuredNow = site0?.lidar?.trees.length ? site0.lidar : null;
+  const treeRows: TreeRow[] = !review ? [] : [
+    { id: "kinds", name: "Kinds of trees", short: "Kinds of trees", value: kindsSaid(styleNow), shortValue: `${kindsOf(styleNow).length} kind${kindsOf(styleNow).length === 1 ? "" : "s"}`, el: <TreeKinds bare s={styleNow} onStyle={onStyle} /> },
+    { id: "woods", name: "Where to paint the woods", short: "Woods", value: WOODS_PICKS.find(o => o.value === woodsPick(styleNow, !!measuredNow))?.label ?? "", el: <WoodsOptions bare s={styleNow} measured={!!measuredNow} onStyle={onStyle} /> },
+    ...(measuredNow ? [{ id: "measured", name: "Measured trees", short: "Measured trees", value: measuredSaid(lidarTune, units), shortValue: measuredSaid(lidarTune, units) === "As measured" ? "As measured" : "Changed",
+      el: <MeasuredTuning tight trees={measuredNow.trees} source={measuredNow.source} value={lidarTune} units={units} switchRow={cardSwitch} onChange={p => setLidarTune(t => ({ ...t, ...p }))} /> }] : [])
+  ];
   const failedNames = ORDER.filter(id => sources[id]?.state === "failed").map(id => ROW_NAMES[id]);
   const reviewNotes = review?.site.notes ?? [];
   const reviewPanel = review && (
@@ -803,7 +821,9 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
       {onPreview && <button className="self-start text-[12.5px] font-semibold text-[#a2cf6a] hover:text-[#b3db80] px-1" onClick={begin3d} data-testid="review-3d">Look at it in 3D ›</button>}
       <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 mt-1 flex justify-between"><span>What comes in</span><span className="font-normal normal-case tracking-normal">shown on the map</span></div>
       {photoChoiceEl}
-      {groupEls.map(g => g.el)}
+      {groupEls.filter(g => g.id === "trees").map(g => g.el)}
+      <FoldRows rows={treeRows} />
+      {groupEls.filter(g => g.id !== "trees").map(g => g.el)}
       {!phone && reviewButtons}
     </div>
   );
@@ -822,7 +842,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   ) : null;
   const review3d = in3d && ready3d && review && site0 && createPortal(
     <ImportReview3d phone={phone} again={again} site0={site0} left={left} onLeave={b => setLeft(l => [...l, b])} onUndo={() => setLeft(l => l.slice(0, -1))} look={look} onLook={setLook}
-      groups={groupEls} photoChoice={photoChoiceEl} brushRow={brushRowEl} notes={reviewNotes} failed={failedNames} onRetry={() => void run(review.photo, true)} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { stopImportMusic(1200); end3d(); setReview(null); setArrived(null); }} />, document.body);
+      groups={groupEls} treeRows={treeRows} photoChoice={photoChoiceEl} brushRow={brushRowEl} notes={reviewNotes} failed={failedNames} onRetry={() => void run(review.photo, true)} brush={brushU ? { u: brushU, on: brushOn, tune, onTune: setTune, onSwitch: v => setOn("underbrush", v) } : undefined} onBring={bring} onFlat={end3d} onBack={() => { stopImportMusic(1200); end3d(); setReview(null); setArrived(null); }} />, document.body);
   // (out of the way while the site is built or looked over in the 3D view: it fades into the view
   // as the build begins, and is gone while the site is looked over)
   const awayStyle: React.CSSProperties | undefined = in3d ? { display: "none" } : liveOn ? { opacity: 0, visibility: "hidden", pointerEvents: "none", transition: "opacity .75s ease, visibility 0s linear .75s" } : { transition: "opacity .3s ease" };

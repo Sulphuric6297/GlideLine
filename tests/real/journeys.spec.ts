@@ -305,19 +305,19 @@ test("a stand of conifers: Conifer, then Rectangle, dragged out; a wood that gro
   await page.keyboard.press("Escape");
 });
 
-test("a hole's trees in the way: said, cleared when asked (and said), brought back", async () => {
+test("a hole's own switch for the trees on its fairway: said how many stand, cleared (and said), standing again", async () => {
   const doc = await course(page);
   let found = false;
   for (const h of doc.holes) {
     await page.evaluate(id => (window as any).__dgActions.select(id), h.id);
     const card = page.getByTestId("fairway-trees");
-    if (!(await card.isVisible().catch(() => false)) || !/in the way/.test(await card.innerText())) continue;
+    if (!(await card.isVisible().catch(() => false)) || !/\d+ trees? stands? on this fairway/.test(await card.innerText())) continue;
     found = true;
-    await page.getByTestId("trees-clear").click();
-    await expect(card).toContainText("cut down");
-    await expect(page.getByText(/^Cut down \d+ trees? on hole \d+/)).toBeVisible();
-    await page.getByTestId("trees-back").click();
-    await expect(card).toContainText("in the way");
+    await page.getByTestId("hole-clear-trees").check();
+    await expect(card).toContainText("cut down on this hole");
+    await expect(page.getByText(/^Trees on hole \d+'s fairway, tees and basket are cut down/)).toBeVisible();
+    await page.getByTestId("hole-clear-trees").uncheck();
+    await expect(card).toContainText("on this fairway");
     break;
   }
   expect(found).toBe(true);

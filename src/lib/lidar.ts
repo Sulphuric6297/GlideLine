@@ -4,7 +4,7 @@
 // (checked against USGS 3DEP's), the canopy (roofs left out) and single trees (where each stands,
 // how tall, how wide its crown spreads; a conifer only where the survey shows one), and how high
 // a building stands.
-import type { CourseDoc, Hole, LidarTree, P } from "../types";
+import type { CourseDoc, CourseItem, Hole, LidarTree, P } from "../types";
 import { areaPath, fairwayOutline } from "./course";
 import { boundsOf, distanceToPolygon, nearestOnSegment, pointInPolygon, smoothPath } from "./geom";
 import { FEET_PER_METER } from "./geo/core";
@@ -974,6 +974,19 @@ export const grownTrees = (lidar: NonNullable<CourseDoc["lidar"]>) => {
   return out;
 };
 
+/** Why Growth since the survey is there, said under it: when the trees were measured, that
+ * they've grown since, and what the setting has done about it (an estimate). `today`: the years
+ * from the survey to now, offered as one step where the trees aren't grown that far (0: none to
+ * offer, or no year in the survey's name). */
+export const growthSaid = (source: string, grown: number, now = new Date().getFullYear()): { text: string; today: number } => {
+  const year = surveyYear(source), since = year ? Math.max(0, now - year) : 0;
+  const yrs = (n: number) => `${n} year${n === 1 ? "" : "s"}`;
+  if (!year) return { text: grown ? `Grown ${yrs(grown)} since they were measured from the air. It's an estimate.` : "These trees were measured from the air a while ago. They've grown since.", today: 0 };
+  if (!grown) return { text: since ? `These trees were measured from the air in ${year}. They've grown since.` : `These trees were measured from the air this year.`, today: since };
+  const to = grown === since ? "to match today" : grown < since ? `, to ${year + grown}` : `, to ${year + grown}: ${yrs(grown - since)} from now`;
+  return { text: `Measured from the air in ${year}, then grown ${yrs(grown)}${to.startsWith(",") ? to : ` ${to}`}. It's an estimate.`, today: grown === since ? 0 : since };
+};
+
 /** Years since a survey (by the year in its name), or 0. */
 export const yearsSince = (name: string) => { const y = surveyYear(name); return y ? Math.max(0, new Date().getFullYear() - y) : 0; };
 
@@ -1007,14 +1020,34 @@ export const bindToWoods = (before: CourseDoc, after: CourseDoc): number[] | nul
   return bound.size === had ? null : [...bound].sort((a, b) => a - b);
 };
 
-/** Which measured trees stand: any taken out are gone; with `clearFairways`, those on a fairway, a
- * tee or a basket's circle (as `cleared` says) are cut down unless kept; a woods' own tree only
- * while a woods covers it (`inWoods`). */
+/** Which holes have the measured trees on their fairway, tees and basket's circle cut down: each
+ * by its own switch, or the course's where it has none. `item`: whether a tee, a basket or a
+ * fairway drawn by hand is cleared (one of its holes clears; with no hole, the course does). */
+export const playClearing = (doc: Pick<CourseDoc, "lidar" | "holes">) => {
+  const course = doc.lidar?.clearFairways === true;
+  const all = new Set(doc.holes.map(h => h.id));
+  const clears = new Set(doc.holes.filter(h => h.clearTrees ?? course).map(h => h.id));
+  return {
+    /** Anything cleared at all. */
+    any: course || clears.size > 0,
+    hole: (id: string) => clears.has(id),
+    item: (it: CourseItem) => {
+      const ids = ("holeId" in it && it.holeId ? [it.holeId, ...(("alsoHoles" in it && it.alsoHoles) || [])] : []).filter(id => all.has(id));
+      return ids.length ? ids.some(id => clears.has(id)) : course;
+    },
+    /** Tells one course's clearing from another's. */
+    key: `${course ? 1 : 0}:${[...clears].join(",")}`
+  };
+};
+
+/** Whether a hole's trees are cleared for play: its own switch, or the course's. */
+export const holeClears = (doc: Pick<CourseDoc, "lidar">, hole: Pick<Hole, "clearTrees">) => hole.clearTrees ?? doc.lidar?.clearFairways === true;
+
+/** Which measured trees stand: any taken out are gone; those on a fairway, a tee or a basket's
+ * circle of a hole that clears its trees (as `cleared` says: see `playClearing`) are cut down
+ * unless kept; a woods' own tree only while a woods covers it (`inWoods`). */
 export const standingTrees = (lidar: NonNullable<CourseDoc["lidar"]>, cleared: (p: P, reach: number) => boolean, nowhere: (p: P) => boolean = () => false, inWoods: (p: P) => boolean = () => true) => {
   const kept = new Set(lidar.kept ?? []), removed = new Set(lidar.removed ?? []), bound = new Set(lidar.bound ?? []);
-  // (unless the course asks for its fairways cleared, measured trees stand where the holes play:
-  // cut by hand, or a hole's Clear them)
-  if (lidar.clearFairways !== true) cleared = () => false;
   const stand: number[] = [], cut: number[] = [];
   lidar.trees.forEach((t, k) => {
     const p = { x: t[0], y: t[1] };
@@ -1070,7 +1103,7 @@ export const fairwayTrees = (doc: Pick<CourseDoc, "lidar">, hole: Hole, line: P[
   const lidar = doc.lidar;
   if (!lidar?.trees.length || line.length < 2) return out;
   const poly = fairwayOutline(hole, smoothPath(line, 8), hole.fairway ? 0 : -hole.fairwayWidth * 0.4, 6);
-  const box = boundsOf(poly), kept = new Set(lidar.kept ?? []), removed = new Set(lidar.removed ?? []), clearing = lidar.clearFairways === true;
+  const box = boundsOf(poly), kept = new Set(lidar.kept ?? []), removed = new Set(lidar.removed ?? []), clearing = holeClears(doc, hole);
   lidar.trees.forEach(([x, y, , r], k) => {
     const reach = r * 0.3;
     if (x < box.minX - reach || x > box.maxX + reach || y < box.minY - reach || y > box.maxY + reach) return;

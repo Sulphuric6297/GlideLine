@@ -29,7 +29,7 @@ import { disposeObjectDeep } from "../three/dispose";
 import { create3dTree, getTreeSignature, retuneTrees } from "../three/trees";
 import { createRock, rockItemGeometry, rockMaterial, rockSignature, ROCK_BURIED, rockOutlinePoints, rockSpan, STONE_LOOK, STONE_K } from "../three/rocks";
 import { createMeasuredWoods, createUnderbrush, createWoods, createWoodsWhere } from "../three/woods";
-import { standingTrees, grownTree, grownTrees } from "../lib/lidar";
+import { playClearing, standingTrees, grownTree, grownTrees } from "../lib/lidar";
 import type { WoodedGrid } from "../lib/forest";
 import { autoFlight, flightClock, flyoverOf, insertKey, keyFlight, keyTimes, keysFromFlight, type Air, type Canopy, type Crown, LENS } from "../lib/flight";
 import { VIDEO_HOLD, titleStrength } from "../lib/video";
@@ -327,6 +327,7 @@ export class CourseView {
   private shapeAnchor: { x: number; y: number; shape: "box" | "circle" } | null = null;
   private draft: THREE.Object3D | null = null;
   private draftLabel: HTMLDivElement | null = null;
+  private draftCount = 0;
   /** Said by the drawing instead of its length, until the next point (a basket too close to the
    * tee, a shape finished with too few points). */
   private draftNote = "";
@@ -1746,6 +1747,11 @@ export class CourseView {
   // holes are replaced when they change, never changed in place): hovering and redrawing after a
   // change work them out again only for what changed
   private drawnOf = new WeakMap<object, { pts: P[]; box: ReturnType<typeof boundsOf> }>();
+  /** Whether what's being drawn is laid straight between its points: drawn as a box, or a wall (a
+   * wall has no curves unless its Curved is switched on after). */
+  private laidStraight() {
+    return this.tool.shape === "box" || (this.tool.mode === "draw-line" && this.tool.lineKind === "wall");
+  }
   private shapeOf(i: AreaItem | LineItem) {
     let d = this.drawnOf.get(i);
     if (!d) {
@@ -2595,6 +2601,12 @@ export class CourseView {
     this.paused = on;
     this.lastRender = 0;
     if (!on) this.invalidate();
+  }
+
+  /** For tests: how many points the outline being drawn has (curved through its points, it has
+   * many more than were clicked; laid straight, those and the pointer). */
+  draftInfo() {
+    return { points: this.draftCount };
   }
 
   /** For tests: whether the view is drawing, how many pictures it has drawn, and whether a video records. */
@@ -3698,16 +3710,19 @@ export class CourseView {
     // it grows there all the same)
     const clearingsFor = (play: boolean, tallGrass = true) => {
       const polys: P[][] = [], lines: { pts: P[]; half: number }[] = [], discs: { p: P; r: number }[] = [];
+      // (for play: only the holes that clear their trees, and the tees, baskets and fairways that
+      // are theirs)
+      const clears = play ? playClearing(course) : null;
       for (const s of doc.stats) {
         const hole = course.holes.find(h => h.id === s.holeId);
-        if (s.complete && hole) teeLines(course, hole, s.line, s.teeId).forEach((l, k) => polys.push(this.outline(hole, l, `tee${k}`, 8, hole.fairway ? 0 : -hole.fairwayWidth * 0.4, 6)));
+        if (s.complete && hole && (!clears || clears.hole(hole.id))) teeLines(course, hole, s.line, s.teeId).forEach((l, k) => polys.push(this.outline(hole, l, `tee${k}`, 8, hole.fairway ? 0 : -hole.fairwayWidth * 0.4, 6)));
       }
       for (const it of course.items) {
-        if (it.type === "area" && (play ? ["fairway", "green"] : ["fairway", "green", "water", "parking", "building", "sand", "rock", ...(tallGrass ? ["rough"] : []), "nogo", "field"]).includes(it.kind)) polys.push(this.shapeOf(it).pts);
+        if (it.type === "area" && (play ? ["fairway", "green"] : ["fairway", "green", "water", "parking", "building", "sand", "rock", ...(tallGrass ? ["rough"] : []), "nogo", "field"]).includes(it.kind)) { if (!clears || clears.item(it)) polys.push(this.shapeOf(it).pts); }
         // (a wall: none in it, but right beside it, as trees grow along an old wall)
         else if (it.type === "line" && !play && it.kind !== "ob" && it.kind !== "fence") lines.push({ pts: this.shapeOf(it).pts, half: ((it.width ?? LINE_KINDS[it.kind].width) * Math.max(...widthFactors(it))) / 2 + (it.kind === "wall" ? 1.5 : 3) });
-        else if (it.type === "tee") discs.push({ p: it, r: Math.max(12, it.padLength) });
-        else if (it.type === "basket") discs.push({ p: it, r: CIRCLE_ONE_FT * 0.6 });
+        else if (it.type === "tee") { if (!clears || clears.item(it)) discs.push({ p: it, r: Math.max(12, it.padLength) }); }
+        else if (it.type === "basket") { if (!clears || clears.item(it)) discs.push({ p: it, r: CIRCLE_ONE_FT * 0.6 }); }
         else if (it.type === "structure" && !play) {
           // (a building, shelter or deck: none inside it, nor right against its walls)
           if (STRUCTURE_KINDS[it.kind].shape === "outline") { polys.push(it.points); lines.push({ pts: [...it.points, it.points[0]], half: 4 }); }
@@ -3859,16 +3874,17 @@ export class CourseView {
       let forPlayMade: ReturnType<typeof clearingsFor> | null = null, nowhereMade: ReturnType<typeof nowhereFor> | null = null;
       const forPlay = () => (forPlayMade ??= clearingsFor(true)), nowhere = () => (nowhereMade ??= nowhereFor());
       const cleared = (p: P, reach: number) => forPlay().test(p, reach);
-      const clearing = lidar.clearFairways === true;
+      // (cleared where a hole clears its trees: each hole's own switch, or the course's)
+      const clearing = playClearing(course).any;
       if (!held) this.clearedAt = (p, reach) => (clearing && cleared(p, reach)) || nowhere().test(p);
       // (the woods over the trees that belong to woods)
       const woodsShapes = lidar.bound?.length ? course.items.filter((i): i is AreaItem => i.type === "area" && i.kind === "woods" && i.points.length >= 3).map(i => { const pts = this.shapeOf(i).pts; return { pts, box: boundsOf(pts) }; }) : [];
       const inWoods = (p: P) => woodsShapes.some(w => p.x >= w.box.minX && p.x <= w.box.maxX && p.y >= w.box.minY && p.y <= w.box.maxY && pointInPolygon(p, w.pts));
       const woodsKey = woodsShapes.length ? JSON.stringify(woodsShapes.map(w => w.pts.map(q => [Math.round(q.x), Math.round(q.y)]))) : "";
       if (held) this.afterDrag = true;
-      else this.lidarKey = JSON.stringify([lidar.kept, lidar.removed, lidar.bound, lidar.minHeight ?? 0, lidar.growYears ?? 0, lidar.saplings === true, lidar.crownSize ?? 1, lidar.clearFairways === true, forPlay().key, nowhere().key, cutKey, woodsKey]);
+      else this.lidarKey = JSON.stringify([lidar.kept, lidar.removed, lidar.bound, lidar.minHeight ?? 0, lidar.growYears ?? 0, lidar.saplings === true, lidar.crownSize ?? 1, playClearing(course).key, forPlay().key, nowhere().key, cutKey, woodsKey]);
       const state = this.keep("lidar", lidar.trees, this.lidarKey!, () => {
-        const { stand, cut } = standingTrees(lidar, cleared, p => nowhere().test(p), inWoods);
+        const { stand, cut } = standingTrees(lidar, clearing ? cleared : () => false, p => nowhere().test(p), inWoods);
         const keptSet = new Set(lidar.kept ?? []);
         return { stand, cut, kept: clearing ? stand.filter(k => keptSet.has(k) && forPlay().test({ x: lidar.trees[k][0], y: lidar.trees[k][1] }, lidar.trees[k][3] * 0.3)) : [] };
       });
@@ -7782,7 +7798,7 @@ export class CourseView {
       this.clearDraft();
       this.cb.onDrawProgress(0);
       // (a rectangle stays square-cornered)
-      this.cb.onDrawn(this.tool.mode === "draw-structure" ? "structure" : kind, pts, { straight: this.tool.shape === "box" });
+      this.cb.onDrawn(this.tool.mode === "draw-structure" ? "structure" : kind, pts, { straight: this.laidStraight() });
       this.handleKey = "";
       this.syncHandles();
       return true;
@@ -7971,8 +7987,11 @@ export class CourseView {
       let pts = [...this.drawPts];
       if (this.cursor) pts.push(this.cursor);
       const area = this.drawn() === "area";
-      // (a path, walk, creek or road curves through its points as they are added)
-      if (this.tool.mode === "draw-line" && curves({ kind: this.tool.lineKind })) pts = linePath({ kind: this.tool.lineKind, points: pts });
+      // (a path, walk, creek or road curves through its points as they are added; one that will be
+      // laid straight between its points shows straight while it's placed too: the outline is what
+      // will be laid)
+      if (this.tool.mode === "draw-line" && !this.laidStraight() && curves({ kind: this.tool.lineKind })) pts = linePath({ kind: this.tool.lineKind, points: pts });
+      this.draftCount = pts.length;
       const color = this.tool.mode === "draw-structure" ? STRUCTURE_KINDS[this.tool.structureKind ?? "bridge"].color : area ? AREA_KINDS[this.tool.areaKind].color : LINE_KINDS[this.tool.lineKind].color;
       // (an area curves through its corners as they are added, but a rectangle)
       const outline = area && pts.length >= 3 && this.tool.mode === "draw-area" && this.tool.shape !== "box" && areaCurves({ kind: this.tool.areaKind }) ? areaPath({ kind: this.tool.areaKind, points: pts }) : pts;
