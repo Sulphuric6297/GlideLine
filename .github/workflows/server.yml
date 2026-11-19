@@ -34,7 +34,8 @@ concurrency:
 jobs:
   server:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
+    # (Ubuntu 24.04 by name: this Playwright has no Chromium for 26.04, which "latest" now means)
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:17-alpine
