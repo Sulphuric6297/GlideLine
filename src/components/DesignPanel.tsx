@@ -28,17 +28,19 @@ export const setStyle = (patch: Partial<MapStyle>, history = true) => {
 /** How thick the painted woods are. The map repaints when the slider is let go (painting takes a moment). */
 /** A slider for a style setting that repaints the map: it changes the map when let go. */
 /** `live`: the change shows while dragging (the 3D view's light: quick), one undo step at the end. */
-export function StyleSlider<K extends keyof MapStyle>({ k, value, label, min, max, step, format, live }: { k: K; value: number; label: string; min: number; max: number; step: number; format: (v: number) => string; live?: boolean }) {
+/** `onStyle`: where the choice goes (unset: to the course). */
+export type OnStyle = (patch: Partial<MapStyle>, history?: boolean) => void;
+export function StyleSlider<K extends keyof MapStyle>({ k, value, label, min, max, step, format, live, onStyle = setStyle }: { k: K; value: number; label: string; min: number; max: number; step: number; format: (v: number) => string; live?: boolean; onStyle?: OnStyle }) {
   const [v, setV] = useState(value);
   // Only a slider that was moved commits (a key let go on it, like Ctrl+Z's, must not)
   const moved = useRef(false);
   useEffect(() => { setV(value); }, [value]);
   const done = () => {
     if (live) { if (moved.current) useCourse.getState().commit(); }
-    else if (moved.current && v !== value) setStyle({ [k]: v } as Partial<MapStyle>);
+    else if (moved.current && v !== value) onStyle({ [k]: v } as Partial<MapStyle>);
     moved.current = false;
   };
-  return <Slider label={label} min={min} max={max} step={step} value={v} onChange={x => { moved.current = true; setV(x); if (live) setStyle({ [k]: x } as Partial<MapStyle>, false); }} onDone={done} format={format} />;
+  return <Slider label={label} min={min} max={max} step={step} value={v} onChange={x => { moved.current = true; setV(x); if (live) onStyle({ [k]: x } as Partial<MapStyle>, false); }} onDone={done} format={format} />;
 }
 
 /** Ways to draw elevation on the painted map, each with a picture of a canyon drawn that way. */
@@ -50,21 +52,26 @@ export const ELEVATION_LOOKS: { id: ReliefLook | "off"; label: string; hint: str
   { id: "off", label: "Off", hint: "No elevation drawn. The ground looks flat." }
 ];
 
-const TreeCover = ({ value }: { value: number }) => (
-  <StyleSlider k="treeCover" value={value} label="Tree cover" min={0.1} max={1} step={0.05} format={x => `${x < 0.35 ? "Sparse" : x < 0.7 ? "Open woods" : x < 0.95 ? "Thick" : "Dense"} · ${Math.round(x * 100)}%`} />
+const TreeCover = ({ value, onStyle }: { value: number; onStyle?: OnStyle }) => (
+  <StyleSlider k="treeCover" value={value} onStyle={onStyle} label="Tree cover" min={0.1} max={1} step={0.05} format={x => `${x < 0.35 ? "Sparse" : x < 0.7 ? "Open woods" : x < 0.95 ? "Thick" : "Dense"} · ${Math.round(x * 100)}%`} />
 );
 
 /** Where the painted map has woods, and how thick (the map style's Landscape part); with measured
  * trees, the woods painted besides them (Drawn only to start). */
-export function WoodsOptions({ s, measured = false }: { s: MapStyle; measured?: boolean }) {
-  const value = measured ? s.forestMeasured ?? "woods" : s.forest;
-  const pick = (v: MapStyle["forest"]) => setStyle(measured ? { forestMeasured: v === "woods" ? undefined : v } : { forest: v });
+export const WOODS_PICKS: { value: MapStyle["forest"]; label: string }[] = [{ value: "photo", label: "From the photo" }, { value: "everywhere", label: "Everywhere" }, { value: "woods", label: "Drawn only" }];
+/** Where the woods are painted now (with measured trees, their own setting). */
+export const woodsPick = (s: MapStyle, measured: boolean): MapStyle["forest"] => (measured ? s.forestMeasured ?? "woods" : s.forest);
+export function WoodsOptions({ s, measured = false, onStyle = setStyle, bare = false }: { s: MapStyle; measured?: boolean; onStyle?: OnStyle;
+  /** Without its own space above (in a row of its own, already named). */
+  bare?: boolean }) {
+  const value = woodsPick(s, measured);
+  const pick = (v: MapStyle["forest"]) => onStyle(measured ? { forestMeasured: v === "woods" ? undefined : v } : { forest: v });
   return (
-    <div className="mt-3" data-testid="forest-options">
-      <Field label="Where to paint the woods">
-        <Segmented label="Woods" value={value} onChange={pick} options={[{ value: "photo", label: "From the photo" }, { value: "everywhere", label: "Everywhere" }, { value: "woods", label: "Drawn only" }]} />
-      </Field>
-      {(!measured || value !== "woods") && <TreeCover value={s.treeCover ?? 1} />}
+    <div className={bare ? "" : "mt-3"} data-testid="forest-options">
+      {bare
+        ? <div className="mb-3"><Segmented label="Woods" value={value} onChange={pick} options={WOODS_PICKS} /></div>
+        : <Field label="Where to paint the woods"><Segmented label="Woods" value={value} onChange={pick} options={WOODS_PICKS} /></Field>}
+      {(!measured || value !== "woods") && <TreeCover value={s.treeCover ?? 1} onStyle={onStyle} />}
     </div>
   );
 }
@@ -72,9 +79,17 @@ export function WoodsOptions({ s, measured = false }: { s: MapStyle; measured?: 
 /** "a, b and c". */
 const andList = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
+/** The kinds of trees in use, in a few words: "Oak, ash and pine", or how many past three. */
+export const kindsSaid = (s: MapStyle) => {
+  const kinds = kindsOf(s);
+  if (kinds.length > 3) return `${kinds.length} kinds`;
+  const said = andList(kinds.map(k => LOOK_LABEL[k].toLowerCase()));
+  return said.charAt(0).toUpperCase() + said.slice(1);
+};
+
 /** The kinds of trees the woods and measured trees grow (lib/treeMix), at least one; with the kinds
  * the Forest Service counts most in the course's region, to use in one tap. */
-export function TreeKinds({ s }: { s: MapStyle }) {
+export function TreeKinds({ s, onStyle = setStyle, bare = false }: { s: MapStyle; onStyle?: OnStyle; bare?: boolean }) {
   const place = useCourse(c => c.doc.site?.location ?? null);
   const [region, setRegion] = useState<Awaited<ReturnType<typeof regionAt>>>(null);
   useEffect(() => {
@@ -85,7 +100,7 @@ export function TreeKinds({ s }: { s: MapStyle }) {
   }, [place?.lat, place?.lon]);
   const kinds = kindsOf(s);
   // (the usual three: kept unset, so the woods stay exactly as before there was a choice)
-  const save = (next: TreeLookId[]) => setStyle({ treeKinds: sharesOf({ treeKinds: next }) ? TREE_LOOKS.filter(k => next.includes(k)) : undefined });
+  const save = (next: TreeLookId[]) => onStyle({ treeKinds: sharesOf({ treeKinds: next }) ? TREE_LOOKS.filter(k => next.includes(k)) : undefined });
   const toggle = (k: TreeLookId) => {
     const on = kinds.includes(k);
     if (on && kinds.length === 1) return;
@@ -93,20 +108,21 @@ export function TreeKinds({ s }: { s: MapStyle }) {
   };
   const rec = region?.recommended ?? [];
   const using = rec.length === kinds.length && rec.every(k => kinds.includes(k));
+  const chips = (
+    <div className="flex flex-wrap gap-1.5" role={bare ? "group" : undefined} aria-label={bare ? "Kinds of trees" : undefined}>
+      {TREE_LOOKS.map(k => {
+        const on = kinds.includes(k), last = on && kinds.length === 1;
+        return (
+          <button key={k} type="button" className={`${chipCls(on)} ${last ? "cursor-default" : ""}`} aria-pressed={on} title={last ? "At least one kind stays on" : undefined} onClick={() => toggle(k)}>
+            {LOOK_LABEL[k]}
+          </button>
+        );
+      })}
+    </div>
+  );
   return (
-    <div className="mt-3" data-testid="tree-kinds">
-      <Field label="Kinds of trees" help="site-trees">
-        <div className="flex flex-wrap gap-1.5">
-          {TREE_LOOKS.map(k => {
-            const on = kinds.includes(k), last = on && kinds.length === 1;
-            return (
-              <button key={k} type="button" className={`${chipCls(on)} ${last ? "cursor-default" : ""}`} aria-pressed={on} title={last ? "At least one kind stays on" : undefined} onClick={() => toggle(k)}>
-                {LOOK_LABEL[k]}
-              </button>
-            );
-          })}
-        </div>
-      </Field>
+    <div className={bare ? "" : "mt-3"} data-testid="tree-kinds">
+      {bare ? chips : <Field label="Kinds of trees" help="site-trees">{chips}</Field>}
       {region && rec.length > 0 && (
         <div className="mt-1.5 text-xs text-zinc-400 leading-relaxed" data-testid="tree-kinds-region">
           Most common in {region.name}: {andList(rec.map(k => LOOK_LABEL[k].toLowerCase()))}.{" "}

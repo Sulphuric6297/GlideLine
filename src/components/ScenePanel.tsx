@@ -104,7 +104,7 @@ function Look3d({ s }: { s: MapStyle }) {
   const fair = color("fairway", nature.fairway), grass = color("rough", nature.rough), path = color("path", nature.path), water = color("water", nature.water);
   return (
     <div data-testid="view-light">
-      {row("Leaf colors", "leaves-3d", COLOR_PICKS.trees, c => same(l3.trees ?? nature.trees, c.color) && mix.join() === (c.mix ?? []).join(), c => put({ trees: c.color, treeMix: c.mix ?? [] }))}
+      {row("Tree colors", "leaves-3d", COLOR_PICKS.trees, c => same(l3.trees ?? nature.trees, c.color) && mix.join() === (c.mix ?? []).join(), c => put({ trees: c.color, treeMix: c.mix ?? [] }))}
       {row("Fairways", "fairways-3d", COLOR_PICKS.fairway, fair.on, fair.pick)}
       {row("Grass", "grass-3d", COLOR_PICKS.grass, grass.on, grass.pick)}
       {row("Paths", "paths-3d", COLOR_PICKS.paths, path.on, path.pick)}

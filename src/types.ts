@@ -404,6 +404,9 @@ export interface Hole {
   /** The walk on to the next tee: its width (ft) and what it is made of (unset: a worn dirt trail). */
   walkWidth?: number;
   walkSurface?: PathSurface;
+  /** The measured trees on this hole's fairway, tees and basket's circle cut down (true) or left
+   * standing (false), whatever the course does (unset: as the course's `lidar.clearFairways`). */
+  clearTrees?: boolean;
 }
 
 /** One moment of a hand-made flyover: where the camera is and what it looks at. */
@@ -738,7 +741,7 @@ export interface MapStyle {
   /** The 3D view's own look, apart from the printed map's (each unset: as the map has it, or for
    * the colors, the landscape's): where the sun shines from (compass degrees) and how high, how
    * dark the shadows, the leaves' color and autumn mix, the water's color. Set in the View panel's
-   * Course look; the map's Light, Leaf colors and Water never move it, nor it them. */
+   * Course look; the map's Light, Tree colors and Water never move it, nor it them. */
   look3d?: { landscape?: MapStyle["landscape"]; sunFrom?: number; sunHeight?: number; shadows?: number; trees?: string; treeMix?: string[]; fairway?: string; rough?: string; path?: string; paving?: string; water?: string };
   /** How paths and roads stack where they cross, bottom first (unset: dirt, gravel and wood
    * chips, paved walkways, roads and parking): on the painted map and in 3D. */
@@ -852,7 +855,8 @@ export interface CourseDoc {
   gridSize: number;
   /** The site's trees measured from the air (LiDAR): `removed` ones (by index) are taken out
    * wherever they stand. With `clearFairways: true`, those on fairways, tees and baskets' circles
-   * are cut down too unless `kept`; unset, they stand (cut by hand, or a hole's Clear them). */
+   * are cut down too unless `kept`; unset, they stand. A hole's own `clearTrees` says so for that
+   * hole alone (lib/lidar's playClearing). */
   /** `growYears`: the measured trees grown that many years (the survey is older than today);
    * `saplings: true`: young trees grown in the gaps and edges since, too (unset: none). */
   /** `bound`: measured trees that belong to woods. They stand only while a woods area covers them:

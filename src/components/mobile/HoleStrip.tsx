@@ -9,6 +9,7 @@ import { Brush, Navigation, Plus, RotateCw, Scissors, Shuffle, Video } from "luc
 import { editFlyover } from "../FlyoverSettings";
 import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, stoneShown, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint, ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER } from "../../constants";
 import { bendOwner, holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
+import { holeClears } from "../../lib/lidar";
 import { holeStats } from "../../lib/holeStats";
 import { MARKED_FIELDS, fieldKindOf, isBallField } from "../../lib/fields";
 import { structureHeight, structureWidth } from "../../lib/structures";
@@ -154,9 +155,9 @@ export function useHoleSettings(hole: Hole): BarSetting[] {
       : <p className="text-[13.5px] text-zinc-400 px-3 py-3">Needs a tee and a basket first.</p> },
     { id: "foliage", name: "Foliage", value: hole.foliage === "light" ? "Light" : hole.foliage === "heavy" ? "Heavy" : "Auto", control: <Segmented label="Foliage" value={hole.foliage ?? "auto"} onChange={v => set({ foliage: v === "auto" ? undefined : (v as "light" | "heavy") })} options={[{ value: "auto", label: `Auto · ${s.foliage}` }, { value: "light", label: "Light" }, { value: "heavy", label: "Heavy" }]} /> }
   );
-  // (the measured trees it cut down: the way to bring them back)
-  if (s.complete && (holeTrees.cut.length || holeTrees.kept.length || holeTrees.standing.length))
-    out.push({ id: "trees", name: "Trees", value: holeTrees.cut.length ? `${holeTrees.cut.length} cut` : holeTrees.standing.length ? `${holeTrees.standing.length} in the way` : `${holeTrees.kept.length} kept`, wide: true, control: <div className="p-1.5"><HoleTrees hole={hole} line={s.line} /></div> });
+  // (the measured trees on its fairway: its own Clear trees switch)
+  if (s.complete && doc.lidar)
+    out.push({ id: "trees", name: "Trees", value: holeClears(doc, hole) ? "Cleared" : holeTrees.cut.length ? `${holeTrees.cut.length} cut` : holeTrees.standing.length ? `${holeTrees.standing.length} standing` : "Standing", wide: true, control: <div className="p-1.5 [&>div]:mt-0"><HoleTrees hole={hole} line={s.line} /></div> });
   out.push(
     { id: "name", name: "Name", value: hole.name || "None", wide: true, control: <div className="p-1.5"><TextInput label="Hole name" value={hole.name ?? ""} placeholder="Name (optional)" onChange={v => set({ name: v || undefined }, false)} onDone={commit} /></div> },
     { id: "notes", name: "Notes", value: hole.notes ? "Written" : "None", wide: true, control: <div className="p-1.5"><TextInput area label="Hole notes" value={hole.notes ?? ""} placeholder="Notes and hole rules" onChange={v => set({ notes: v || undefined }, false)} onDone={commit} /></div> },

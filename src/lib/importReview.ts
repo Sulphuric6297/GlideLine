@@ -88,7 +88,7 @@ export const kindCounts = (site: ImportedSite, key: SourceKey) => {
   return [...n].sort((a, b) => b[1] - a[1]);
 };
 /** The finer choices: kinds switched off (as "source:Kind"), and the measured trees' own settings. */
-export type ReviewOpts = { offKinds?: string[]; lidar?: { minHeight?: number; crownSize?: number } };
+export type ReviewOpts = { offKinds?: string[]; lidar?: { minHeight?: number; crownSize?: number; growYears?: number; saplings?: boolean; clearFairways?: boolean } };
 
 /** Each source's count in what was found (the measured trees by the survey's own list). */
 export const sourceCounts = (site: ImportedSite) => {
@@ -139,8 +139,13 @@ export const reviewedSite = (site: ImportedSite, on: Partial<Record<SourceKey, b
     const { fromPhoto, ...rest } = lidar;
     lidar = { ...rest, trees: lidar.trees.slice(0, lidar.trees.length - fromPhoto) };
   }
-  // (the measured trees' own settings: the short ones left out, the crowns' size)
-  if (lidar && opts.lidar) lidar = { ...lidar, minHeight: opts.lidar.minHeight || undefined, crownSize: opts.lidar.crownSize && Math.abs(opts.lidar.crownSize - 1) > 0.001 ? opts.lidar.crownSize : undefined };
+  // (the measured trees' own settings, as Site has them: the short ones left out, the crowns'
+  // size, the years grown since the survey and the saplings with them, the fairways cleared)
+  if (lidar && opts.lidar) {
+    const t = opts.lidar;
+    lidar = { ...lidar, minHeight: t.minHeight || undefined, crownSize: t.crownSize && Math.abs(t.crownSize - 1) > 0.001 ? t.crownSize : undefined,
+      growYears: t.growYears || undefined, saplings: t.growYears && t.saplings ? true : undefined, clearFairways: t.clearFairways ? true : undefined };
+  }
   // The brush, as tuned (and the tuning kept with the course, for the next time it comes in)
   const u = site.underbrush;
   const lv = u && on.underbrush !== false ? brushLevels(u, tune) : null;

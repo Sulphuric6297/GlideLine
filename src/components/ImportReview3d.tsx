@@ -23,6 +23,41 @@ import { pointInPolygon } from "../lib/geom";
 
 export type TreeLook3d = { trees: string; treeMix: string[] };
 export type ReviewGroup = { id: SourceGroup; label: string; total: number; el: ReactNode };
+/** One of Site's tree options, here as a row that opens (a phone: a setting in the bar): what it's
+ * called (and in the bar), what it's set to in a few words, and its controls. */
+export type TreeRow = { id: string; name: string; short: string; value: string; shortValue?: string; el: ReactNode };
+
+/** Rows that open in place, one at a time, in a box of the look-over's own; `first`: a row that's
+ * always open, above them (the tree colors). */
+export function FoldRows({ rows, first }: { rows: TreeRow[]; first?: ReactNode }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  // (opened: brought into view, where the card is taller than the window)
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => box.current?.querySelector(`[data-row="${open}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 260);
+    return () => window.clearTimeout(t);
+  }, [open]);
+  if (!rows.length && !first) return null;
+  return (
+    <div ref={box} className="rounded-[14px] bg-white/[0.045] p-1" data-testid="review-tree-settings">
+      {first && <div className="px-2 py-[5px]">{first}</div>}
+      {rows.map((r, k) => {
+        const on = open === r.id;
+        return (
+          <div key={r.id} data-row={r.id} className={k || first ? "border-t border-white/[0.06]" : ""} data-testid={`review-tree-${r.id}`}>
+            <button type="button" className="w-full flex items-center gap-2 px-2 py-2 rounded-[10px] text-[12.5px] text-zinc-100 text-left hover:bg-white/[0.05]" aria-expanded={on} onClick={() => setOpen(on ? null : r.id)} data-testid={`review-tree-${r.id}-open`}>
+              <span>{r.name}</span>
+              <span className="ml-auto truncate text-zinc-400">{on ? "" : r.value}</span>
+              <span className={`text-zinc-500 transition-transform ${on ? "rotate-90" : ""}`} aria-hidden="true">›</span>
+            </button>
+            {on && <div className="px-2 pb-2 pt-1 dg-appear">{r.el}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 /** The underbrush as found and as tuned (see lib/undergrowth). */
 export type ReviewBrush = { u: Underbrush; on: boolean; tune: BrushTune; onTune: (t: BrushTune) => void; onSwitch: (on: boolean) => void };
 const LEVELS = ["None", "Light", "Medium", "Heavy"], LEVEL_COLOR = ["#71717a", "#fde68a", "#f59e0b", "#b45309"];
@@ -188,13 +223,15 @@ const Switch = ({ on, onClick, label, testid }: { on: boolean; onClick: () => vo
   </button>
 );
 
-export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, look, onLook, groups, photoChoice, brush, brushRow, notes = [], failed = [], onRetry, onBack, onBring, onFlat }: {
+export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, look, onLook, groups, treeRows = [], photoChoice, brush, brushRow, notes = [], failed = [], onRetry, onBack, onBring, onFlat }: {
   phone: boolean; again: boolean;
   /** The site with what's switched on (before anything was left out by hand). */
   site0: ImportedSite;
   left: LeftOut[]; onLeave: (b: LeftOut) => void; onUndo: () => void;
   look: TreeLook3d | null; onLook: (l: TreeLook3d | null) => void;
   groups: ReviewGroup[]; photoChoice: ReactNode;
+  /** Site's tree options (kinds of trees, where the woods are painted, the measured trees' settings). */
+  treeRows?: TreeRow[];
   brush?: ReviewBrush;
   /** The underbrush's own row: its switch, How much and Fine-tune. */
   brushRow?: ReactNode;
@@ -380,7 +417,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
   ];
   const colorsEl = (
     <div className="flex items-center gap-2 text-[12.5px]">
-      <span className="text-zinc-300">Tree colors</span>
+      <span className="text-zinc-100">Tree colors</span>
       <div className={`ml-auto flex items-center gap-[7px] px-1.5 py-1 rounded-full ${turning ? "ring-2 ring-[#a2cf6a]/60 motion-safe:animate-pulse" : ""}`} role="radiogroup" aria-label="Tree colors" data-testid="review-tree-colors">
         {COLOR_PICKS.trees.map(c => (
           <button key={c.id} type="button" role="radio" aria-checked={c.id === lookId} aria-label={c.label} title={c.label} onClick={() => pickLook(c)} data-testid={`review-color-${c.id}`}
@@ -407,6 +444,8 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
         ...leaveSet,
         ...(treesGroup ? [{ id: "trees", name: "Trees", value: treesGroup.total.toLocaleString(), wide: true, control: <div className="max-h-[34dvh] overflow-y-auto">{treesGroup.el}</div>, testid: "review-trees" } as BarSetting] : []),
         { id: "colors", name: "Tree colors", value: lookLabel, testid: "review-tree-colors", control: <div className="flex flex-col" role="radiogroup" aria-label="Tree colors">{COLOR_PICKS.trees.map(c => <PickRow key={c.id} on={c.id === lookId} onClick={() => pickLook(c)} color={DOT[c.id]} label={c.label} testid={`review-color-${c.id}`} />)}</div> },
+        // (Site's tree options: each its own setting, opening out of its button)
+        ...treeRows.map(r => ({ id: r.id, name: r.short, value: r.shortValue ?? r.value, wide: true, control: <div className="px-3 pt-1.5 pb-1 max-h-[34dvh] overflow-y-auto">{r.el}</div>, testid: `review-tree-${r.id}` }) as BarSetting),
         areaSet, ...undoSet
       ] : step.id === "brush" ? [
         ...(brush?.on ? [(pickPatch && patch
@@ -468,10 +507,11 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
       photoChoice,
       tip("Switch it off to see the model alone.")
     ] : step.id === "trees" ? [
+      // (what comes in, and the way to leave some out; then how they look: their colors, and Site's
+      // tree options, each a row that opens)
       treesGroup?.el,
-      <div className={box}>{colorsEl}</div>,
       areaBtn,
-      tip("Click a tree in the view to leave just it out.")
+      <FoldRows first={colorsEl} rows={treeRows} />
     ] : step.id === "brush" && brush ? [
       brushRow && <div className="rounded-[14px] bg-white/[0.045] p-1">{brushRow}</div>,
       brush.on && (
@@ -521,7 +561,7 @@ export function ImportReview3d({ phone, again, site0, left, onLeave, onUndo, loo
           <div key={step.id} className={`flex flex-col gap-2.5 ${dir > 0 ? "dg-step-next" : "dg-step-prev"}`} data-testid={`review-at-${step.id}`}>
             <div>
               <div className="font-bold text-[17px] leading-tight">{step.title}</div>
-              <div className="text-[13px] text-zinc-300 mt-0.5">{step.q}{step.id === "bring" ? " You can still change all of it after, in Design." : ""}</div>
+              <div className="text-[13px] text-zinc-300 mt-0.5">{step.q}{step.id === "bring" ? " You can still change all of it after, in Design." : step.id === "trees" ? " Click one to leave it out." : ""}</div>
               {failedEl}
             </div>
             {body.filter(Boolean).map((b, k) => <div key={k} className="flex flex-col dg-step-row" style={{ animationDelay: `${50 + k * 62}ms` }}>{b}</div>)}

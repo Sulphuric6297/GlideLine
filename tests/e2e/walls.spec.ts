@@ -46,6 +46,10 @@ test("a wall drawn with the Build tool is a line: it stands on the ground over a
   expect((await editorState(page)).tool).toBe("draw-line");
   // (from flat ground, over the mound's top and down the other side)
   await clickPlan(page, mid - 180, mid);
+  await clickPlan(page, mid, mid);
+  // (the outline while it's placed is what will be laid: straight between its points, not curved
+  // through them; the two clicked and the pointer)
+  await expect.poll(() => page.evaluate(() => (window as any).__dgView.draftInfo().points)).toBe(3);
   await clickPlan(page, mid + 180, mid);
   await page.keyboard.press("Enter");
   await page.keyboard.press("Escape");
@@ -53,8 +57,11 @@ test("a wall drawn with the Build tool is a line: it stands on the ground over a
   const w = (await walls(page))[0];
   expect(w.seed).toBeGreaterThan(0);
   expect([w.wallStyle, w.stone, w.width, w.fenceHeight]).toEqual([undefined, undefined, undefined, undefined]);
+  // (straight between its points from the start, however it was drawn: Curved is off until asked for)
+  expect(w.straight).toBe(true);
   await page.evaluate(id => (window as any).__dgActions.select(id), w.id);
   await expect(page.getByTestId("inspector-title")).toHaveText("Wall");
+  await expect(page.getByRole("checkbox", { name: "Curved" })).not.toBeChecked();
   // In 3D: built in stretches, each a solid shape from far off; its foot in the ground and its top
   // the wall's height (3 ft) above it all along, 80 ft up the mound and down again
   await expect.poll(async () => (await wallIn3d(page, w.id)).stretches).toBe(9);
@@ -84,6 +91,8 @@ test("a wall drawn with the Build tool is a line: it stands on the ground over a
   // As a fence: OB, straight between its points, and a stretch taken out (two walls left)
   await page.getByTestId("ob-choice").getByRole("radio", { name: "OB", exact: true }).click();
   await expect.poll(async () => (await walls(page))[0].ob).toBe(true);
+  await page.getByRole("checkbox", { name: "Curved" }).check();
+  await expect.poll(async () => (await walls(page))[0].straight).toBeUndefined();
   await page.getByRole("checkbox", { name: "Curved" }).uncheck();
   await expect.poll(async () => (await walls(page))[0].straight).toBe(true);
   await page.getByTestId("line-cut").click();

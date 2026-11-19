@@ -119,7 +119,7 @@ function PartColors({ p, s }: { p: LookPart; s: MapStyle }) {
   const picks = COLOR_PICKS[p] as { id: string; label: string; color: string; mix?: string[] }[];
   return (
     <>
-      <div className="text-xs text-zinc-400 mt-1 mb-1">{p === "trees" ? "Leaf colors" : "Colors"}</div>
+      <div className="text-xs text-zinc-400 mt-1 mb-1">{p === "trees" ? "Tree colors" : "Colors"}</div>
       <Thumbs label={`${PART_LABEL[p]} colors`} testid={`colors-${p}`} items={picks.map(c => ({
         id: c.id, label: c.label, img: `${base}parts/${p}-color-${c.id}.jpg`,
         on: c.color.toLowerCase() === value.toLowerCase() && (p !== "trees" || (c.mix ?? []).join() === mix),
