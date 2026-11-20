@@ -4,7 +4,7 @@ import { createLazPerf } from "laz-perf";
 import { test, expect, addHole, blankCourse, importSite, course, editorState, screenOf, withLidar, SITE } from "./fixtures";
 import { createEmptyCourse, newHole, normalizeCourse } from "../../src/lib/course";
 import { getGeoBounds } from "../../src/lib/geo/core";
-import { claim, flownOn, gather, gatherer, growthSaid, grownTree, grownTrees, holeClears, leafOnAt, playClearing, roofHeights, saplings, fairwayTrees, findTrees, groundOnGrid, measureSite, readTile, siteBox, standingTrees, surveyYear, tilesFor, tilesOver, depthFor, withoutWires, type LazReader, type TilePoints } from "../../src/lib/lidar";
+import { claim, flownOn, gather, gatherer, growthSaid, surveyWhen, grownTree, grownTrees, holeClears, leafOnAt, playClearing, roofHeights, saplings, fairwayTrees, findTrees, groundOnGrid, measureSite, readTile, siteBox, standingTrees, surveyYear, tilesFor, tilesOver, depthFor, withoutWires, type LazReader, type TilePoints } from "../../src/lib/lidar";
 import { canopyStands } from "../../src/lib/canopy";
 import { summerFills, treesFromSummer } from "../../src/lib/summerTrees";
 import type { CourseItem, LidarTree } from "../../src/types";
@@ -693,14 +693,21 @@ plain("which holes clear their trees: each by its own switch, or the course's; a
 
 plain("Growth since the survey says why it's there: the survey's year, that the trees have grown since, and what the setting did (pure logic)", () => {
   const src = "USGS LiDAR 2017";
+  // (the day it flew, where the survey's points say: the month named, the years from its year)
+  const flown = { source: src, flown: "2017-04-05" };
+  plainExpect(growthSaid(flown, 0, 2026)).toEqual({ text: "These trees were measured from the air in April 2017. They've grown since.", today: 9 });
+  plainExpect(growthSaid(flown, 9, 2026)).toEqual({ text: "Measured from the air in April 2017, then grown 9 years to match today. It's an estimate.", today: 0 });
+  plainExpect([surveyWhen(flown), surveyWhen(flown, true), surveyWhen({ source: src }), surveyWhen({ source: "USGS LiDAR" })]).toEqual(["April 2017", "Apr 2017", "2017", ""]);
+  // (a survey with no year in its name, dated by its points)
+  plainExpect(growthSaid({ source: "USGS LiDAR", flown: "2012-10-05" }, 0, 2026)).toEqual({ text: "These trees were measured from the air in October 2012. They've grown since.", today: 14 });
   plainExpect(growthSaid(src, 0, 2026)).toEqual({ text: "These trees were measured from the air in 2017. They've grown since.", today: 9 });
   plainExpect(growthSaid(src, 9, 2026)).toEqual({ text: "Measured from the air in 2017, then grown 9 years to match today. It's an estimate.", today: 0 });
   plainExpect(growthSaid(src, 4, 2026)).toEqual({ text: "Measured from the air in 2017, then grown 4 years, to 2021. It's an estimate.", today: 9 });
   plainExpect(growthSaid(src, 15, 2026)).toEqual({ text: "Measured from the air in 2017, then grown 15 years, to 2032: 6 years from now. It's an estimate.", today: 9 });
   plainExpect(growthSaid(src, 1, 2026).text).toContain("grown 1 year, to 2018");
-  plainExpect(growthSaid(src, 0, 2017)).toEqual({ text: "These trees were measured from the air this year.", today: 0 });
-  // (a survey with no year in its name: said without one, and no step to today)
-  plainExpect(growthSaid("Aerial survey", 0, 2026)).toEqual({ text: "These trees were measured from the air a while ago. They've grown since.", today: 0 });
+  plainExpect(growthSaid(src, 0, 2017)).toEqual({ text: "These trees were measured from the air this year, in 2017.", today: 0 });
+  // (no date on record at all: said so, with what to do, and no step to today)
+  plainExpect(growthSaid("Aerial survey", 0, 2026)).toEqual({ text: "These trees were measured from the air, but the survey's date isn't on record. They've grown since: set how many years.", today: 0 });
   plainExpect(growthSaid("Aerial survey", 6, 2026)).toEqual({ text: "Grown 6 years since they were measured from the air. It's an estimate.", today: 0 });
 });
 
@@ -713,7 +720,10 @@ test("the import's Trees step has Site's tree settings, and they come in with th
     if (await step.isVisible().catch(() => false)) await step.click();
     await p.getByTestId("review-tree-measured-open").click();
     const why = p.getByTestId("growth-why");
-    await expect(why).toContainText(/These trees were measured from the air in \d{4}\. They've grown since\./);
+    // (when the survey was flown: said beside the measured trees, and in the growth's line)
+    await expect(p.getByTestId("review-survey-when")).toContainText(/LiDAR, flown (\w{3} )?\d{4}/);
+    await expect(why).toContainText(/These trees were measured from the air in (\w+ )?\d{4}\. They've grown since\./);
+    await expect(p.getByTestId("grow-today")).toHaveText(/^Grow to today · \d+ years?$/);
     await p.getByTestId("grow-today").click();
     await expect(why).toContainText(/then grown \d+ years? to match today\. It's an estimate\./);
     await p.getByTestId("review-lidar-clear").getByRole("switch").click();

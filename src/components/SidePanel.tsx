@@ -19,6 +19,7 @@ import { newCourse } from "../state/files";
 import { sourceOf } from "../lib/importReview";
 import { photoDateText } from "../lib/geo/photoSources";
 import { holeLabel } from "../lib/course";
+import { surveyWhen } from "../lib/lidar";
 import { MeasuredTuning, type MeasuredTune } from "./MeasuredTrees";
 import { getView } from "../state/view";
 import { Button, FOCUS, Facts, Field, Fold, HelpLink, Section, Segmented, TextInput } from "./ui";
@@ -130,7 +131,7 @@ function CameIn() {
         {lidarRow && (
           <CameRow testid="lidar-info"
             text={lidar ? many(lidar.trees.length, "measured tree", "measured trees") : site.noLidar ? "No aerial survey covers this spot" : "Couldn't read the aerial survey"}
-            sub={lidar ? lidar.source : undefined} warn={!lidar}>
+            sub={lidar ? (lidar.flown ? `${lidar.source.replace(/ \d{4}( and \d{4})*$/, "")}, flown ${surveyWhen(lidar, true)}` : lidar.source) : undefined} warn={!lidar}>
             {!measuring && placed && <Button small onClick={() => void measureLidar()} testid="measure-lidar">{lidar ? "Measure again" : site.noLidar ? "Check again" : "Try again"}</Button>}
             {!measuring && lidar && <Button small tone="danger" onClick={() => { changeDoc(d => ({ lidar: undefined, items: d.items.filter(i => !(i.type === "tree" && i.importSource === "lidar" && asItCame(i))), site: { ...d.site, noLidar: undefined, lidarFailed: undefined } })); toast("Took out the measured trees and bushes.", "info", true); }} testid="remove-lidar">Remove</Button>}
           </CameRow>
@@ -237,7 +238,7 @@ function MeasuredSettings() {
   return (
     <div className="mt-4" data-testid="lidar-settings">
       <div className="text-[13px] font-semibold text-zinc-200 mb-1.5 flex items-center gap-1.5">Measured trees <HelpLink topic="lidar-settings" label="Measured trees" /></div>
-      <MeasuredTuning trees={lidar.trees} source={lidar.source} units={doc.units} onChange={change} onDone={() => useCourse.getState().commit()}
+      <MeasuredTuning trees={lidar.trees} survey={lidar} units={doc.units} onChange={change} onDone={() => useCourse.getState().commit()}
         value={{ minHeight: lidar.minHeight, crownSize: lidar.crownSize, growYears: lidar.growYears, saplings: lidar.saplings, clearFairways: lidar.clearFairways }}
         notes={<>
           {(doc.cutTrees?.length ?? 0) > 0 && (

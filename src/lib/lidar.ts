@@ -974,17 +974,33 @@ export const grownTrees = (lidar: NonNullable<CourseDoc["lidar"]>) => {
   return out;
 };
 
+/** A survey as the course keeps it: its source ("USGS LiDAR 2017") and, where its points say,
+ * the day it flew over the site. */
+export type SurveyOf = { source: string; flown?: string };
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+/** When a survey was flown: its month and year where the day is known ("March 2017"), its year
+ * where only that is ("2017"), or "" where there's no date on record. `short`: "Mar 2017". */
+export const surveyWhen = (s: SurveyOf, short = false) => {
+  const m = /^(\d{4})-(\d\d)/.exec(s.flown ?? "");
+  if (m) return `${short ? MONTHS[+m[2] - 1].slice(0, 3) : MONTHS[+m[2] - 1]} ${m[1]}`;
+  const y = surveyYear(s.source);
+  return y ? String(y) : "";
+};
+/** The year a survey was flown (0: no date on record). */
+export const surveyFlownYear = (s: SurveyOf) => { const m = /^(\d{4})-/.exec(s.flown ?? ""); return m ? +m[1] : surveyYear(s.source); };
+
 /** Why Growth since the survey is there, said under it: when the trees were measured, that
  * they've grown since, and what the setting has done about it (an estimate). `today`: the years
  * from the survey to now, offered as one step where the trees aren't grown that far (0: none to
- * offer, or no year in the survey's name). */
-export const growthSaid = (source: string, grown: number, now = new Date().getFullYear()): { text: string; today: number } => {
-  const year = surveyYear(source), since = year ? Math.max(0, now - year) : 0;
+ * offer: they're there already, or the survey has no date on record, which `text` then says). */
+export const growthSaid = (survey: SurveyOf | string, grown: number, now = new Date().getFullYear()): { text: string; today: number } => {
+  const s = typeof survey === "string" ? { source: survey } : survey;
+  const year = surveyFlownYear(s), when = surveyWhen(s), since = year ? Math.max(0, now - year) : 0;
   const yrs = (n: number) => `${n} year${n === 1 ? "" : "s"}`;
-  if (!year) return { text: grown ? `Grown ${yrs(grown)} since they were measured from the air. It's an estimate.` : "These trees were measured from the air a while ago. They've grown since.", today: 0 };
-  if (!grown) return { text: since ? `These trees were measured from the air in ${year}. They've grown since.` : `These trees were measured from the air this year.`, today: since };
-  const to = grown === since ? "to match today" : grown < since ? `, to ${year + grown}` : `, to ${year + grown}: ${yrs(grown - since)} from now`;
-  return { text: `Measured from the air in ${year}, then grown ${yrs(grown)}${to.startsWith(",") ? to : ` ${to}`}. It's an estimate.`, today: grown === since ? 0 : since };
+  if (!year) return { text: grown ? `Grown ${yrs(grown)} since they were measured from the air. It's an estimate.` : "These trees were measured from the air, but the survey's date isn't on record. They've grown since: set how many years.", today: 0 };
+  if (!grown) return { text: since ? `These trees were measured from the air in ${when}. They've grown since.` : `These trees were measured from the air this year, in ${when}.`, today: since };
+  const to = grown === since ? " to match today" : grown < since ? `, to ${year + grown}` : `, to ${year + grown}: ${yrs(grown - since)} from now`;
+  return { text: `Measured from the air in ${when}, then grown ${yrs(grown)}${to}. It's an estimate.`, today: grown === since ? 0 : since };
 };
 
 /** Years since a survey (by the year in its name), or 0. */
