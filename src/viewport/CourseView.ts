@@ -155,6 +155,7 @@ const STYLE = `
 .dg-measure.live{background:rgba(28,25,23,.72);color:#fde68a;box-shadow:none}
 .dg-mpt{pointer-events:none;width:12px;height:12px;border-radius:50%;background:#facc15;border:2.5px solid #1c1917;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 .dg-mpt.live{background:#fff;opacity:.85}
+.dg-noselect{user-select:none;-webkit-user-select:none}.dg-noselect input,.dg-noselect textarea,.dg-noselect [contenteditable]{user-select:text;-webkit-user-select:text}
 .dg-h{position:absolute;left:0;top:0;pointer-events:auto;will-change:translate;box-sizing:border-box;touch-action:none}
 .dg-h[data-handle=corner],.dg-h[data-handle=dogleg]{width:14px;height:14px;border-radius:50%;background:#fff;border:2.5px solid #0891b2;cursor:grab;box-shadow:0 1px 3px rgba(0,0,0,.5)}
 .dg-h[data-handle=dogleg]{border-color:#f59e0b}
@@ -193,6 +194,9 @@ const STYLE = `
 const lineMats = new Set<LineMaterial>();
 /** A finger is the main pointer (handles are drawn bigger there). */
 const COARSE = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
+/** How far off the thing it turns a turn handle keeps on screen (px), zoomed out; and how near
+ * the thing's middle a size handle may come before it's left out (px). */
+const HANDLE_OFF_PX = COARSE ? 40 : 30, HANDLE_CLEAR_PX = COARSE ? 26 : 18;
 
 /** How high woods' trees reach, ft (the tallest of three/woods). */
 /** How close to a trunk counts, ft (flyovers ease around trunks). */
@@ -595,6 +599,15 @@ export class CourseView {
       el.addEventListener(type, fn as EventListener, opts);
       this.disposers.push(() => el.removeEventListener(type, fn as EventListener, opts));
     };
+    // Nothing on the map is text to select, or a thing for the browser to drag. (A drag across a
+    // tee's or a basket's badge used to select its number; the next press on that badge then began
+    // the browser's own drag of the selected text, which cancels the pointer a moment in: the tee
+    // moved one step and stopped, as if it wouldn't drag.)
+    container.classList.add("dg-noselect");
+    this.disposers.push(() => container.classList.remove("dg-noselect"));
+    const typing = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.("input, textarea, [contenteditable]");
+    on(container, "dragstart", e => { if (!typing(e.target)) e.preventDefault(); });
+    on(container, "selectstart", e => { if (!typing(e.target)) e.preventDefault(); });
     on(container, "pointerdown", e => this.onPointerDown(e), { capture: true });
     on(container, "wheel", e => this.onWheel(e), { capture: true, passive: false });
     on(container, "pointermove", e => this.onHoverMove(e));
@@ -5292,9 +5305,9 @@ export class CourseView {
         const it = this.item(id);
         if (!it) return null;
         const a = (it.type === "tee" ? teeAim(this.doc!.course, it) : it.rotation) * DEG;
-        // (On a touch screen, where handles are bigger, never on top of the thing itself when
-        // zoomed out: a little way off on screen)
-        const r = COARSE ? Math.max(reach, 40 * this.upp(new THREE.Vector3(it.x, this.h(it.x, it.y), it.y))) : reach;
+        // (never on top of the thing itself when zoomed out: a little way off on screen, more
+        // with a finger, whose handles are bigger. On the thing, a press meant to move it turned it.)
+        const r = Math.max(reach, HANDLE_OFF_PX * this.upp(new THREE.Vector3(it.x, this.h(it.x, it.y), it.y)));
         const x = it.x + Math.cos(a) * r, y = it.y + Math.sin(a) * r;
         return new THREE.Vector3(x, this.h(x, y) + 0.3, y);
       }, e => this.planeDrag(e, id, (p, it, ev) => {
@@ -5374,7 +5387,7 @@ export class CourseView {
       const r = rock();
       if (!r) return null;
       const reach = Math.max(r.length, r.width) / 2 + 4;
-      const d = COARSE ? Math.max(reach, 40 * this.upp(new THREE.Vector3(r.x, this.h(r.x, r.y), r.y))) : reach;
+      const d = Math.max(reach, HANDLE_OFF_PX * this.upp(new THREE.Vector3(r.x, this.h(r.x, r.y), r.y)));
       return at(toWorld(r, 0, -d));
     }, e => this.planeDrag(e, id, (p, it, ev) => {
       // (the handle stands off its "north" side: its turn is the pointer's bearing less a quarter)
@@ -6344,9 +6357,18 @@ export class CourseView {
     for (const m of this.measureLabels) place(m.el, m.at, m.el.classList.contains("dg-mpt") ? 0 : -14);
     this.placeMe(place);
     if (this.draftLabel && this.draftAt) place(this.draftLabel, this.draftAt, -22);
+    // (a size handle that would sit on the middle of the thing it sizes, zoomed out, isn't shown:
+    // a press there is meant for the thing itself, to move it. A tee's pad handles lay on the tee,
+    // and dragging the tee from there made its pad wider. Its size is in its panel all the same.)
+    const picked = this.item(this.selectedId);
+    const middle = picked && picked.type !== "area" && picked.type !== "line" && picked.type !== "structure" ? this.project(new THREE.Vector3(picked.x, this.h(picked.x, picked.y), picked.y)) : null;
     for (const h of this.handles) {
       let w: THREE.Vector3 | null = null;
       try { w = h.visible && !h.visible() ? null : h.world(); } catch { w = null; }
+      if (w && middle && h.kind === "radius") {
+        const s = this.project(w);
+        if (s && Math.hypot(s.x - middle.x, s.y - middle.y) < HANDLE_CLEAR_PX) w = null;
+      }
       if (!w) {
         h.el.style.display = "none";
         continue;

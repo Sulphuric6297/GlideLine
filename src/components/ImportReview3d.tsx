@@ -46,7 +46,7 @@ export function FoldRows({ rows, first }: { rows: TreeRow[]; first?: ReactNode }
         const on = open === r.id;
         return (
           <div key={r.id} data-row={r.id} className={k || first ? "border-t border-white/[0.06]" : ""} data-testid={`review-tree-${r.id}`}>
-            <button type="button" className="w-full flex items-center gap-2 px-2 py-2 rounded-[10px] text-[12.5px] text-zinc-100 text-left hover:bg-white/[0.05]" aria-expanded={on} onClick={() => setOpen(on ? null : r.id)} data-testid={`review-tree-${r.id}-open`}>
+            <button type="button" className="w-full flex items-center gap-2 px-2 py-[6px] touch:py-2 rounded-[10px] text-[12.5px] text-zinc-100 text-left hover:bg-white/[0.05]" aria-expanded={on} onClick={() => setOpen(on ? null : r.id)} data-testid={`review-tree-${r.id}-open`}>
               <span>{r.name}</span>
               <span className="ml-auto truncate text-zinc-400">{on ? "" : r.value}</span>
               <span className={`text-zinc-500 transition-transform ${on ? "rotate-90" : ""}`} aria-hidden="true">›</span>

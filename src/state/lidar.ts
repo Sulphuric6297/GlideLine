@@ -40,7 +40,7 @@ export const measureLidar = async () => {
       const summer = photo?.leaf ? treesFromSummer(got.trees, got.measured, photo.leaf, doc.canvas.width, doc.canvas.height, treeFree(items)) : [];
       const trees = summer.length ? [...got.trees, ...summer] : got.trees;
       return {
-        lidar: { source: got.source, trees, ...(summer.length ? { fromPhoto: summer.length } : {}) },
+        lidar: { source: got.source, ...(got.surveys[0]?.flown ? { flown: got.surveys[0].flown } : {}), trees, ...(summer.length ? { fromPhoto: summer.length } : {}) },
         terrainHeights: g.heights,
         terrainOriginal: undefined,
         items: withMeasuredTrees(items, trees, findBushes(got.measured), p => !treeFree(items)(p)).items,

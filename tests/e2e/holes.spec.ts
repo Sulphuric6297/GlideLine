@@ -1,5 +1,5 @@
 import { test as plainHoles, expect as plainHolesExpect } from "@playwright/test";
-import { test, expect, addHole, blankCourse, clickPlan, course, drag, editorState, handleCenter, screenOf } from "./fixtures";
+import { test, expect, addHole, blankCourse, clickPlan, course, drag, editorState, handleCenter, screenOf, settled } from "./fixtures";
 import { createTee, newHole, teeLines, walkEnds, WALK_OUT_FT } from "../../src/lib/course";
 import { createTeePad, fitTeePad } from "../../src/three/courseModels";
 import * as THREE from "three";
@@ -268,6 +268,59 @@ test("dragging a tee moves it and the hole's length follows", async ({ page }) =
   await expect.poll(async () => Math.round((await course(page)).items.find((i: any) => i.type === "tee").x / 10)).toBe(30);
   // (to the foot, as near as a pixel of the map lands)
   await expect(page.getByTestId("hole-row")).toContainText(/(499|500|501) ft/);
+});
+
+test("a tee and a basket dragged again and again, quickly: each drag takes; nothing on the map is selected as text or dragged by the browser", async ({ page }) => {
+  await blankCourse(page);
+  await addHole(page, { x: 400, y: 700 }, { x: 800, y: 700 });
+  await page.keyboard.press("Escape");
+  const at = async (type: string) => { const i = (await course(page)).items.find((i: any) => i.type === type); return { x: i.x, y: i.y }; };
+  const pad = (await course(page)).items.find((i: any) => i.type === "tee");
+  // (pressed and moved at once, with no pause, as a hand does it; each time from where it now is)
+  const quick = async (testid: string, dx: number, dy: number) => {
+    const box = (await page.getByTestId(testid).first().boundingBox())!;
+    const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    for (let k = 1; k <= 4; k++) await page.mouse.move(from.x + (dx * k) / 4, from.y + (dy * k) / 4);
+    await page.mouse.up();
+  };
+  for (const [testid, type] of [["tee-badge", "tee"], ["basket-badge", "basket"]] as const) {
+    let was = await at(type);
+    for (const [dx, dy] of [[70, 40], [-60, 30], [50, -50]]) {
+      // (once the map has drawn it where it now is: its badge follows a frame or two behind)
+      await settled(page);
+      await page.waitForTimeout(250);
+      // (how far the pointer goes over the ground: the thing goes as far, from where it stood; its
+      // badge sits beside it, so it's the pointer's move that counts, not where the badge is)
+      const box = (await page.getByTestId(testid).first().boundingBox())!;
+      const [g0, g1] = await page.evaluate(([x, y, dx, dy]) => { const v = (window as any).__dgView; return [v.toPlan(x, y), v.toPlan(x + dx, y + dy)]; }, [box.x + box.width / 2, box.y + box.height / 2, dx, dy] as const);
+      const went = Math.hypot(g1.x - g0.x, g1.y - g0.y);
+      expect(went).toBeGreaterThan(5);
+      await quick(testid, dx, dy);
+      // (all the way: as far as the pointer went, not a step of the way there)
+      await expect.poll(async () => { const now = await at(type); return Math.hypot(now.x - was.x, now.y - was.y) / went; }).toBeGreaterThan(0.85);
+      const now = await at(type);
+      expect(Math.hypot(now.x - was.x, now.y - was.y) / went).toBeLessThan(1.15);
+      was = now;
+      // (the badge's number was never selected: that selection is what the browser dragged next time)
+      expect(await page.evaluate(() => String(getSelection()))).toBe("");
+    }
+  }
+  // (dragged from on the tee while it was picked and the map zoomed out: the tee moved, and its pad
+  // and its turn are as they were: no size or turn handle lies on the tee to be caught by the press)
+  const tee = (await course(page)).items.find((i: any) => i.type === "tee");
+  expect([tee.padWidth, tee.padLength, tee.aimFixed]).toEqual([pad.padWidth, pad.padLength, undefined]);
+  await page.evaluate(id => (window as any).__dgActions.select(id), tee.id);
+  await settled(page);
+  const near = await page.evaluate(id => {
+    const i = (window as any).__dgCourse().items.find((i: any) => i.id === id), c = (window as any).__dgView.toClient(i.x, i.y, 0);
+    return [...document.querySelectorAll<HTMLElement>('.dg-h[data-handle="radius"], .dg-h[data-handle="rotate"]')].filter(e => e.style.display !== "none").map(e => { const r = e.getBoundingClientRect(); return Math.hypot(r.x + r.width / 2 - c.x, r.y + r.height / 2 - c.y); });
+  }, tee.id);
+  for (const d of near) expect(d).toBeGreaterThan(17);
+  // (the browser's own drag never starts on the map)
+  const stopped = await page.evaluate(() => { const e = new DragEvent("dragstart", { bubbles: true, cancelable: true }); document.querySelector("[data-testid=tee-badge]")!.dispatchEvent(e); return e.defaultPrevented; });
+  expect(stopped).toBe(true);
 });
 
 test("bending a hole: Bend left and Bend right curve it, Straighten undoes it", async ({ page }) => {

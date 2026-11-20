@@ -956,7 +956,8 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       baseFt = measured.ground.min;
       reliefFt = measured.ground.max - measured.ground.min;
       elevationSource = measured.lidar.source;
-      lidar = { source: measured.lidar.source, trees: measured.lidar.trees };
+      const flown = measured.lidar.surveys[0]?.flown;
+      lidar = { source: measured.lidar.source, ...(flown ? { flown } : {}), trees: measured.lidar.trees };
       // (said once OpenStreetMap's in: the trees standing, none on a road or a building)
       treesNoteAt = notes.length;
     }

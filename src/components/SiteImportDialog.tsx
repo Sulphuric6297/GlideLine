@@ -24,6 +24,10 @@ import { FoldRows, ImportReview3d, type ReviewGroup, type TreeLook3d, type TreeR
 import { TreeKinds, WOODS_PICKS, WoodsOptions, kindsSaid, woodsPick } from "./DesignPanel";
 import { MeasuredTuning, measuredSaid, type MeasuredTune, type SwitchRow } from "./MeasuredTrees";
 import { kindsOf } from "../lib/treeMix";
+import { surveyWhen, type SurveyOf } from "../lib/lidar";
+
+/** The measured trees' survey beside their name: "LiDAR, flown Mar 2017", or that its date isn't on record. */
+const surveyNote = (s: SurveyOf) => { const when = surveyWhen(s, true); return when ? `LiDAR, flown ${when}` : "LiDAR, date not on record"; };
 import { HelpLink, Slider } from "./ui";
 import { playImportShow, startLiveImport } from "../viewport/importShow";
 import { startImportMusic, stopImportMusic } from "../lib/importSound";
@@ -767,7 +771,8 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
                 <div key={k}>
                   <div className={`flex items-center gap-2 px-2 py-1 rounded-[10px] text-[12.5px] ${on ? "text-zinc-100" : "text-zinc-500"}`}>
                     <span className="w-[11px] h-[11px] rounded-[3px] shrink-0" style={{ background: s.color, opacity: on ? 1 : 0.35 }} />
-                    <span className="truncate">{s.label}{s.who && <span className="text-zinc-400 text-[11.5px]"> {s.who}</span>}</span>
+                    {/* (the measured trees: when their survey was flown, said with them) */}
+                    <span className="truncate">{s.label}{s.who && <span className="text-zinc-400 text-[11.5px]" data-testid={k === "lidarTrees" ? "review-survey-when" : undefined}> {k === "lidarTrees" && review.site.lidar ? surveyNote(review.site.lidar) : s.who}</span>}</span>
                     <span className="ml-auto tabular-nums text-zinc-300">{(counts[k] ?? 0).toLocaleString()}</span>
                     <button type="button" role="switch" aria-checked={on} aria-label={`${g.label}: ${s.label}`} data-testid={`review-${k}`} onClick={() => setOn(k, !on)}
                       className={`relative w-[30px] h-[17px] rounded-full shrink-0 ${on ? "bg-[#a2cf6a]" : "bg-white/[0.14]"}`}>
@@ -810,7 +815,7 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
     { id: "kinds", name: "Kinds of trees", short: "Kinds of trees", value: kindsSaid(styleNow), shortValue: `${kindsOf(styleNow).length} kind${kindsOf(styleNow).length === 1 ? "" : "s"}`, el: <TreeKinds bare s={styleNow} onStyle={onStyle} /> },
     { id: "woods", name: "Where to paint the woods", short: "Woods", value: WOODS_PICKS.find(o => o.value === woodsPick(styleNow, !!measuredNow))?.label ?? "", el: <WoodsOptions bare s={styleNow} measured={!!measuredNow} onStyle={onStyle} /> },
     ...(measuredNow ? [{ id: "measured", name: "Measured trees", short: "Measured trees", value: measuredSaid(lidarTune, units), shortValue: measuredSaid(lidarTune, units) === "As measured" ? "As measured" : "Changed",
-      el: <MeasuredTuning tight trees={measuredNow.trees} source={measuredNow.source} value={lidarTune} units={units} switchRow={cardSwitch} onChange={p => setLidarTune(t => ({ ...t, ...p }))} /> }] : [])
+      el: <MeasuredTuning tight trees={measuredNow.trees} survey={measuredNow} value={lidarTune} units={units} switchRow={cardSwitch} onChange={p => setLidarTune(t => ({ ...t, ...p }))} /> }] : [])
   ];
   const failedNames = ORDER.filter(id => sources[id]?.state === "failed").map(id => ROW_NAMES[id]);
   const reviewNotes = review?.site.notes ?? [];

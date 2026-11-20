@@ -3,7 +3,7 @@
 // how wide the crowns, how many years they're grown since the survey (with why that's there said
 // under it), saplings in the gaps, and whether the holes' fairways are cleared.
 import type { ReactNode } from "react";
-import { growthSaid, saplings } from "../lib/lidar";
+import { growthSaid, saplings, type SurveyOf } from "../lib/lidar";
 import { fmtElev } from "../lib/units";
 import type { LidarTree, Units } from "../types";
 import { Slider, Toggle } from "./ui";
@@ -30,9 +30,9 @@ export const measuredSaid = (t: MeasuredTune, u: Units) => {
 export type SwitchRow = (o: { label: string; checked: boolean; onChange: (v: boolean) => void; testid: string }) => ReactNode;
 const panelSwitch: SwitchRow = o => <div className="mt-2" data-testid={o.testid} key={o.testid}><Toggle label={o.label} checked={o.checked} onChange={o.onChange} /></div>;
 
-export function MeasuredTuning({ trees, source, value, units, onChange, onDone, switchRow = panelSwitch, tight = false, notes, after }: {
-  /** The measured trees (for the counts), and the survey they're from (for its year). */
-  trees: LidarTree[]; source: string;
+export function MeasuredTuning({ trees, survey, value, units, onChange, onDone, switchRow = panelSwitch, tight = false, notes, after }: {
+  /** The measured trees (for the counts), and the survey they're from (for when it was flown). */
+  trees: LidarTree[]; survey: SurveyOf;
   value: MeasuredTune; units: Units;
   /** `done`: false while a slider is still moving. */
   onChange: (patch: MeasuredTune, done: boolean) => void;
@@ -46,7 +46,7 @@ export function MeasuredTuning({ trees, source, value, units, onChange, onDone, 
 }) {
   const m = value.minHeight ?? 0, grown = value.growYears ?? 0;
   const keptN = m ? trees.filter(t => t[2] >= m).length : trees.length;
-  const why = growthSaid(source, grown);
+  const why = growthSaid(survey, grown);
   const row = tight ? "-mb-1" : "mt-2";
   return (
     <>
@@ -54,7 +54,8 @@ export function MeasuredTuning({ trees, source, value, units, onChange, onDone, 
         <Slider label="Leave out trees shorter than" min={0} max={60} step={1} value={m}
           format={v => (v ? height(v, units) : "None")}
           onChange={v => onChange({ minHeight: v || undefined }, false)} onDone={onDone} />
-        <div className={`text-[11px] touch:text-[12.5px] text-zinc-500 ${tight ? "-mt-1.5 mb-2" : ""}`}>{`${keptN.toLocaleString()} of ${trees.length.toLocaleString()} kept`}</div>
+        {/* (how many are left, once some are left out: with none left out, all of them, which needs no saying) */}
+        {m > 0 && <div className={`text-[11px] touch:text-[12.5px] text-zinc-500 ${tight ? "-mt-1.5 mb-1.5" : ""}`} data-testid="lidar-kept">{`${keptN.toLocaleString()} of ${trees.length.toLocaleString()} kept`}</div>}
       </div>
       <div className={row} data-testid="lidar-crown">
         <Slider label="Crown size" min={0.6} max={1.5} step={0.05} value={value.crownSize ?? 1}
@@ -66,10 +67,13 @@ export function MeasuredTuning({ trees, source, value, units, onChange, onDone, 
           format={v => (v ? `${v} year${v === 1 ? "" : "s"}${value.saplings ? ` · ${saplings(trees, v).length.toLocaleString()} new` : ""}` : "As measured")}
           onChange={v => onChange({ growYears: v || undefined }, false)} onDone={onDone} />
         {/* (why it's there: the survey is from a while ago, and this grows the trees since) */}
-        <div className="text-[11px] touch:text-[12.5px] leading-snug text-zinc-400 -mt-1.5 mb-2" data-testid="growth-why">
-          {why.text}
-          {why.today > 0 && <> <button type="button" className="text-orange-300 hover:text-orange-200 font-semibold" onClick={() => onChange({ growYears: why.today }, true)} data-testid="grow-today">Grow them to today ({why.today} year{why.today === 1 ? "" : "s"})</button></>}
-        </div>
+        <div className={`text-[11px] touch:text-[12.5px] leading-snug text-zinc-400 -mt-1.5 ${tight ? "mb-1.5" : "mb-2"}`} data-testid="growth-why">{why.text}</div>
+        {/* (one press to the years since the survey: a button, where the survey's date is known) */}
+        {why.today > 0 && (
+          <button type="button" className={`${tight ? "mb-1" : "mb-2"} h-[28px] touch:h-9 px-3 rounded-full bg-white/[0.1] hover:bg-white/[0.16] active:scale-[0.98] transition text-[12.5px] touch:text-[14px] font-semibold text-zinc-100`} onClick={() => onChange({ growYears: why.today }, true)} data-testid="grow-today">
+            Grow to today · {why.today} year{why.today === 1 ? "" : "s"}
+          </button>
+        )}
       </div>
       {grown > 0 && switchRow({ label: "Saplings in the gaps", checked: value.saplings === true, onChange: v => onChange({ saplings: v }, true), testid: "lidar-saplings" })}
       {notes}

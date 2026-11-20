@@ -866,7 +866,9 @@ export interface CourseDoc {
   /** `fromPhoto`: how many of the trees, the last ones, came from the summer photo where a survey
    * flown bare couldn't pick them out (lib/summerTrees). `crownSize`: every crown this much as wide,
    * in 3D and on the map (unset: as measured). */
-  lidar?: { source: string; trees: LidarTree[]; fromPhoto?: number; crownSize?: number; kept?: number[]; removed?: number[]; minHeight?: number; growYears?: number; saplings?: true; clearFairways?: true; bound?: number[] };
+  /** `flown`: the day the newest survey flew over the site ("2017-03-14"), where its points say
+   * (unset: only the year in `source`, or no date on record). */
+  lidar?: { source: string; flown?: string; trees: LidarTree[]; fromPhoto?: number; crownSize?: number; kept?: number[]; removed?: number[]; minHeight?: number; growYears?: number; saplings?: true; clearFairways?: true; bound?: number[] };
   /** Where trees were cut down by hand that have no list of their own: saplings grown since the
    * survey and the trees the app plants in woods and patches. None stands within 4 ft of one. */
   cutTrees?: P[];

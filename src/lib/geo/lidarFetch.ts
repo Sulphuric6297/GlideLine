@@ -241,7 +241,9 @@ export const fetchLidar = async (ref: GeoRef, onProgress: (fraction: number) => 
       // (a survey that gave the site nothing is not one of its sources)
       if (!got) continue;
       const flown = flownOn(g.times[k - 1] ?? []);
-      used.push({ name, year: yearOf(row), flown: flown?.toISOString().slice(0, 10) ?? null, leafOn: leafOnAt(flown) ?? (row[6] === undefined || row[6] === null ? null : row[6] === 1) });
+      // (a survey with no year in the list or its name, a statewide one say: the year its points
+      // say it flew here)
+      used.push({ name, year: yearOf(row) || (flown ? flown.getUTCFullYear() : 0), flown: flown?.toISOString().slice(0, 10) ?? null, leafOn: leafOnAt(flown) ?? (row[6] === undefined || row[6] === null ? null : row[6] === 1) });
       if (!c.box || c.open < 0.01) break;
       open = c.box;
     }
