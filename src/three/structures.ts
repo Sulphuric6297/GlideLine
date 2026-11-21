@@ -7,8 +7,7 @@
 import * as THREE from "three";
 import type { AddOn, FenceStyle, P, StructureItem } from "../types";
 import { pointInPolygon } from "../lib/geom";
-import { clamp } from "../constants";
-import { buildingColors, buildingFrame, outlineOf, roofingOf, sidingOf, stepsUp, windowStyleOf, type Frame } from "../lib/buildingParts";
+import { addOnLevels, buildingColors, buildingFrame, outlineOf, roofingOf, sidingOf, stepsUp, windowStyleOf, type Frame } from "../lib/buildingParts";
 import { STRUCTURE_INK } from "../lib/symbols";
 import { glass, onLookLoaded, paint as paintOf, ROOF_SHADE, ROOFING_SCAN, room, SIDING_SCAN, surface } from "./buildingLook";
 import {
@@ -492,10 +491,12 @@ const soffit = (roof: Roof, walls: P[], eave: number, overhang: number, m: Meshe
 
 
 /**
- * A porch, carport, deck or patio against a building's wall: a porch's floor at the house's floor
- * on a stone skirt, posts and a shed roof tied in under the eaves; a carport's slab on the ground,
- * posts and a metal roof; a deck's boards at the floor on posts, no roof; a patio's slab on the
- * ground. Raised ones get a railing and steps down at the front's middle.
+ * A porch, carport, deck or patio against a building's wall (as the Security Camera Planner draws
+ * them): its floor (boards on a skirt for a porch, on posts for a deck; a slab for a carport or a
+ * patio), steps down where it's raised, a railing round a raised one (open at its steps and where
+ * it's been taken off), and its roof: its own, a shed roof from under the eaves with a light ceiling
+ * under it, a beam and posts along its front; or the house's (set into the house), posts and a beam
+ * along the wall's line; or none.
  */
 const addOnModel = (a: AddOn, F: Frame, g: Ground, at: (k: string) => Mesher) => {
   const w = F.walls[a.wall];
@@ -505,78 +506,113 @@ const addOnModel = (a: AddOn, F: Frame, g: Ground, at: (k: string) => Mesher) =>
   const P = (s: number, d: number, y: number) => new V3(mid.x + w.dir.x * s + w.out.x * d, y, mid.y + w.dir.y * s + w.out.y * d);
   const box = (m: Mesher, s0: number, s1: number, y0: number, y1: number, d0: number, d1: number) =>
     m.box(P((s0 + s1) / 2, (d0 + d1) / 2, (y0 + y1) / 2), dir, UP, out, Math.abs(s1 - s0) / 2, Math.max(0.01, Math.abs(y1 - y0) / 2), Math.abs(d1 - d0) / 2);
-  const half = a.width / 2, D = a.depth;
-  const gAt = (s: number, d: number) => { const p = P(s, d, 0); return g(p.x, p.z); };
-  const spots = [[-half, 0], [half, 0], [-half, D], [half, D], [0, D / 2], [0, D]];
-  const gs = spots.map(([s, d]) => gAt(s, d));
-  const gMin = Math.min(...gs), gMax = Math.max(...gs);
-  const onGround = a.kind === "patio" || a.kind === "carport";
-  const top = onGround ? gMax + 0.3 : F.floor;
-  const raised = top - gMin;
-  // The floor: boards (a deck, a porch), or a slab
-  if (onGround) box(at("pslab"), -half, half, gMin - 0.4, top, 0, D);
-  else {
-    box(at("pdeck"), -half, half, top - 0.2, top, 0, D);
-    if (a.kind === "porch") box(at("found"), -half + 0.15, half - 0.15, gMin - 0.5, top - 0.2, 0.05, D - 0.15);
-    else {
-      // (a deck: its rim joist, and posts down to the ground every 6 ft or so)
-      box(at("ptimber"), -half, half, top - 0.9, top - 0.2, D - 0.2, D);
-      for (const s of [-half, half]) box(at("ptimber"), s - 0.1 * Math.sign(s) - 0.1, s - 0.1 * Math.sign(s) + 0.1, top - 0.9, top - 0.2, 0, D);
+  // (a box along a side of it, from a to b, `t` thick, y0 to y1)
+  const bar = (m: Mesher, p: [number, number], q: [number, number], t: number, y0: number, y1: number) => {
+    const A = P(p[0], p[1], 0), B = P(q[0], q[1], 0), len = Math.hypot(B.x - A.x, B.z - A.z);
+    if (len < 1e-3) return;
+    const u = new V3(B.x - A.x, 0, B.z - A.z).normalize(), v = new V3(-u.z, 0, u.x);
+    m.box(new V3((A.x + B.x) / 2, (y0 + y1) / 2, (A.z + B.z) / 2), u, UP, v, len / 2 + t / 2, Math.max(0.01, (y1 - y0) / 2), t / 2);
+  };
+  const L = addOnLevels(F, a, g);
+  const { half, D, d0, d1, gAt, gMin, level, top, setIn } = L;
+  // The floor: boards (a porch's on a skirt to the ground, a deck's on posts), or a slab
+  if (!level) {
+    // (a slab following the ground, a few inches over it, its open edges down into it)
+    const slab = at("pslab"), ns = Math.max(1, Math.ceil(a.width / 4)), nd = Math.max(1, Math.ceil(D / 4));
+    const v = (i: number, j: number) => { const sx = -half + (a.width * i) / ns, d = d0 + (D * j) / nd; return P(sx, d, gAt(sx, d) + 0.3); };
+    for (let i = 0; i < ns; i++) for (let j = 0; j < nd; j++) {
+      const p00 = v(i, j), p10 = v(i + 1, j), p11 = v(i + 1, j + 1), p01 = v(i, j + 1);
+      slab.quad(p00, p10, p11, p01, [[p00.x, p00.z], [p10.x, p10.z], [p11.x, p11.z], [p01.x, p01.z]], UP);
+    }
+    const edge = (pts: V[]) => { for (let k = 0; k + 1 < pts.length; k++) { const p = pts[k], q = pts[k + 1]; const n = new V3(q.z - p.z, 0, p.x - q.x).normalize(); slab.quad(p, q, q.clone().setY(q.y - 0.8), p.clone().setY(p.y - 0.8), [[0, 0], [1, 0], [1, 1], [0, 1]], n.dot(P(0, (d0 + d1) / 2, 0).sub(p)) > 0 ? n.negate() : n); } };
+    edge(Array.from({ length: ns + 1 }, (_, i) => v(i, setIn ? nd : nd)));
+    if (!setIn) {
+      edge(Array.from({ length: nd + 1 }, (_, j) => v(0, j)));
+      edge(Array.from({ length: nd + 1 }, (_, j) => v(ns, j)));
+    }
+  } else {
+    box(at("pdeck"), -half, half, top - 0.2, top, d0, d1);
+    if (a.kind === "deck") {
+      // (its rim joist, and posts down to the ground every 6 ft or so)
+      box(at("ptimber"), -half, half, top - 0.9, top - 0.2, d1 - 0.2, d1);
+      for (const sx of [-half, half]) box(at("ptimber"), sx - 0.1 * Math.sign(sx) - 0.1, sx - 0.1 * Math.sign(sx) + 0.1, top - 0.9, top - 0.2, d0, d1);
       const n = Math.max(1, Math.ceil(a.width / 6));
-      for (let k = 0; k <= n; k++) for (const d of [D - 0.4, D / 2]) {
-        const s = -half + 0.3 + ((a.width - 0.6) * k) / n;
-        box(at("ptimber"), s - 0.25, s + 0.25, gAt(s, d) - 0.5, top - 0.9, d - 0.25, d + 0.25);
+      for (let k = 0; k <= n; k++) for (const d of [d1 - 0.4, (d0 + d1) / 2]) {
+        const sx = -half + 0.3 + ((a.width - 0.6) * k) / n;
+        box(at("ptimber"), sx - 0.25, sx + 0.25, gAt(sx, d) - 0.5, top - 0.9, d - 0.25, d + 0.25);
+      }
+    } else box(at("pskirt"), -half + 0.1, half - 0.1, gMin - 0.5, top - 0.2, d0 + 0.05, d1 - 0.1);
+  }
+  // Steps down, each as wide as a door's and a half, risers of about 7 in
+  for (const e of L.steps) {
+    const n = stepsUp(e.rise);
+    if (!n) continue;
+    const riser = e.rise / n, sw = L.STEP / 2 - 0.2, [ox, oy] = e.sd.out, [ux, uy] = [-oy, ox];
+    const ground = gAt(e.sx + ox, e.d + oy);
+    for (let k = 1; k <= n; k++) {
+      const c0: [number, number] = [e.sx + ux * -sw, e.d + uy * -sw], c1: [number, number] = [e.sx + ux * sw, e.d + uy * sw];
+      // (tread k: from the side out to k treads, as high as the floor less k risers)
+      const o0 = (k - 1) * 0.95, o1 = k * 0.95;
+      const q = (c: [number, number], o: number): [number, number] => [c[0] + ox * o, c[1] + oy * o];
+      const A = q(c0, o0), B = q(c1, o0), C = q(c1, o1), E = q(c0, o1);
+      const s0 = Math.min(A[0], B[0], C[0], E[0]), s1 = Math.max(A[0], B[0], C[0], E[0]), e0 = Math.min(A[1], B[1], C[1], E[1]), e1 = Math.max(A[1], B[1], C[1], E[1]);
+      box(at("steps"), s0, s1, ground - 0.4, top - k * riser + 0.02, e0, e1);
+    }
+  }
+  // A railing round a raised one: top and bottom rails, balusters between, open at its steps
+  if (L.rail) {
+    const rail = at("rail"), y0 = top, y1 = top + 3, noRail = new Set(a.noRail ?? []), inset = 0.2;
+    for (const sd of L.sides) {
+      if (noRail.has(sd.i)) continue;
+      const gaps = L.steps.filter(e => e.sd.i === sd.i).map(e => e.at * sd.len).sort((x, y) => x - y);
+      const runs: [number, number][] = [];
+      let from = 0;
+      for (const gp of gaps) { if (gp - L.STEP / 2 > from + 0.3) runs.push([from, gp - L.STEP / 2]); from = gp + L.STEP / 2; }
+      if (sd.len > from + 0.3) runs.push([from, sd.len]);
+      for (const [t0, t1] of runs) {
+        // (just inside its edge)
+        const p0 = L.sideAt(sd, t0 / sd.len), p1 = L.sideAt(sd, t1 / sd.len);
+        const pin = (q: [number, number]): [number, number] => [q[0] - sd.out[0] * inset, q[1] - sd.out[1] * inset];
+        const A = pin(p0), B = pin(p1), len = t1 - t0, n = Math.max(1, Math.round(len / 0.45));
+        bar(rail, A, B, 0.3, y1 - 0.2, y1);
+        bar(rail, A, B, 0.16, y0 + 0.34, y0 + 0.46);
+        for (let k = 0; k <= n; k++) { const q: [number, number] = [A[0] + ((B[0] - A[0]) * k) / n, A[1] + ((B[1] - A[1]) * k) / n]; box(rail, q[0] - 0.05, q[0] + 0.05, y0 + 0.46, y1 - 0.2, q[1] - 0.05, q[1] + 0.05); }
       }
     }
   }
-  // Steps down at the front's middle, where it stands over the ground (as wide as a door's)
-  const steps = !onGround ? stepsUp(top - gAt(0, D + 1)) : 0;
-  const sw = Math.min(half - 0.3, 2.4);
-  if (steps) {
-    const riser = (top - gAt(0, D + 1)) / steps;
-    for (let k = 1; k <= steps; k++) box(at("steps"), -sw, sw, gAt(0, D + 1) - 0.4, top - k * riser + 0.02, D, D + k * 0.95);
-  }
-  // A railing round a raised one (a porch over 2 ft, a deck over 1½), open at the steps
-  if ((a.kind === "deck" && raised > 1.5) || (a.kind === "porch" && raised > 2)) {
-    const rail = at("rail"), y0 = top, y1 = top + 3;
-    const run = (pts: [number, number][]) => {
-      for (let i = 0; i + 1 < pts.length; i++) {
-        const [s0, d0] = pts[i], [s1, d1] = pts[i + 1];
-        const L = Math.hypot(s1 - s0, d1 - d0), n = Math.max(1, Math.round(L / 0.45));
-        // (top rail and bottom rail, and balusters between)
-        const e = P(0, 0, 0), u = P(s1 - s0, d1 - d0, 0).sub(e).normalize(), v = new V3(-u.z, 0, u.x);
-        const c = (t: number, y: number) => P(s0 + (s1 - s0) * t, d0 + (d1 - d0) * t, y);
-        rail.box(c(0.5, y1 - 0.1), u, UP, v, L / 2 + 0.1, 0.1, 0.15);
-        rail.box(c(0.5, y0 + 0.4), u, UP, v, L / 2, 0.06, 0.08);
-        for (let k = 0; k <= n; k++) rail.box(c(k / n, (y0 + y1) / 2), u, UP, v, 0.05, (y1 - y0) / 2 - 0.1, 0.05);
-      }
-    };
-    const inset = 0.2;
-    run([[-half + inset, 0.2], [-half + inset, D - inset], [steps ? -sw - 0.2 : half - inset, D - inset]]);
-    if (steps) run([[sw + 0.2, D - inset], [half - inset, D - inset], [half - inset, 0.2]]);
-    else run([[half - inset, D - inset], [half - inset, 0.2]]);
-  }
-  // A roof (a porch's, a carport's): a shed roof from under the eaves, out past the posts
-  if (a.kind === "porch" || a.kind === "carport") {
-    const yWall = Math.min(F.eave - 0.4, top + (a.kind === "carport" ? 10 : 9.5));
-    // (3 in 12 where there's height for it, gentler over a deep one, down to 1 in 12; at least 7 ft
-    // clear under its edge)
-    const over = 1, pitch = clamp((yWall - top - 7.5) / (D + over), 1 / 12, 0.25), yOut = yWall - (D + over) * pitch;
-    if (yOut < top + 6.5) return;
-    const roof = at(a.kind === "carport" ? "proofm" : "proof");
-    const p0 = P(-half - over, 0, yWall + 0.15), p1 = P(half + over, 0, yWall + 0.15), p2 = P(half + over, D + over, yOut), p3 = P(-half - over, D + over, yOut);
+  // (posts every 10 ft or so along its front, at `d`, from its floor or the ground up to `y`,
+  // clear of its steps; a beam on them)
+  const posts = (d: number, y: (sx: number) => number) => {
+    const trim = at("post"), n = Math.max(1, Math.ceil(a.width / 10));
+    for (let k = 0; k <= n; k++) {
+      const sx = -half + 0.35 + ((a.width - 0.7) * k) / n;
+      if (L.steps.some(e => e.sd.i === 1 && Math.abs(e.sx - sx) < L.STEP / 2 + 0.2)) continue;
+      box(trim, sx - 0.25, sx + 0.25, level ? top : gAt(sx, d), y(sx), d - 0.25, d + 0.25);
+    }
+  };
+  if (L.roof) {
+    // Its own roof: from under the eaves, out past the posts (3 in 12 where there's height for it,
+    // gentler over a deep one; 7 ft clear under its edge), a light ceiling under it, a fascia, a
+    // beam on the posts
+    const { yWall, over, pitch, yOut } = L;
+    const roof = at("proof"), ceil = at("pceil"), t = 0.35;
+    const p0 = P(-half - over, 0, yWall + t), p1 = P(half + over, 0, yWall + t), p2 = P(half + over, D + over, yOut + t), p3 = P(-half - over, D + over, yOut + t);
     const slope = Math.hypot(D + over, (D + over) * pitch);
     roof.quad(p0, p1, p2, p3, [[0, 0], [a.width + 2 * over, 0], [a.width + 2 * over, slope], [0, slope]], UP);
-    // (its fascia, a beam over the posts, and the posts every 10 ft or so)
+    const b0 = P(-half - over, 0, yWall), b1 = P(half + over, 0, yWall), b2 = P(half + over, D + over, yOut), b3 = P(-half - over, D + over, yOut);
+    ceil.quad(b1, b0, b3, b2, [[0, 0], [1, 0], [1, 1], [0, 1]], UP.clone().negate());
     const trim = at("post"), yAt = (d: number) => yWall - d * pitch;
-    trim.quad(p3, p2, p2.clone().setY(yOut - 0.5), p3.clone().setY(yOut - 0.5), [[0, 0], [1, 0], [1, 1], [0, 1]], out);
-    box(trim, -half, half, yAt(D - 0.4) - 0.9, yAt(D - 0.4) - 0.15, D - 0.65, D - 0.15);
-    const n = Math.max(1, Math.ceil(a.width / 10));
-    for (let k = 0; k <= n; k++) {
-      const s = -half + 0.35 + ((a.width - 0.7) * k) / n;
-      if (steps && Math.abs(s) < sw + 0.3) continue;
-      box(trim, s - 0.25, s + 0.25, top, yAt(D - 0.4) - 0.8, D - 0.65, D - 0.15);
-    }
+    trim.quad(p3, p2, b2, b3, [[0, 0], [1, 0], [1, 1], [0, 1]], out);
+    trim.quad(p0, p3, b3, b0, [[0, 0], [1, 0], [1, 1], [0, 1]], dir.clone().negate());
+    trim.quad(p2, p1, b1, b2, [[0, 0], [1, 0], [1, 1], [0, 1]], dir);
+    box(trim, -half, half, yAt(D - 0.4) - 0.9, yAt(D - 0.4) - 0.02, D - 0.65, D - 0.15);
+    posts(D - 0.4, () => yAt(D - 0.4) - 0.8);
+  } else if (setIn) {
+    // Set into the house: posts and a beam along the wall's line, a ceiling over it under the beam
+    const trim = at("post"), y = F.head;
+    box(trim, -half, half, y, F.eave - 0.05, -0.55, 0.05);
+    at("pceil").quad(P(half, -D, y), P(-half, -D, y), P(-half, 0, y), P(half, 0, y), [[0, 0], [1, 0], [1, 1], [0, 1]], UP.clone().negate());
+    posts(-0.3, () => y);
   }
 };
 
@@ -588,8 +624,12 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
   const at = (k: string) => (parts[k] ??= new Mesher());
   const trim = at("trim"), frames = at("frames"), found = at("found");
   const style = windowStyleOf(st), siding = sidingOf(st);
-  // A foundation, a little proud of the walls
-  prism(found, offsetPolygon(outline, 0.18), gMin - 0.6, floor + 0.15, p => [p.x, p.y]);
+  // A foundation, a little proud of the walls (round any porch set into the house)
+  const notched = F.recesses.length ? outline.flatMap((p, i) => [p, ...F.recesses.filter(r => r.wall === i).sort((x, y) => x.s0 - y.s0).flatMap(r => {
+    const w = F.walls[i], q = (s: number, d: number) => ({ x: w.a.x + w.dir.x * s + w.out.x * d, y: w.a.y + w.dir.y * s + w.out.y * d });
+    return [q(r.s0, 0), q(r.s0, -r.D), q(r.s1, -r.D), q(r.s1, 0)];
+  })]) : outline;
+  prism(found, offsetPolygon(notched, 0.18), gMin - 0.6, floor + 0.15, p => [p.x, p.y]);
   const edges = F.walls.map(e => ({ ...e, dir: new V3(e.dir.x, 0, e.dir.y), out: new V3(e.out.x, 0, e.out.y) }));
   const along = F.along;
   let s0 = 0;
@@ -599,11 +639,16 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
     const pt = (s: number, y: number, d = 0) => { const p = along(w, s); return new V3(p.x, y, p.y).addScaledVector(e.out, d); };
     const box = (m: Mesher, sa: number, sb: number, ya: number, yb: number, da: number, db: number) =>
       m.box(pt((sa + sb) / 2, (ya + yb) / 2, (da + db) / 2), e.dir, UP, e.out, Math.abs(sb - sa) / 2, Math.abs(yb - ya) / 2, Math.abs(db - da) / 2);
-    const mine = F.placed.filter(o => o.wall === w).map(o => ({ ...o, y0: o.bottom }));
+    // (a porch set into the house on this wall: the wall open there up to its beam, set back
+    // behind it, the doors and windows there on that back wall)
+    const recs = F.recesses.filter(r => r.wall === w);
+    const recOf = (s: number) => recs.find(r => s > r.s0 && s < r.s1);
+    const all = F.placed.filter(o => o.wall === w).map(o => ({ ...o, y0: o.bottom }));
+    const mine = all.filter(o => !recOf(o.at));
     // The wall: up to the roof (a gable end's triangle too), its doors and windows cut out
     const tops = F.tops(w);
     const contour = [new THREE.Vector2(0, floor), new THREE.Vector2(e.len, floor), ...tops.reverse().map(t => new THREE.Vector2(t.s, t.y))];
-    const doorsAtFloor = mine.filter(o => o.y0 <= floor + 0.01);
+    const doorsAtFloor = [...mine.filter(o => o.y0 <= floor + 0.01), ...recs.map(r => ({ x0: r.s0, x1: r.s1, y1: F.head }))];
     // (a door opens the wall from the floor: its hole and the wall's foot are one, so the foot runs round it)
     const foot = [new THREE.Vector2(0, floor)];
     for (const o of [...doorsAtFloor].sort((x, y) => x.x0 - y.x0)) foot.push(new THREE.Vector2(o.x0, floor), new THREE.Vector2(o.x0, o.y1), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x1, floor));
@@ -619,8 +664,31 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
       box(trim, 0, 0.45, floor, roofY(e.a) - 0.1, 0, 0.1);
       box(trim, e.len - 0.45, e.len, floor, roofY(e.b) - 0.1, 0, 0.1);
     }
-    for (const o of mine) {
+    // The walls behind a porch set in: its back wall (doors and windows cut out) and its ends, the
+    // foundation under them
+    for (const r of recs) {
+      const back = all.filter(o => recOf(o.at) === r), atFloor = back.filter(o => o.y0 <= floor + 0.01);
+      const bp = (s: number, y: number) => pt(s, y, -r.D);
+      const foot = [new THREE.Vector2(r.s0, floor)];
+      for (const o of [...atFloor].sort((x, y) => x.x0 - y.x0)) foot.push(new THREE.Vector2(o.x0, floor), new THREE.Vector2(o.x0, o.y1), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x1, floor));
+      const ringB = [...foot, new THREE.Vector2(r.s1, floor), new THREE.Vector2(r.s1, F.head), new THREE.Vector2(r.s0, F.head)];
+      const holesB = back.filter(o => !atFloor.includes(o)).map(o => [new THREE.Vector2(o.x0, o.y0), new THREE.Vector2(o.x1, o.y0), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x0, o.y1)]);
+      const ptsB = [...ringB, ...holesB.flat()];
+      for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(ringB, holesB))
+        wallM.tri(bp(ptsB[i].x, ptsB[i].y), bp(ptsB[j].x, ptsB[j].y), bp(ptsB[k].x, ptsB[k].y), [[s0 - e.len + ptsB[i].x, ptsB[i].y], [s0 - e.len + ptsB[j].x, ptsB[j].y], [s0 - e.len + ptsB[k].x, ptsB[k].y]], e.out);
+      for (const [sx, n] of [[r.s0, e.dir], [r.s1, e.dir.clone().negate()]] as [number, V][]) {
+        wallM.quad(pt(sx, floor, -r.D), pt(sx, floor, 0), pt(sx, F.head, 0), pt(sx, F.head, -r.D), [[0, floor], [r.D, floor], [r.D, F.head], [0, F.head]], n);
+        found.quad(pt(sx, gMin - 0.6, -r.D), pt(sx, gMin - 0.6, 0), pt(sx, floor + 0.15, 0), pt(sx, floor + 0.15, -r.D), [[0, 0], [r.D, 0], [r.D, 1], [0, 1]], n);
+      }
+      found.quad(pt(r.s0, gMin - 0.6, -r.D), pt(r.s1, gMin - 0.6, -r.D), pt(r.s1, floor + 0.15, -r.D), pt(r.s0, floor + 0.15, -r.D), [[r.s0, 0], [r.s1, 0], [r.s1, 1], [r.s0, 1]], e.out);
+    }
+    for (const o of all) {
       const { x0, x1, y0, y1 } = o;
+      // (on the back wall of a porch set in here)
+      const rr = recOf(o.at), back = rr ? -rr.D : 0;
+      const pt = (s: number, y: number, d = 0) => { const p = along(w, s); return new V3(p.x, y, p.y).addScaledVector(e.out, d + back); };
+      const box = (m: Mesher, sa: number, sb: number, ya: number, yb: number, da: number, db: number) =>
+        m.box(pt((sa + sb) / 2, (ya + yb) / 2, (da + db) / 2), e.dir, UP, e.out, Math.abs(sb - sa) / 2, Math.abs(yb - ya) / 2, Math.abs(db - da) / 2);
       const sides = (m: Mesher, d0: number, d1: number, bottom: boolean) => {
         m.quad(pt(x0, y0, d0), pt(x0, y0, d1), pt(x0, y1, d1), pt(x0, y1, d0), [[0, 0], [1, 0], [1, 1], [0, 1]], e.dir);
         m.quad(pt(x1, y0, d0), pt(x1, y0, d1), pt(x1, y1, d1), pt(x1, y1, d0), [[0, 0], [1, 0], [1, 1], [0, 1]], e.dir.clone().negate());
@@ -666,7 +734,7 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
         // Steps up to it where the floor stands over the ground: a landing, then steps down
         const ground = g(pt(o.at, 0, 3).x, pt(o.at, 0, 3).z), rise = y0 - ground;
         // (a porch or a deck in front of it: its own steps)
-        const covered = (st.addOns ?? []).some(a => a.wall === w && (a.kind === "porch" || a.kind === "deck") && Math.abs(a.at - o.at) < a.width / 2);
+        const covered = (st.addOns ?? []).some(a => a.wall === w && (a.kind === "porch" || a.kind === "deck" || (a.floor ?? 0) > 0.4) && Math.abs(a.at - o.at) < a.width / 2);
         const n = covered ? 0 : stepsUp(rise);
         if (n && o.kind !== "garage") {
           const steps = at("steps"), wide = o.width / 2 + 1.1, land = 3.5, riser = rise / n;
@@ -763,7 +831,8 @@ const buildingMaterial = (key: string, st: StructureItem): THREE.Material => {
     case "pdeck": return material("deck");
     case "ptimber": return material("timber");
     case "proof": return surface(ROOFING_SCAN[roofingOf(st)], C.roof, true, C.roof ? ROOF_SHADE : 1);
-    case "proofm": return surface("roofmetal", C.roof, true, C.roof ? ROOF_SHADE : 1);
+    case "pceil": return paintOf("#ece8df", 0.8);
+    case "pskirt": return material("timber");
     case "post": case "rail": return paintOf(C.trim, 0.55);
     case "glass": return glass();
     case "room": return room();

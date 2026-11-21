@@ -53,7 +53,7 @@ import { measuredStanding, setMeasuredStanding } from "../lib/standing";
 import { createFieldGround, createFieldProps, createHedge, createPowerLine } from "../three/parkProps";
 import { LEAGUES, cornerFrame, fieldInks, fieldPartAt, fieldPartShape, fieldPlan } from "../lib/fieldPlan";
 import { fieldHome, fieldKeepsTreesOut, fieldKindOf, fieldOutline, isBallField } from "../lib/fields";
-import { ADDON_LABEL, buildingFrame, OPENING_LABEL, ownWall, wallName, wallsAfter, type Frame } from "../lib/buildingParts";
+import { ADDON_LABEL, addOnLevels, addOnRoof, buildingFrame, maxSetIn, nearestAddOnSide, OPENING_LABEL, ownWall, wallName, wallsAfter, type Frame } from "../lib/buildingParts";
 import { isLineKind, orientedBox, roofFor, structureBounds, structureHeight, structurePath, structureWidth, turnShape } from "../lib/structures";
 import type { AddOn, AmenityItem, AmenityKind, AreaItem, BasketItem, CourseItem, FlyKey, Hole, LabelItem, LineItem, MandoItem, RockItem, StructureItem, TeeItem, TeeLevel, TreeItem, BrushKind, PathTier, FieldPart } from "../types";
 import { Ground } from "./ground";
@@ -182,6 +182,9 @@ const STYLE = `
 .dg-h[data-handle=radius]{width:15px;height:15px;border-radius:50%;background:#16a34a;border:2.5px solid #fff;cursor:ew-resize;box-shadow:0 1px 3px rgba(0,0,0,.5)}
 .dg-h[data-handle=opening]{width:16px;height:16px;border-radius:4px;background:#fff;border:3px solid #0891b2;cursor:move;box-shadow:0 1px 3px rgba(0,0,0,.5)}
 .dg-h[data-handle=openw]{width:12px;height:18px;border-radius:4px;background:#fff;border:2.5px solid #0891b2;cursor:ew-resize;box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.dg-h[data-handle=addw]{width:12px;height:18px;border-radius:4px;background:#fff;border:2.5px solid #0891b2;cursor:ew-resize;box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.dg-h[data-handle=addf]{width:22px;height:11px;border-radius:4px;background:#f59e0b;border:2.5px solid #fff;cursor:ns-resize;box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.dg-h[data-handle=addst]{width:20px;height:14px;border-radius:4px;border:2.5px solid #fff;background:repeating-linear-gradient(0deg,#0891b2 0 3px,#fff 3px 5px);cursor:move;box-shadow:0 1px 3px rgba(0,0,0,.5)}
 .dg-h[data-handle=addd]{width:18px;height:12px;border-radius:4px;background:#fff;border:2.5px solid #0891b2;cursor:ns-resize;box-shadow:0 1px 3px rgba(0,0,0,.5)}
 .dg-h[data-handle=openh]{width:18px;height:12px;border-radius:4px;background:#fff;border:2.5px solid #0891b2;cursor:ns-resize;box-shadow:0 1px 3px rgba(0,0,0,.5)}
 .dg-h[data-handle=height]{width:16px;height:22px;border-radius:5px;background:#f59e0b;border:2.5px solid #fff;cursor:ns-resize;box-shadow:0 1px 3px rgba(0,0,0,.5)}
@@ -5074,6 +5077,11 @@ export class CourseView {
         const a = (lo - oo) / dd, c = (hi - oo) / dd;
         t0 = Math.max(t0, Math.min(a, c)); t1 = Math.min(t1, Math.max(a, c));
       }
+      // (its porches, carports, decks and patios: part of it)
+      if (st.kind === "building" && st.addOns?.length) {
+        const F = buildingFrame(st, this.standGround);
+        for (const a of st.addOns) { const t = this.rayAddOn(ray, F, a); if (t < (best?.t ?? Infinity)) best = { id: st.id, t }; }
+      }
       if (!(t1 > t0) || t0 >= (best?.t ?? Infinity)) continue;
       for (let t = t0; t <= t1; t += 0.25) {
         const p = { x: o.x + d.x * t, y: o.z + d.z * t };
@@ -5081,6 +5089,20 @@ export class CourseView {
       }
     }
     return best;
+  }
+
+  /** The porch, carport, deck or patio of a building on a plan point (its footprint), if any. */
+  private addOnAtPlan(st: StructureItem, p: P, F?: Frame) {
+    if (st.kind !== "building" || !st.addOns?.length) return null;
+    const fr = F ?? buildingFrame(st, this.standGround);
+    for (const a of st.addOns) {
+      const w = fr.walls[a.wall];
+      if (!w) continue;
+      const L = addOnLevels(fr, a, this.standGround);
+      const mid = fr.along(a.wall, a.at), s = (p.x - mid.x) * w.dir.x + (p.y - mid.y) * w.dir.y, d = (p.x - mid.x) * w.out.x + (p.y - mid.y) * w.out.y;
+      if (Math.abs(s) <= a.width / 2 && d >= L.d0 - (L.setIn ? 0 : 0.5) && d <= L.d1 + (L.setIn ? 0.3 : 0)) return a;
+    }
+    return null;
   }
 
   private treeUnder(ray: THREE.Ray): { id: string; t: number; drawn?: boolean } | null {
@@ -6483,7 +6505,7 @@ export class CourseView {
     const built = doc.course.items.filter(i => i.type === "structure") as StructureItem[];
     for (const st of built) {
       // (Lines first: stairs up to a deck, a bridge by a shelter; then the smallest outline)
-      const d = isLineKind(st.kind) ? distanceToPath(p, structurePath(st)) - structureWidth(st) / 2 : st.points.length >= 3 && pointInPolygon(p, st.points) ? tol + polygonArea(st.points) * 1e-9 : Infinity;
+      const d = isLineKind(st.kind) ? distanceToPath(p, structurePath(st)) - structureWidth(st) / 2 : st.points.length >= 3 && (pointInPolygon(p, st.points) || this.addOnAtPlan(st, p)) ? tol + polygonArea(st.points) * 1e-9 : Infinity;
       if (d < tol * 1.01 + 1 && (!near || d < near.d)) near = { id: st.id, d };
     }
     if (near) return near.id;
@@ -7448,7 +7470,7 @@ export class CourseView {
     if ((big && hit !== this.selectedId) || !item || item.locked) {
       if (boxing) e.stopPropagation();
       else stop();
-      this.gesture(e, { click: () => this.cb.onSelect(hit), drag: boxing ? s => this.boxDrag(s, false) : s => this.panDrag(s) });
+      this.gesture(e, { click: (ev: PointerEvent) => { this.cb.onSelect(hit); if (item?.type === "structure" && item.kind === "building" && !item.locked) { const part = this.buildingPartAt(item, ev.clientX, ev.clientY); if (part?.addOn) this.cb.onBuildingPart?.({ wall: part.wall, addOn: part.addOn }); } }, drag: boxing ? s => this.boxDrag(s, false) : s => this.panDrag(s) });
       return;
     }
     // An area picked moves only from its edge (its line, within a few pixels): a drag from inside
@@ -7503,13 +7525,19 @@ export class CourseView {
   /** A porch's, carport's, deck's or patio's box (its own wall's frame: s along, d out, y up),
    * and its floor's height. */
   private addOnBox(F: Frame, a: AddOn) {
-    const w = F.walls[a.wall];
-    if (!w) return null;
-    const mid = F.along(a.wall, a.at);
-    const onGround = a.kind === "patio" || a.kind === "carport";
-    const top = onGround ? this.standGround(mid.x + w.out.x * a.depth / 2, mid.y + w.out.y * a.depth / 2) + 0.3 : F.floor;
-    const high = a.kind === "porch" || a.kind === "carport" ? Math.min(F.eave, top + 10.5) : top + (a.kind === "deck" ? 3.2 : 0.6);
-    return { w, mid, top, s0: -a.width / 2, s1: a.width / 2, d0: 0, d1: a.depth, y0: Math.min(top, F.gMin) - 0.6, y1: high };
+    if (!F.walls[a.wall]) return null;
+    const L = addOnLevels(F, a, this.standGround);
+    // (`floorAt`: its floor's height at a spot, a slab's following the ground)
+    const floorAt = (sx: number, d: number) => (L.level ? L.top : L.gAt(sx, clamp(d, L.d0, L.d1)) + 0.3);
+    // (what's solid of it: under its own roof, all of it; set into the house, its floor and its posts
+    // along the wall's line, the air over its floor being the way to the wall behind)
+    const half = a.width / 2, n = Math.max(1, Math.ceil(a.width / 10));
+    const posts = Array.from({ length: n + 1 }, (_, k) => -half + 0.35 + ((a.width - 0.7) * k) / n).filter(sx => !L.steps.some(e => e.sd.i === 1 && Math.abs(e.sx - sx) < L.STEP / 2 + 0.2));
+    type Box = { s0?: number; s1?: number; d0: number; d1: number; y0: number; y1: number };
+    const boxes: Box[] = L.setIn
+      ? [{ d0: L.d0, d1: 0.05, y0: L.gMin - 0.6, y1: L.top + 0.5 }, { d0: -0.6, d1: 0.05, y0: F.head, y1: F.eave }, ...posts.map(sx => ({ s0: sx - 0.4, s1: sx + 0.4, d0: -0.6, d1: 0.05, y0: L.top, y1: F.head }))]
+      : [{ d0: L.d0, d1: L.d1 + (L.roof ? L.over : 0), y0: L.gMin - 0.6, y1: L.high }];
+    return { L, w: L.w, mid: L.mid, top: L.top, floorAt, s0: -a.width / 2, s1: a.width / 2, d0: L.d0, d1: L.d1, boxes };
   }
 
   /** Where along a ray it meets a porch or the like (its box), or Infinity. */
@@ -7519,18 +7547,47 @@ export class CourseView {
     const o = ray.origin, r = ray.direction, { w, mid } = b;
     const os = (o.x - mid.x) * w.dir.x + (o.z - mid.y) * w.dir.y, od = (o.x - mid.x) * w.out.x + (o.z - mid.y) * w.out.y;
     const rs = r.x * w.dir.x + r.z * w.dir.y, rd = r.x * w.out.x + r.z * w.out.y;
-    let t0 = 0, t1 = Infinity;
-    for (const [oo, rr, lo, hi] of [[os, rs, b.s0, b.s1], [od, rd, b.d0, b.d1], [o.y, r.y, b.y0, b.y1]] as [number, number, number, number][]) {
-      if (Math.abs(rr) < 1e-9) { if (oo < lo || oo > hi) return Infinity; continue; }
-      let ta = (lo - oo) / rr, tb = (hi - oo) / rr;
-      if (ta > tb) [ta, tb] = [tb, ta];
-      t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
-      if (t0 > t1) return Infinity;
+    let near = Infinity;
+    box: for (const x of b.boxes) {
+      let t0 = 0, t1 = Infinity;
+      for (const [oo, rr, lo, hi] of [[os, rs, x.s0 ?? b.s0, x.s1 ?? b.s1], [od, rd, x.d0, x.d1], [o.y, r.y, x.y0, x.y1]] as [number, number, number, number][]) {
+        if (Math.abs(rr) < 1e-9) { if (oo < lo || oo > hi) continue box; continue; }
+        let ta = (lo - oo) / rr, tb = (hi - oo) / rr;
+        if (ta > tb) [ta, tb] = [tb, ta];
+        t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+        if (t0 > t1) continue box;
+      }
+      near = Math.min(near, t0);
     }
-    return t0;
+    return near;
   }
 
-  private buildingPartAt(st: StructureItem, clientX: number, clientY: number): { wall: number; opening?: string; at?: number; addOn?: string; frame: Frame } | null {
+  /** Where a ray first meets a building's body (under its roof inside its walls, or its eaves'
+   * overhang above the soffit): how far, and the plan point; null when it misses. */
+  private rayRoof(ray: THREE.Ray, F: Frame): { t: number; p: P } | null {
+    const E = F.roof.eaves, o = ray.origin, d = ray.direction;
+    const lo = { x: Math.min(...E.map(q => q.x)), y: Math.min(...E.map(q => q.y)) }, hi = { x: Math.max(...E.map(q => q.x)), y: Math.max(...E.map(q => q.y)) };
+    let t0 = 0, t1 = Infinity;
+    for (const [oo, rr, a, b] of [[o.x, d.x, lo.x, hi.x], [o.z, d.z, lo.y, hi.y], [o.y, d.y, F.gMin - 0.6, F.eave + 60]] as [number, number, number, number][]) {
+      if (Math.abs(rr) < 1e-9) { if (oo < a || oo > b) return null; continue; }
+      let ta = (a - oo) / rr, tb = (b - oo) / rr;
+      if (ta > tb) [ta, tb] = [tb, ta];
+      t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+      if (t0 > t1) return null;
+    }
+    const soffit = F.eave - F.roof.pitch * 1.5 - 0.5;
+    for (let t = t0; t <= t1; t += 0.2) {
+      const y = o.y + d.y * t, p = { x: o.x + d.x * t, y: o.z + d.z * t };
+      // (past the walls only the overhang itself: down to the soffit under the eaves, the rafters'
+      // depth under a gable end's rake, never the air beside a gable wall)
+      if (!pointInPolygon(p, E)) continue;
+      const top = F.roofY(p);
+      if (y <= top + 0.05 && (pointInPolygon(p, F.outline) ? !F.inRecess(p, y) : y >= Math.max(soffit, top - 2))) return { t, p };
+    }
+    return null;
+  }
+
+  private buildingPartAt(st: StructureItem, clientX: number, clientY: number): { wall: number; opening?: string; at?: number; addOn?: string; frame: Frame; plan?: boolean; spot?: P } | null {
     if (st.kind !== "building") return null;
     const F = buildingFrame(st, this.standGround);
     if (F.outline.length < 3) return null;
@@ -7544,20 +7601,44 @@ export class CourseView {
       if (t <= 0 || (best && t >= best.t)) return;
       const q = ray.at(t, new THREE.Vector3()), s = (q.x - w.a.x) * w.dir.x + (q.z - w.a.y) * w.dir.y;
       if (s < 0 || s > w.len || q.y < F.gMin - 0.6 || q.y > F.roofY(F.along(i, s))) return;
+      // (a porch set into the house here: under its beam, the wall's back behind it; its ends are
+      // the same wall)
+      const r = F.recesses.find(x => x.wall === i && s > x.s0 && s < x.s1);
+      if (r && q.y < F.head) {
+        const t2 = t - r.D / den, q2 = ray.at(t2, new THREE.Vector3()), s2 = (q2.x - w.a.x) * w.dir.x + (q2.z - w.a.y) * w.dir.y;
+        best = { t: t2, wall: i, s: clamp(s2, r.s0 + 0.01, r.s1 - 0.01), y: q2.y };
+        return;
+      }
       best = { t, wall: i, s, y: q.y };
     });
-    // (a porch, carport, deck or patio in front of the wall, or where no wall is)
+    // (the house itself where the ray first meets it: under its roof inside the walls, or its
+    // eaves' overhang above the soffit)
+    const roof = this.rayRoof(ray, F);
+    const body = Math.min(best ? (best as { t: number }).t : Infinity, roof?.t ?? Infinity);
+    // (a porch, carport, deck or patio in front of the house, or where no house is)
     let near: { a: AddOn; t: number } | null = null;
     for (const a of st.addOns ?? []) { const t = this.rayAddOn(ray, F, a); if (t < (near?.t ?? Infinity)) near = { a, t }; }
-    if (near && (!best || near.t < (best as { t: number }).t)) return { wall: near.a.wall, addOn: near.a.id, frame: F };
-    if (!best) return null;
-    const hit = best as { t: number; wall: number; s: number; y: number };
-    // (the roof in front of it: the ray under the roof's eaves on its way, above its soffit)
-    const soffit = F.eave - F.roof.pitch * 1.5 - 0.5;
-    for (let k = 1; k < 40; k++) {
-      const q = ray.at((hit.t * k) / 40, new THREE.Vector3()), plan = { x: q.x, y: q.z };
-      if (q.y >= soffit && pointInPolygon(plan, F.roof.eaves) && q.y <= F.roofY(plan) + 0.05) return null;
+    if (near && near.t < body) return { wall: near.a.wall, addOn: near.a.id, frame: F };
+    // (from above, or the roof in front: the wall nearest the spot (the roof's, else the ground's),
+    // inside the outline or within 8 ft of it, or a porch's footprint on the ground there; `plan`:
+    // found so, for the menu only, not to pick)
+    const nearestWall = (p: P) => {
+      let wall = -1, dist = pointInPolygon(p, F.outline) ? Infinity : 8;
+      F.walls.forEach((w, i) => {
+        const along = clamp((p.x - w.a.x) * w.dir.x + (p.y - w.a.y) * w.dir.y, 0, w.len);
+        const dd = Math.hypot(p.x - (w.a.x + w.dir.x * along), p.y - (w.a.y + w.dir.y * along));
+        if (dd < dist) { dist = dd; wall = i; }
+      });
+      return wall < 0 ? null : { wall, frame: F, plan: true, spot: p };
+    };
+    if (roof && roof.t < (best ? (best as { t: number }).t - 0.3 : Infinity)) return nearestWall(roof.p);
+    if (!best) {
+      const g = this.groundAt(clientX, clientY);
+      if (!g) return null;
+      const p = { x: g.x, y: g.z }, a = this.addOnAtPlan(st, p, F);
+      return a ? { wall: a.wall, addOn: a.id, frame: F } : nearestWall(p);
     }
+    const hit = best as { t: number; wall: number; s: number; y: number };
     const o = F.placed.find(q => q.wall === hit.wall && hit.s >= q.x0 - 0.3 && hit.s <= q.x1 + 0.3 && hit.y >= q.bottom - 0.3 && hit.y <= q.y1 + 0.3);
     return { wall: hit.wall, opening: o?.id, at: o && o.auto ? o.at : undefined, frame: F };
   }
@@ -7569,7 +7650,23 @@ export class CourseView {
     if (st?.type !== "structure" || st.kind !== "building") return null;
     const part = this.buildingPartAt(st, clientX, clientY);
     if (!part) return null;
-    const w = part.frame.walls[part.wall], ray = this.ray(clientX, clientY);
+    const w = part.frame.walls[part.wall];
+    if (part.addOn) {
+      // (on its floor's level: the open side nearest, and the steps there)
+      const a = st.addOns?.find(x => x.id === part.addOn), b = a && this.addOnBox(part.frame, a);
+      const h = b ? this.ray(clientX, clientY).intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -b.top), new THREE.Vector3()) : null;
+      if (!a || !b || !h) return { wall: part.wall, along: a?.at ?? w.len / 2, opening: undefined, laidAt: undefined, addOn: part.addOn };
+      const sx = (h.x - b.mid.x) * w.dir.x + (h.z - b.mid.y) * w.dir.y, d = (h.x - b.mid.x) * w.out.x + (h.z - b.mid.y) * w.out.y;
+      const near = nearestAddOnSide(b.L, sx, d);
+      const step = b.L.steps.findIndex(e => Math.hypot(e.sx - sx, e.d - d) < b.L.STEP / 2 + 1);
+      return { wall: part.wall, along: a.at + sx, opening: undefined, laidAt: undefined, addOn: part.addOn, side: b.L.level && near.dist < 5 ? { side: near.side, at: near.at } : undefined, step: step >= 0 ? step : undefined };
+    }
+    if (part.plan) {
+      const g = part.spot ?? (q => q && { x: q.x, y: q.z })(this.groundAt(clientX, clientY));
+      const along = g ? clamp((g.x - w.a.x) * w.dir.x + (g.y - w.a.y) * w.dir.y, 0, w.len) : w.len / 2;
+      return { wall: part.wall, along, opening: undefined, laidAt: undefined, addOn: undefined };
+    }
+    const ray = this.ray(clientX, clientY);
     const n = new THREE.Vector3(w.out.x, 0, w.out.y), den = ray.direction.dot(n);
     const t = den < 0 ? new THREE.Vector3(w.a.x, 0, w.a.y).sub(ray.origin).dot(n) / den : 0;
     const q = ray.at(t, new THREE.Vector3());
@@ -7580,7 +7677,7 @@ export class CourseView {
    * its own first, as it stands: the wall's doors and windows then stay as they are). */
   private pickBuildingPart(st: StructureItem, ev: PointerEvent) {
     const part = this.buildingPartAt(st, ev.clientX, ev.clientY);
-    if (!part) return this.cb.onBuildingPart?.(null);
+    if (!part || (part.plan && !part.addOn)) return this.cb.onBuildingPart?.(null);
     if (part.addOn) return this.cb.onBuildingPart?.({ wall: part.wall, addOn: part.addOn });
     if (part.at !== undefined) {
       const openings = ownWall(st, part.frame, part.wall);
@@ -7598,8 +7695,15 @@ export class CourseView {
     if (addOn) {
       const a = st.addOns?.find(x => x.id === addOn), b = a && this.addOnBox(F, a);
       if (!a || !b) return null;
-      const P = (sx: number, d: number) => new THREE.Vector3(b.mid.x + w.dir.x * sx + w.out.x * d, b.top + 0.15, b.mid.y + w.dir.y * sx + w.out.y * d);
-      return [P(b.s0, 0.1), P(b.s1, 0.1), P(b.s1, b.d1), P(b.s0, b.d1), P(b.s0, 0.1)];
+      // (on its floor, round its footprint: over a slab on a slope, following it)
+      const P = (sx: number, d: number) => new THREE.Vector3(b.mid.x + w.dir.x * sx + w.out.x * d, b.floorAt(sx, d) + 0.15, b.mid.y + w.dir.y * sx + w.out.y * d);
+      const e0 = b.d0 + (b.L.setIn ? 0 : 0.1), e1 = b.d1, corners: [number, number][] = [[b.s0, e0], [b.s1, e0], [b.s1, e1], [b.s0, e1], [b.s0, e0]], out: THREE.Vector3[] = [];
+      for (let k = 0; k + 1 < corners.length; k++) {
+        const [s0, d0] = corners[k], [s1, d1] = corners[k + 1], n = Math.max(1, Math.ceil(Math.hypot(s1 - s0, d1 - d0) / 2));
+        for (let j = 0; j < n; j++) out.push(P(s0 + ((s1 - s0) * j) / n, d0 + ((d1 - d0) * j) / n));
+      }
+      out.push(P(b.s0, e0));
+      return out;
     }
     const pt = (s: number, y: number) => { const q = F.along(wall, s); return new THREE.Vector3(q.x + w.out.x * 0.25, y, q.y + w.out.y * 0.25); };
     if (opening) {
@@ -7622,7 +7726,10 @@ export class CourseView {
   setBuildingPart(id: string | null, part: { wall: number; opening?: string; addOn?: string } | null) {
     if (this.bPartFx) { this.fx.remove(this.bPartFx); disposeObjectDeep(this.bPartFx); this.bPartFx = null; }
     const pick = id && part ? { id, ...part } : null;
-    const key = pick ? `${pick.id}:${pick.wall}:${pick.opening ?? ""}:${pick.addOn ?? ""}` : "";
+    // (a porch's handles change with its steps and its roof)
+    const it = pick?.addOn ? this.item(pick.id) : null, ad = it?.type === "structure" ? it.addOns?.find(x => x.id === pick!.addOn) : undefined;
+    const lv = it?.type === "structure" && ad ? addOnLevels(buildingFrame(it, this.standGround), ad, this.standGround) : null;
+    const key = pick ? `${pick.id}:${pick.wall}:${pick.opening ?? ""}:${pick.addOn ?? ""}:${lv ? `${lv.steps.length}:${lv.roofKind}` : ""}` : "";
     if (key !== this.bPartKey) { this.bPartKey = key; this.bPart = pick; this.syncHandles(); this.syncSeeThrough(); }
     const st = pick ? this.item(pick.id) : null;
     if (pick && st?.type === "structure" && st.kind === "building") {
@@ -7645,7 +7752,8 @@ export class CourseView {
   /** Over the picked building: what a click would pick there, outlined faintly and named. */
   private buildingHover(p: { x: number; y: number } | null) {
     const st = p && this.selectedId ? this.item(this.selectedId) : null;
-    const part = st?.type === "structure" && st.kind === "building" && !st.locked ? this.buildingPartAt(st, p!.x, p!.y) : null;
+    const found = st?.type === "structure" && st.kind === "building" && !st.locked ? this.buildingPartAt(st, p!.x, p!.y) : null;
+    const part = found?.plan && !found.addOn ? null : found;
     const key = part ? `${st!.id}:${part.wall}:${part.opening ?? part.at ?? part.addOn ?? ""}` : "";
     if (key === this.bHoverKey) return !!part;
     this.bHoverKey = key;
@@ -7686,71 +7794,155 @@ export class CourseView {
     add("openh", where("top"), e => this.openingDrag(id, oid, "top", e), { title: "Drag to make it taller or shorter" });
   }
 
-  /** A picked porch's (carport's, deck's, patio's) handles: its side to make it wider, its outer
-   * edge to bring it out from the wall or in. */
+  /** A picked porch's (carport's, deck's, patio's) handles (as the Security Camera Planner's): each
+   * end along the wall and its front (set into the house, its back) to size it, at its roof under a
+   * roof, else on its floor; its floor's bar to raise or lower it; its steps, to slide along it. */
   private addOnHandles(id: string, add: (kind: string, world: () => THREE.Vector3 | null, start: Handle["start"], opts?: any) => void) {
     const aid = this.bPart?.addOn;
     if (!aid || this.bPart?.id !== id) return;
-    const where = (pos: "side" | "depth") => () => {
+    const cur = () => {
       const st = this.item(id);
       if (st?.type !== "structure") return null;
       const F = buildingFrame(st, this.standGround), a = st.addOns?.find(x => x.id === aid), b = a && this.addOnBox(F, a);
-      if (!a || !b) return null;
-      const sx = pos === "side" ? b.s1 : 0, d = pos === "side" ? a.depth / 2 : a.depth;
-      return new THREE.Vector3(b.mid.x + b.w.dir.x * sx + b.w.out.x * d, b.top + 0.3, b.mid.y + b.w.dir.y * sx + b.w.out.y * d);
+      return a && b ? { F, a, b } : null;
     };
-    add("openw", where("side"), e => this.addOnDrag(id, aid, "side", e), { title: "Drag to make it wider or narrower" });
-    add("addd", where("depth"), e => this.addOnDrag(id, aid, "depth", e), { title: "Drag to bring it out from the wall or in" });
+    const world = (c: NonNullable<ReturnType<typeof cur>>, sx: number, d: number, y: number) => new THREE.Vector3(c.b.mid.x + c.b.w.dir.x * sx + c.b.w.out.x * d, y, c.b.mid.y + c.b.w.dir.y * sx + c.b.w.out.y * d);
+    const edge = (pos: "w0" | "w2" | "d") => () => {
+      const c = cur();
+      if (!c) return null;
+      const { L } = c.b, sx = pos === "w0" ? -L.half : pos === "w2" ? L.half : pos === "d" ? this.depthHandleS(L) : 0, d = pos === "d" ? (L.setIn ? L.d0 : L.d1) : (L.d0 + L.d1) / 2;
+      return world(c, sx, d, this.addOnHandleY(c.F, c.b, sx, d));
+    };
+    add("addw", edge("w0"), e => this.addOnDrag(id, aid, "w0", e), { title: "Drag to make it longer or shorter", index: 0 });
+    add("addw", edge("w2"), e => this.addOnDrag(id, aid, "w2", e), { title: "Drag to make it longer or shorter", index: 2 });
+    const c0 = cur();
+    add("addd", edge("d"), e => this.addOnDrag(id, aid, "d", e), { title: c0?.b.L.setIn ? "Drag to set it farther in or less" : "Drag to bring it out from the wall or in" });
+    add("addf", () => {
+      const c = cur();
+      if (!c) return null;
+      // (clear of its middle, where it's dragged to move it, and of its other handles: a front corner)
+      const L = c.b.L, sx = -Math.max(0, L.half - 1.5), d = (L.setIn ? 0 : L.d1) - Math.min(1.5, L.D / 3);
+      return world(c, sx, d, c.b.floorAt(sx, d) + 0.2);
+    }, e => this.addOnDrag(id, aid, "floor", e), { title: "Drag up or down to raise or lower its floor", visible: () => this.controls.polarAngle > 15 * DEG });
+    (c0?.b.L.steps ?? []).forEach((_, k) => add("addst", () => {
+      const c = cur(), e = c?.b.L.steps[k];
+      return c && e ? world(c, e.sx, e.d, c.b.L.top + 0.2) : null;
+    }, e => this.addOnDrag(id, aid, k, e), { title: "Steps: drag along its edge to move them · right-click for more", index: 10 + k }));
+  }
+
+  /** Where along its front (or back, set in) its depth handle sits: the middle, or clear of the
+   * steps on its front. */
+  private depthHandleS(L: NonNullable<ReturnType<CourseView["addOnBox"]>>["L"]) {
+    if (L.setIn) return 0;
+    const front = L.steps.filter(e => e.sd.i === 1).map(e => e.sx);
+    const spots = [0, -L.half / 2, L.half / 2].map(sx => ({ sx, gap: Math.min(99, ...front.map(f => Math.abs(f - sx))) }));
+    return (spots.find(c => c.gap > L.STEP / 2 + 1.5) ?? [...spots].sort((x, y) => y.gap - x.gap)[0]).sx;
+  }
+
+  /** Where a porch's side handle sits: on its own roof, else on its floor (one set into the house:
+   * seen through its open front). */
+  private addOnHandleY(F: Frame, b: NonNullable<ReturnType<CourseView["addOnBox"]>>, sx: number, d: number) {
+    const L = b.L;
+    if (L.roof) return L.yWall - L.pitch * clamp(d, 0, L.D + L.over) + 0.6;
+    return b.floorAt(sx, d) + 0.3;
   }
 
   /** A porch (carport, deck, patio) dragged: by itself along its wall, round a corner onto the
-   * next; by its side handle wider; by its edge out from the wall. */
-  private addOnDrag(id: string, aid: string, pos: "move" | "side" | "depth", e: PointerEvent): Drag | null {
+   * next; by an end handle longer or shorter (the other end staying); by its front (set in, its
+   * back) deeper; by its floor's bar up or down; by its steps (k) along its edges. */
+  private addOnDrag(id: string, aid: string, pos: "move" | "w0" | "w2" | "d" | "floor" | number, e: PointerEvent): Drag | null {
     const st = this.item(id);
     if (st?.type !== "structure" || st.kind !== "building") return null;
     const F = buildingFrame(st, this.standGround), a0 = st.addOns?.find(x => x.id === aid), b0 = a0 && this.addOnBox(F, a0);
     if (!a0 || !b0) return null;
-    // (on a level plane at its floor)
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -b0.top);
+    const L0 = b0.L;
+    // (on a level plane: its floor's, or the handle's)
+    // (a side or the front: its handle's spot (s along the wall, d out); followed by the pointer's
+    // moves on a level plane at the handle, or at the floor when the eye's not well above that)
+    const edge = pos === "w0" || pos === "w2" || pos === "d";
+    const hs = pos === "w0" ? -L0.half : pos === "w2" ? L0.half : this.depthHandleS(L0), hd = pos === "d" ? (L0.setIn ? L0.d0 : L0.d1) : (L0.d0 + L0.d1) / 2;
+    const hy = edge ? this.addOnHandleY(F, b0, hs, hd) : b0.top;
+    let plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(edge && this.camera.position.y > hy + 6 ? hy : b0.top));
+    // (the pointer's ray missing that plane, the other)
+    if (edge && !this.ray(e.clientX, e.clientY).intersectPlane(plane, new THREE.Vector3())) plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), plane.constant === -hy ? -b0.top : -hy);
     const onPlan = (ev: PointerEvent) => { const h = this.ray(ev.clientX, ev.clientY).intersectPlane(plane, new THREE.Vector3()); return h ? { x: h.x, y: h.z } : null; };
     const local = (p: { x: number; y: number }, wall: number) => { const x = F.walls[wall]; return { s: (p.x - x.a.x) * x.dir.x + (p.y - x.a.y) * x.dir.y, d: (p.x - x.a.x) * x.out.x + (p.y - x.a.y) * x.out.y }; };
-    const p0 = onPlan(e);
-    if (!p0) return null;
-    const grab = local(p0, a0.wall).s - a0.at;
     const metric = this.doc?.course.units === "m";
     const say = (v: number) => (metric ? `${Math.round(v * 0.3048 * 10) / 10} m` : `${Math.round(v * 2) / 2} ft`);
     let list = st.addOns ?? [];
+    // (its floor: up and down a wall through its middle, facing the camera)
+    let floorPlane: THREE.Plane | null = null;
+    if (pos === "floor") {
+      const c = new THREE.Vector3(b0.mid.x + b0.w.out.x * (L0.d0 + L0.d1) / 2, b0.top, b0.mid.y + b0.w.out.y * (L0.d0 + L0.d1) / 2);
+      const facing = new THREE.Vector3().subVectors(this.camera.position, c).setY(0);
+      if (facing.lengthSq() < 1e-6) return null;
+      floorPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(facing.normalize(), c);
+    }
+    const p0 = onPlan(e);
+    if (!p0 && !floorPlane) return null;
+    // (the floor: raised as far as the pointer goes up the plane from where it was pressed)
+    const hit0 = floorPlane ? this.ray(e.clientX, e.clientY).intersectPlane(floorPlane, new THREE.Vector3()) : null;
+    const grab = p0 ? local(p0, a0.wall).s - a0.at : 0;
+    // (the handle where the pointer is now: its spot moved as far as the pointer on the plane)
+    const handleAt = (p: { x: number; y: number }) => { const q = local(p, a0.wall), q0 = local(p0!, a0.wall); return { s: a0.at + hs + q.s - q0.s, d: hd + q.d - q0.d }; };
+    // (the floor, looking steeply down: by how far the pointer goes up the screen)
+    const steep = this.controls.polarAngle < 40 * DEG;
+    const ftPerPx = (() => { const cam = this.camera as THREE.PerspectiveCamera, dist = cam.position.distanceTo(new THREE.Vector3(b0.mid.x, b0.top, b0.mid.y)); return (2 * dist * Math.tan(((cam.fov ?? 50) * Math.PI) / 360)) / Math.max(1, this.size.height); })();
     this.openingDragging = true;
     return {
       move: ev => {
-        const p = onPlan(ev);
-        if (!p) return;
         const cur = list.find(x => x.id === aid)!;
         let patch: Partial<AddOn> = {};
-        if (pos === "move") {
-          // (the wall it's in front of: the one the pointer's most squarely out from, so past a
-          // corner it goes round onto the next wall)
-          let wall = cur.wall, best = -Infinity;
-          F.walls.forEach((x, i) => {
-            const q = local(p, i);
-            if (q.d < -1) return;
-            const score = q.d - Math.max(0, -q.s, q.s - x.len);
-            if (score > best) { best = score; wall = i; }
-          });
-          const len = F.walls[wall].len, width = Math.min(cur.width, len - 2);
-          if (width < 4) return;
-          const at = clamp(Math.round((local(p, wall).s - grab) * 4) / 4, width / 2 + 1, len - width / 2 - 1);
-          patch = { wall, at, width };
-          this.tip(`${wall !== a0.wall ? `${wallName(st, F, wall)}: ` : ""}${say(at)} along`, ev.clientX, ev.clientY);
-        } else if (pos === "side") {
-          const len = F.walls[cur.wall].len;
-          const width = clamp(Math.round(Math.abs(local(p, cur.wall).s - cur.at) * 2 * 2) / 2, 4, Math.min(len - 2, 2 * Math.min(cur.at - 1, len - 1 - cur.at)));
-          patch = { width };
-          this.tip(`${say(width)} wide`, ev.clientX, ev.clientY);
+        if (pos === "floor") {
+          let y: number;
+          if (steep) y = b0.top + (e.clientY - ev.clientY) * ftPerPx;
+          else { const hit = this.ray(ev.clientX, ev.clientY).intersectPlane(floorPlane!, new THREE.Vector3()); if (!hit || !hit0) return; y = b0.top + hit.y - hit0.y; }
+          // (up to what keeps 7 ft under its roof; a carport's or patio's back on the ground at 0)
+          const max = Math.max(0, Math.floor(((L0.setIn || L0.roof ? F.eave - 8 : F.eave) - L0.gRef) * 2) / 2);
+          const up = clamp(Math.round((y - L0.gRef) * 2) / 2, 0, max);
+          patch = { floor: L0.onGround && up < 0.5 ? undefined : up };
+          this.tip(patch.floor === undefined ? "On the ground" : `${say(up)} up`, ev.clientX, ev.clientY);
         } else {
-          const depth = clamp(Math.round(local(p, cur.wall).d * 2) / 2, 4, 40);
-          patch = { depth };
-          this.tip(`${say(depth)} out`, ev.clientX, ev.clientY);
+          const p = onPlan(ev);
+          if (!p) return;
+          const len = F.walls[cur.wall].len;
+          if (pos === "move") {
+            // (the wall it's in front of: the one the pointer's most squarely out from, so past a
+            // corner it goes round onto the next wall)
+            let wall = cur.wall, best = -Infinity;
+            F.walls.forEach((x, i) => {
+              const q = local(p, i);
+              if (q.d < -1 && !L0.setIn) return;
+              const score = (L0.setIn ? -Math.abs(q.d + cur.depth / 2) : q.d) - Math.max(0, -q.s, q.s - x.len);
+              if (score > best) { best = score; wall = i; }
+            });
+            const wl = F.walls[wall].len, width = Math.min(cur.width, wl - 2);
+            if (width < 4) return;
+            const at = clamp(Math.round((local(p, wall).s - grab) * 4) / 4, width / 2 + 1, wl - width / 2 - 1);
+            patch = { wall, at, width, ...(L0.setIn && wall !== cur.wall ? { depth: Math.min(cur.depth, maxSetIn(F, wall)) } : {}) };
+            this.tip(`${wall !== a0.wall ? `${wallName(st, F, wall)}: ` : ""}${say(at)} along`, ev.clientX, ev.clientY);
+          } else if (pos === "w0" || pos === "w2") {
+            // (the other end stays)
+            const s = Math.round(handleAt(p).s * 2) / 2, lo = cur.at - cur.width / 2, hi = cur.at + cur.width / 2;
+            const [s0, s1] = pos === "w0" ? [clamp(s, 1, hi - 4), hi] : [lo, clamp(s, lo + 4, len - 1)];
+            patch = { at: (s0 + s1) / 2, width: s1 - s0 };
+            this.tip(`${say(s1 - s0)} long`, ev.clientX, ev.clientY);
+          } else if (pos === "d") {
+            // (out from the wall; dragged back past the wall into the house, set into it (its roof
+            // the house's); set in, dragged out past the wall, out from it again)
+            const d = handleAt(p).d, deepest = maxSetIn(F, cur.wall), inNow = addOnRoof(cur) === "house";
+            const goIn = inNow ? d < 1.5 : d < -1.5 && deepest >= 4;
+            const depth = goIn ? clamp(Math.round(-d * 2) / 2, 4, Math.max(4, deepest)) : clamp(Math.round(d * 2) / 2, 4, 40);
+            patch = { depth, ...(goIn !== inNow ? { roof: goIn ? "house" : undefined, steps: undefined, noRail: undefined } : {}) };
+            this.tip(goIn ? `${say(depth)} into the house` : `${say(depth)} out`, ev.clientX, ev.clientY);
+          } else {
+            // (its steps, k: onto the open side nearest, where along it)
+            const q = local(p, cur.wall), near = nearestAddOnSide(L0, q.s - cur.at, q.d);
+            if (near.k < 0) return;
+            const steps = L0.steps.map(x => ({ side: x.side, at: x.at }));
+            steps[pos] = { side: near.side, at: Math.round(near.at * 100) / 100 };
+            patch = { steps };
+          }
         }
         list = list.map(x => (x.id === aid ? { ...x, ...patch } : x));
         if (patch.wall !== undefined && patch.wall !== cur.wall) this.cb.onBuildingPart?.({ wall: patch.wall, addOn: aid });
@@ -7854,7 +8046,8 @@ export class CourseView {
   /** A press on the picked building: on one of its doors or windows, a drag moves that one along
    * its wall (picking it; a laid-out one made its own, the wall's others kept as they stand). */
   private buildingBodyDrag(st: StructureItem, e: PointerEvent, hit: string): Drag | null {
-    const part = st.locked ? null : this.buildingPartAt(st, e.clientX, e.clientY);
+    const found = st.locked ? null : this.buildingPartAt(st, e.clientX, e.clientY);
+    const part = found?.plan && !found.addOn ? null : found;
     if (part?.addOn) {
       this.buildingHover(null);
       this.cb.onBuildingPart?.({ wall: part.wall, addOn: part.addOn });

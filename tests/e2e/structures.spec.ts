@@ -533,3 +533,150 @@ test("a building's walls, doors and windows: a wall clicked in 3D, a window put 
   await expect.poll(async () => (await structures(page))[0].addOns?.length ?? 0).toBe(0);
   expect((await structures(page)).length).toBe(1);
 });
+
+test("a carport put on from the roof's menu, let go, picked again with one click, sized by its handle; the roof hides a porch behind it; the same in 2D", async ({ page }) => {
+  test.setTimeout(180_000);
+  await blankCourse(page);
+  await page.getByRole("button", { name: "2 Design" }).click();
+  await page.keyboard.press("s");
+  await page.getByTestId("structure-kind-building").click();
+  await page.getByTestId("draw-shape-box").click();
+  await drag(page, await screenOf(page, 400, 400), await screenOf(page, 436, 424), 3);
+  await expect.poll(async () => (await structures(page)).length).toBe(1);
+  const id = (await structures(page))[0].id;
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("3");
+  // (from the south, high: the south wall and the roof in sight; a porch on the north wall, behind)
+  await page.evaluate(() => { const v = (window as any).__dgView, g = v.groundHeight(418, 412); v.controls.setLookAt(428, g + 80, 512, 418, g, 412, false); v.controls.update(0); });
+  await page.evaluate(i => { const a = (window as any).__dgActions; a.select(null); (window as any).__dgStore.getState().change((d: any) => ({ items: d.items.map((x: any) => (x.id === i ? { ...x, addOns: [{ id: "back", kind: "porch", wall: 0, at: 18, width: 16, depth: 8 }] } : x)) }), false); }, id);
+  await page.waitForTimeout(1500);
+  // (a spot inside the roof, over the south half; or inside a porch's or carport's box, 5 ft up over
+  // its middle: its wall the outline's side from corner `wall` to the next)
+  const at = (what: string) => page.evaluate(([i, what]) => {
+    const v = (window as any).__dgView, st = (window as any).__dgCourse().items.find((x: any) => x.id === i);
+    let pt: number[];
+    if (what === "roof") pt = [418, v.groundHeight(418, 418) + 13, 418];
+    else {
+      const a = st.addOns.find((x: any) => x.id === what), P = st.points, n = P.length, A = P[a.wall], B = P[(a.wall + 1) % n];
+      const len = Math.hypot(B.x - A.x, B.y - A.y), dir = { x: (B.x - A.x) / len, y: (B.y - A.y) / len };
+      const c = { x: P.reduce((s: number, q: any) => s + q.x, 0) / n, y: P.reduce((s: number, q: any) => s + q.y, 0) / n };
+      let out = { x: dir.y, y: -dir.x };
+      if ((A.x - c.x) * out.x + (A.y - c.y) * out.y < 0) out = { x: -out.x, y: -out.y };
+      const q = { x: A.x + dir.x * a.at + out.x * (a.depth / 2), y: A.y + dir.y * a.at + out.y * (a.depth / 2) };
+      pt = [q.x, v.groundHeight(q.x, q.y) + 5, q.y];
+    }
+    const c = v.camera, r = v.container.getBoundingClientRect(), P = new c.position.constructor(...pt).project(c);
+    return { x: r.left + ((P.x + 1) / 2) * r.width, y: r.top + ((1 - P.y) / 2) * r.height };
+  }, [id, what] as const);
+  // The roof's menu, over the porch behind: the Add rows, not the porch's
+  let p = await at("roof");
+  await page.mouse.click(p.x, p.y, { button: "right" });
+  await expect(page.getByTestId("menu-add-carport")).toBeVisible();
+  await expect(page.getByTestId("menu-remove-addon")).toHaveCount(0);
+  await page.getByTestId("menu-add-carport").click();
+  await expect.poll(async () => (await structures(page))[0].addOns.length).toBe(2);
+  const carport = (await structures(page))[0].addOns.find((a: any) => a.kind === "carport");
+  expect(carport.wall).not.toBe(0);
+  // Let go of it all, then one click on its roof picks the building and it
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  expect((await editorState(page)).selectedId).toBeNull();
+  p = await at(carport.id);
+  await page.mouse.click(p.x, p.y);
+  await expect.poll(async () => (await editorState(page)).buildingPart).toEqual({ wall: carport.wall, addOn: carport.id });
+  expect((await editorState(page)).selectedId).toBe(id);
+  await expect(page.getByTestId("building-part-name")).toContainText("Carport");
+  await expect(page.getByTestId("addon-fields")).toBeVisible();
+  // Its depth handle draws it out
+  const h = await handleCenter(page, "addd");
+  await drag(page, h, { x: h.x, y: h.y + 40 }, 10);
+  await expect.poll(async () => (await structures(page))[0].addOns.find((a: any) => a.id === carport.id).depth).not.toBe(carport.depth);
+  // Its menu: Remove this carport (only it)
+  p = await at(carport.id);
+  await page.mouse.click(p.x, p.y, { button: "right" });
+  await page.getByTestId("menu-remove-addon").click();
+  await expect.poll(async () => (await structures(page))[0].addOns.map((a: any) => a.id)).toEqual(["back"]);
+  // In 2D: the roof's menu has the Add rows; a click on the porch picks it
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("2");
+  await page.evaluate(() => (window as any).__dgView.fitBounds({ minX: 370, minY: 370, maxX: 466, maxY: 454 }, { animate: false }));
+  await page.waitForTimeout(1200);
+  p = await screenOf(page, 418, 414);
+  await page.mouse.click(p.x, p.y, { button: "right" });
+  await expect(page.getByTestId("menu-add-deck")).toBeVisible();
+  await page.keyboard.press("Escape");
+  p = await screenOf(page, 418, 395);
+  await page.mouse.click(p.x, p.y);
+  await expect.poll(async () => (await editorState(page)).buildingPart).toEqual({ wall: 0, addOn: "back" });
+});
+
+test("a porch as the Security Camera Planner's: steps put on and taken off from its menu, one side's railing off, copied onto another wall; set into the house from the panel and by dragging its front in, the wall behind it still picked", async ({ page }) => {
+  test.setTimeout(180_000);
+  await blankCourse(page);
+  await page.getByRole("button", { name: "2 Design" }).click();
+  await page.keyboard.press("s");
+  await page.getByTestId("structure-kind-building").click();
+  await page.getByTestId("draw-shape-box").click();
+  await drag(page, await screenOf(page, 400, 400), await screenOf(page, 436, 424), 3);
+  await expect.poll(async () => (await structures(page)).length).toBe(1);
+  const id = (await structures(page))[0].id;
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("3");
+  // (a porch on the south wall, seen from the south)
+  const south = await page.evaluate(i => { const st = (window as any).__dgCourse().items.find((x: any) => x.id === i); return st.points.findIndex((p: any, k: number) => Math.abs(p.y - 424) < 0.5 && Math.abs(st.points[(k + 1) % st.points.length].y - 424) < 0.5); }, id);
+  expect(south).toBeGreaterThanOrEqual(0);
+  await page.evaluate(([i, w]) => (window as any).__dgStore.getState().change((d: any) => ({ items: d.items.map((x: any) => (x.id === i ? { ...x, addOns: [{ id: "fp", kind: "porch", wall: w, at: 18, width: 18, depth: 8, floor: 2.5 }] } : x)) }), false), [id, south] as const);
+  await page.evaluate(() => { const v = (window as any).__dgView, g = v.groundHeight(418, 412); v.controls.setLookAt(424, g + 70, 520, 418, g, 420, false); v.controls.update(0); (window as any).__dgActions.select(null); });
+  await page.waitForTimeout(1200);
+  // (a spot on its floor: sx along from its middle, d out, `up` ft over it)
+  const fpt = (sx: number, d: number, up = 0.3) => page.evaluate(([i, sx, d, up]) => {
+    const v = (window as any).__dgView, st = (window as any).__dgCourse().items.find((x: any) => x.id === i), a = st.addOns.find((x: any) => x.id === "fp");
+    const B = (window as any).__dgParts, F = B.buildingFrame(st, v.standGround), L = B.addOnLevels(F, a, v.standGround);
+    const c = v.camera, r = v.container.getBoundingClientRect(), P = new c.position.constructor(L.mid.x + L.w.dir.x * sx + L.w.out.x * d, L.top + up, L.mid.y + L.w.dir.y * sx + L.w.out.y * d).project(c);
+    return { x: r.left + ((P.x + 1) / 2) * r.width, y: r.top + ((1 - P.y) / 2) * r.height };
+  }, [id, sx, d, up] as const);
+  const porch = async () => (await structures(page))[0].addOns.find((a: any) => a.id === "fp");
+  const menu = async (p: { x: number; y: number }) => { await page.mouse.click(p.x, p.y, { button: "right" }); };
+  // Put steps here, on its front off the middle; Remove these steps on the middle ones
+  await menu(await fpt(5.5, 7.4));
+  await page.getByTestId("menu-put-steps").click();
+  await expect.poll(async () => (await porch()).steps?.length).toBe(2);
+  await menu(await fpt(0, 7.6));
+  await page.getByTestId("menu-remove-steps").click();
+  await expect.poll(async () => (await porch()).steps?.length).toBe(1);
+  expect((await porch()).steps[0].at).toBeGreaterThan(0.7);
+  // No railing on this side (an end)
+  await menu(await fpt(8.6, 4));
+  await page.getByTestId("menu-rail-side").click();
+  await expect.poll(async () => (await porch()).noRail?.length).toBe(1);
+  // Copy this porch; Paste the porch here, from the roof's menu
+  await menu(await fpt(-3, 4));
+  await page.getByTestId("menu-copy-addon").click();
+  const roofSpot = await page.evaluate(() => { const v = (window as any).__dgView, c = v.camera, r = v.container.getBoundingClientRect(), P = new c.position.constructor(418, v.groundHeight(418, 418) + 13, 418).project(c); return { x: r.left + ((P.x + 1) / 2) * r.width, y: r.top + ((1 - P.y) / 2) * r.height }; });
+  await menu(roofSpot);
+  await page.getByTestId("menu-paste-addon").click();
+  await expect.poll(async () => (await structures(page))[0].addOns.length).toBe(2);
+  const pasted = (await structures(page))[0].addOns.find((a: any) => a.id !== "fp");
+  expect([pasted.kind, pasted.width, pasted.depth, pasted.noRail?.length]).toEqual(["porch", 18, 8, 1]);
+  await page.evaluate(i => (window as any).__dgStore.getState().change((d: any) => ({ items: d.items.map((x: any) => (x.id === i ? { ...x, addOns: x.addOns.filter((a: any) => a.id === "fp") } : x)) }), false), id);
+  // Placement: Set into the house (the panel)
+  await page.evaluate(([i, w]) => { (window as any).__dgActions.select(i); (window as any).__dgEditor().set({ buildingPart: { wall: w, addOn: "fp" } }); }, [id, south] as const);
+  await page.getByRole("radio", { name: "Set into the house" }).click();
+  await expect.poll(async () => (await porch()).roof).toBe("house");
+  // The wall behind it: a click picks the wall, not the porch; its floor picks the porch
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => (window as any).__dgView.controls.setLookAt(424, (window as any).__dgView.groundHeight(418, 412) + 18, 470, 418, (window as any).__dgView.groundHeight(418, 412) + 4, 420, false));
+  await page.waitForTimeout(800);
+  const depth = (await porch()).depth;
+  let p = await fpt(-6, -depth + 0.05, 4);
+  await page.mouse.click(p.x, p.y);
+  await expect.poll(async () => (await editorState(page)).buildingPart).toEqual({ wall: south });
+  p = await fpt(4, -2, 0.05);
+  await page.mouse.click(p.x, p.y);
+  await expect.poll(async () => (await editorState(page)).buildingPart).toEqual({ wall: south, addOn: "fp" });
+  // Its front handle (its back, set in) dragged out past the wall: out from it again
+  const h = await handleCenter(page, "addd");
+  await drag(page, h, { x: h.x, y: h.y + 200 }, 14);
+  await expect.poll(async () => (await porch()).roof).toBeUndefined();
+});

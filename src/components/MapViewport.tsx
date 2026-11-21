@@ -1,4 +1,5 @@
 // The map view (2D and 3D are one view): the CourseView engine, fed from the course store.
+import { addOnLevels, buildingFrame } from "../lib/buildingParts";
 import { useOnSite } from "../state/onSite";
 import { usePageShown } from "../state/exportPick";
 import { latitudeOf, paintLight, sunFromOf } from "../lib/mapLook";
@@ -125,6 +126,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
     });
     setLiveView(v);
     (window as any).__dgView = v;
+    // (the porch sums, for the tests)
+    (window as any).__dgParts = { buildingFrame, addOnLevels };
     setView(v);
     const off = v.onView(setInfo);
     return () => {

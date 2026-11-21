@@ -340,9 +340,26 @@ export interface AddOn {
   /** Which wall, and its middle, ft along it from the wall's first corner. */
   wall: number;
   at: number;
-  /** Ft along the wall, and out from it. */
+  /** Ft along the wall, and out from it (set into the house: in from it). */
   width: number;
   depth: number;
+  /** Its roof: the house's ("house": set into the house, under its roof, the wall set back behind
+   * it), its own sloping away from the wall ("own"), or none. Unset: own for a porch or a carport,
+   * none for a deck or a patio. */
+  roof?: "house" | "own" | "none";
+  /** Its own roof's slope, inches of rise per foot. Unset: 3 in 12. */
+  pitch?: number;
+  /** Its floor, ft up from the ground at the wall. Unset: a porch's and a deck's at the house's
+   * floor; a carport's and a patio's a slab on the ground. */
+  floor?: number;
+  /** A railing round a raised floor. Unset: on where the floor is 1½ ft or more up. */
+  railing?: boolean;
+  /** Its open sides with no railing: 0 its end toward the wall's first corner, 1 the front, 2 its
+   * other end. */
+  noRail?: number[];
+  /** Its steps down: on which open side (as noRail) and how far along it (0 to 1). Unset: one in
+   * the middle of the front where the floor stands over the ground. */
+  steps?: { side: number; at: number }[];
 }
 /** A door or a window put on a wall by hand. */
 export interface Opening {

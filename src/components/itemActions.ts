@@ -1,7 +1,7 @@
 // The map's menu for a hole or a thing on it, and for open ground (a right-click on a computer, a
 // finger held on a phone): one list, so both menus offer the same rows in the same words.
-import { AppWindow, CarFront, ClipboardPaste, Copy, DoorOpen, Eye, Fence, Grid2x2, Home, ListChecks, Lock, Maximize2, MessageSquarePlus, Plane, Ruler, Trash2, Unlock, Warehouse, type LucideIcon } from "lucide-react";
-import { addAddOnToWall, addToWall, laidOutKind, removeLaidOut } from "./BuildingPanel";
+import { AppWindow, CarFront, ClipboardPaste, Copy, DoorOpen, Eye, Fence, Grid2x2, Home, ListChecks, Lock, Maximize2, MessageSquarePlus, Plane, Plus, Ruler, Trash2, Unlock, Warehouse, type LucideIcon } from "lucide-react";
+import { addAddOnToWall, addToWall, clipped, copyAddOn, laidOutKind, levelsOf, pasteAddOn, putSteps, removeLaidOut, removeSteps, toggleRail } from "./BuildingPanel";
 import { ADDON_LABEL, OPENING_LABEL } from "../lib/buildingParts";
 import { removeAddOn, removeOpening } from "../state/actions";
 import { SERVER } from "../auth/api";
@@ -94,8 +94,18 @@ export const itemActions = (itemId: string, ground: P | null, named = false, scr
       };
       if (spot.addOn) {
         const ad = item.addOns?.find(x => x.id === spot.addOn);
-        if (ad) a.push({ label: `Remove this ${ADDON_LABEL[ad.kind].toLowerCase()}`, icon: Trash2, danger: true, run: () => { select(item.id); removeAddOn(item.id, ad.id); }, testid: "menu-remove-addon" });
+        if (ad) {
+          const name = ADDON_LABEL[ad.kind].toLowerCase(), L = levelsOf(item, ad), cur = () => getDoc().items.find(i => i.id === item.id) as typeof item;
+          // (its steps there, or steps put there; its railing on that side)
+          if (spot.step !== undefined) a.push({ label: "Remove these steps", icon: Trash2, run: () => { select(item.id); removeSteps(cur(), ad.id, spot.step!); }, testid: "menu-remove-steps" });
+          else if (spot.side && L.level && L.up >= 0.5) a.push({ label: "Put steps here", icon: Plus, run: () => { select(item.id); putSteps(cur(), ad.id, spot.side!.side, spot.side!.at); }, testid: "menu-put-steps" });
+          if (spot.side && L.rail) a.push({ label: (ad.noRail ?? []).includes(spot.side.side) ? "Put the railing back on this side" : "No railing on this side", icon: Fence, run: () => { select(item.id); toggleRail(cur(), ad.id, spot.side!.side); }, testid: "menu-rail-side" });
+          a.push({ label: `Copy this ${name}`, icon: Copy, run: () => copyAddOn(ad), testid: "menu-copy-addon" });
+          a.push({ label: `Remove this ${name}`, icon: Trash2, danger: true, run: () => { select(item.id); removeAddOn(item.id, ad.id); }, testid: "menu-remove-addon" });
+        }
       } else {
+        const cl = clipped();
+        if (cl) a.push({ label: `Paste the ${ADDON_LABEL[cl.kind].toLowerCase()} here`, icon: ClipboardPaste, run: () => { select(item.id); const st = getDoc().items.find(i => i.id === item.id); if (st?.type === "structure" && !pasteAddOn(st, spot.wall, spot.along)) toast(`No room for it on this wall.`, "info"); }, testid: "menu-paste-addon" });
         a.push({ label: "Add a porch here", icon: Home, run: built("porch"), testid: "menu-add-porch" });
         a.push({ label: "Add a carport here", icon: CarFront, run: built("carport"), testid: "menu-add-carport" });
         a.push({ label: "Add a deck here", icon: Fence, run: built("deck"), testid: "menu-add-deck" });

@@ -6,13 +6,14 @@ import { useCourse, useEditor, updateItem } from "../state/course";
 import { getView } from "../state/view";
 import { removeAddOn, removeOpening } from "../state/actions";
 import type { AddOn, Opening, BuildingType, CourseItem, FoundationKind, RoofingKind, RoofKind, SidingKind, StructureItem, WindowAmount, WindowStyle } from "../types";
-import { ADDON_LABEL, ADDON_SIZE, addAddOn, frontWall, NATURAL, addOpening, buildingFrame, OPENING_LABEL, ownWall, wallName, buildingColors, colorName, DEFAULT_COLORS, heightForStories, HOUSE_COLORS, ROOF_COLORS, roofingOf, SCHEMES, schemeOf, schemePatch, sidingOf, storiesOf, windowAmountOf, windowStyleOf, type Scheme } from "../lib/buildingParts";
+import { ADDON_LABEL, ADDON_ROOF_LABEL, ADDON_SIZE, addAddOn, addOnLevels, addOnRoof, maxSetIn, frontWall, NATURAL, addOpening, buildingFrame, OPENING_LABEL, ownWall, wallName, buildingColors, colorName, DEFAULT_COLORS, heightForStories, HOUSE_COLORS, ROOF_COLORS, roofingOf, SCHEMES, schemeOf, schemePatch, sidingOf, storiesOf, windowAmountOf, windowStyleOf, type Scheme } from "../lib/buildingParts";
 import { structureHeight, structureRoof } from "../lib/structures";
 import { ROOF_SHADE_CSS, ROOFING_SCAN, SIDING_SCAN } from "../three/buildingLook";
 import { ColorInput } from "./ColorSwatches";
 import { fmtSize, IconPick } from "./Inspector";
 import { Button, Field, FOCUS, Segmented, Slider } from "./ui";
-import { AppWindow, CarFront, DoorOpen, Fence, Grid2x2, Home, Plus, Trash2, Warehouse } from "lucide-react";
+import { AppWindow, CarFront, Copy, DoorOpen, Fence, Grid2x2, Home, Plus, Trash2, Warehouse } from "lucide-react";
+import { toast } from "../state/toast";
 import { ActRow } from "./mobile/GlassBar";
 const ADD_ICON: Record<string, JSX.Element> = { window: <AppWindow size={18} />, door: <DoorOpen size={18} />, garage: <Warehouse size={18} />, porch: <Home size={18} />, carport: <CarFront size={18} />, deck: <Fence size={18} />, patio: <Grid2x2 size={18} /> };
 
@@ -225,17 +226,92 @@ const frontOf = (st: StructureItem) => { const F = frameOf(st); return F.front ?
 const setPart = (part: { wall: number; opening?: string; addOn?: string } | null) => useEditor.getState().set({ buildingPart: part });
 const ADDON_KINDS: { value: AddOn["kind"]; label: string }[] = [{ value: "porch", label: "Porch" }, { value: "deck", label: "Deck" }, { value: "carport", label: "Carport" }, { value: "patio", label: "Patio" }];
 
-/** A picked porch's (carport's, deck's, patio's) settings: its kind, width, depth; Remove. */
-function AddOnFields({ item, addOn }: { item: StructureItem; addOn: AddOn }) {
-  const set = (patch: Partial<AddOn>, history = true) => updateItem(item.id, { addOns: (item.addOns ?? []).map(a => (a.id === addOn.id ? { ...a, ...patch } : a)) } as Partial<CourseItem>, history);
+/** A porch's shape and heights as it stands on the map's ground. */
+export const levelsOf = (st: StructureItem, a: AddOn) => addOnLevels(frameOf(st), a, (x, y) => getView()?.standGround(x, y) ?? 0);
+const PLACES: { value: "out" | "in"; label: string }[] = [{ value: "out", label: "Out from the wall" }, { value: "in", label: "Set into the house" }];
+const ROOFS: { value: "own" | "none"; label: string }[] = [{ value: "own", label: "Own roof" }, { value: "none", label: "No roof" }];
+const STEP_COUNTS: { value: number; label: string }[] = [{ value: 0, label: "None" }, { value: 1, label: "1" }, { value: 2, label: "2" }, { value: 3, label: "3" }];
+
+/** Its steps, as they stand (each side and where along it). */
+const stepsOf = (st: StructureItem, a: AddOn) => levelsOf(st, a).steps.map(e => ({ side: e.side, at: e.at }));
+/** Steps put on it at a side's spot (the menu's Put steps here), or n of them in all (more go on
+ * its front where it's clearest; fewer drop the last). */
+export const putSteps = (st: StructureItem, aid: string, side: number, at: number) => {
+  const a = st.addOns?.find(x => x.id === aid);
+  if (a) setAddOn(st, aid, { steps: [...stepsOf(st, a), { side, at: Math.round(at * 100) / 100 }] });
+};
+export const removeSteps = (st: StructureItem, aid: string, k: number) => {
+  const a = st.addOns?.find(x => x.id === aid);
+  if (a) setAddOn(st, aid, { steps: stepsOf(st, a).filter((_, j) => j !== k) });
+};
+const countSteps = (st: StructureItem, a: AddOn, n: number) => {
+  const list = stepsOf(st, a).slice(0, n);
+  const L = levelsOf(st, a), front = L.sides.find(x => x.i === 1) ?? L.sides[0];
+  while (front && list.length < n) {
+    // (the spot on its front farthest from the steps there)
+    const taken = list.filter(e => e.side === front.i).map(e => e.at);
+    let best = 0.5, far = -1;
+    for (let t = 0.15; t <= 0.851; t += 0.05) { const d = Math.min(1, ...taken.map(x => Math.abs(x - t))); if (d > far) { far = d; best = t; } }
+    list.push({ side: front.i, at: Math.round(best * 100) / 100 });
+  }
+  setAddOn(st, a.id, { steps: list });
+};
+/** A railing taken off one side of it, or put back. */
+export const toggleRail = (st: StructureItem, aid: string, side: number) => {
+  const a = st.addOns?.find(x => x.id === aid);
+  if (!a) return;
+  const off = new Set(a.noRail ?? []);
+  if (off.has(side)) off.delete(side); else off.add(side);
+  setAddOn(st, aid, { noRail: off.size ? [...off].sort() : undefined, ...(a.railing === false ? { railing: true } : {}) });
+};
+const setAddOn = (st: StructureItem, aid: string, patch: Partial<AddOn>, history = true) =>
+  updateItem(st.id, { addOns: (st.addOns ?? []).map(a => (a.id === aid ? { ...a, ...patch } : a)) } as Partial<CourseItem>, history);
+
+// (a porch copied, to put on another wall)
+let clip: AddOn | null = null;
+export const copyAddOn = (a: AddOn) => { clip = { ...a }; toast(`${ADDON_LABEL[a.kind]} copied. Right-click a wall to put it there.`); };
+export const clipped = () => clip;
+export const pasteAddOn = (st: StructureItem, wall: number, near?: number) => (clip ? addAddOnToWall(st, wall, clip.kind, near, clip) : false);
+
+/** A picked porch's (carport's, deck's, patio's) settings, as the Security Camera Planner's: its
+ * kind, roof (the house's, its own, none) and its slope, floor height, railing, steps, size; Copy,
+ * Remove. `rows`: as the phone's bar's rows. */
+function addOnControls(item: StructureItem, addOn: AddOn, units: Parameters<typeof fmtSize>[1]) {
+  const set = (patch: Partial<AddOn>, history = true) => setAddOn(item, addOn.id, patch, history);
   const commit = () => useCourse.getState().commit();
-  const len = frameOf(item).walls[addOn.wall]?.len ?? 40;
+  const F = frameOf(item), len = F.walls[addOn.wall]?.len ?? 40, L = levelsOf(item, addOn);
+  const roofKind = L.roofKind, deepest = maxSetIn(F, addOn.wall);
+  const ft = (v: number) => fmtSize(v, units);
+  const maxUp = Math.max(1, Math.floor((roofKind === "none" ? F.eave - L.gRef : F.eave - 8 - L.gRef) * 2) / 2);
+  const rows: { id: string; name: string; value: ReactNode; control?: ReactNode; wide?: boolean; run?: () => void; icon?: ReactNode; testid?: string }[] = [
+    { id: "akind", name: "Kind", value: ADDON_LABEL[addOn.kind], control: <Segmented label="Kind" value={addOn.kind} onChange={v => set({ kind: v, depth: roofKind === "house" ? Math.min(ADDON_SIZE[v].depth, deepest) : ADDON_SIZE[v].depth, floor: undefined, steps: undefined, roof: undefined })} options={ADDON_KINDS} /> },
+    // (out from the wall, or set into the house under its roof, the wall set back behind it)
+    ...(deepest >= 4 || roofKind === "house" ? [{ id: "aplace", name: "Placement", value: roofKind === "house" ? "Set in" : "Out", control: <Segmented label="Placement" value={roofKind === "house" ? "in" : "out"} onChange={v => set(v === "in" ? { roof: "house", depth: Math.max(4, Math.min(addOn.depth, deepest)), steps: undefined, noRail: undefined } : { roof: undefined, steps: undefined, noRail: undefined })} options={PLACES} /> }] : []),
+    ...(roofKind !== "house" ? [{ id: "aroof", name: "Roof", value: ADDON_ROOF_LABEL[roofKind], control: <Segmented label="Roof" value={roofKind as "own" | "none"} onChange={v => set({ roof: v === addOnRoof({ ...addOn, roof: undefined }) ? undefined : v })} options={ROOFS} /> }] : []),
+    ...(roofKind === "own" ? [{ id: "aslope", name: "Roof slope", value: `${addOn.pitch ?? 3} in 12`, wide: true, control: <div className="p-2"><Slider label="Roof slope" min={1} max={6} step={0.5} value={addOn.pitch ?? 3} onChange={v => set({ pitch: v === 3 ? undefined : v }, false)} onDone={commit} format={v => `${v} in 12`} /></div> }] : []),
+    { id: "afloor", name: "Floor", value: L.level ? `${ft(Math.max(0, Math.round(L.up * 2) / 2))} up` : "On the ground", wide: true, control: <div className="p-2"><Slider label="Floor height" min={0} max={maxUp} step={0.5} value={L.level ? Math.max(0, Math.min(maxUp, Math.round(L.up * 2) / 2)) : 0} onChange={v => set({ floor: L.onGround && v < 0.5 ? undefined : v }, false)} onDone={commit} format={v => (L.onGround && v < 0.5 ? "On the ground" : `${ft(v)} up`)} /></div> },
+    ...(L.level && L.up >= 0.5 ? [
+      { id: "arail", name: "Railing", value: L.rail ? (addOn.noRail?.length ? "Some sides" : "On") : "Off", control: <Segmented label="Railing" value={L.rail ? "on" : "off"} onChange={v => set({ railing: v === "on", noRail: undefined })} options={[{ value: "on", label: "On" }, { value: "off", label: "Off" }]} /> },
+      { id: "asteps", name: "Steps", value: L.steps.length ? String(L.steps.length) : "None", control: <Segmented label="Steps" value={Math.min(3, L.steps.length)} onChange={v => countSteps(item, addOn, v)} options={STEP_COUNTS} /> }
+    ] : []),
+    { id: "awidth", name: "Width", value: ft(addOn.width), wide: true, control: <div className="p-2"><Slider label="Width" min={4} max={Math.max(4, len - 2)} step={0.5} value={addOn.width} onChange={v => set({ width: v, at: Math.min(len - v / 2 - 1, Math.max(v / 2 + 1, addOn.at)) }, false)} onDone={commit} format={v => `${ft(v)} along the wall`} /></div> },
+    { id: "adepth", name: "Depth", value: ft(L.D), wide: true, control: <div className="p-2"><Slider label="Depth" min={4} max={roofKind === "house" ? Math.max(4, deepest) : 40} step={0.5} value={L.D} onChange={v => set({ depth: v }, false)} onDone={commit} format={v => (roofKind === "house" ? `${ft(v)} in` : `${ft(v)} out`)} /></div> },
+    { id: "acopy", name: "Copy", value: "To another wall", icon: <Copy size={16} />, run: () => copyAddOn(addOn), testid: "addon-copy" },
+    { id: "aremove", name: "Remove", value: ADDON_LABEL[addOn.kind], icon: <Trash2 size={16} />, run: () => removeAddOn(item.id, addOn.id), testid: "addon-remove" }
+  ];
+  return rows;
+}
+
+function AddOnFields({ item, addOn }: { item: StructureItem; addOn: AddOn }) {
+  const units = useCourse(s => s.doc.units);
+  const rows = addOnControls(item, addOn, units);
   return (
     <div data-testid="addon-fields">
-      <Field label="Kind"><Segmented label="Kind" value={addOn.kind} onChange={v => set({ kind: v, depth: ADDON_SIZE[v].depth })} options={ADDON_KINDS} /></Field>
-      <Slider label="Width" min={4} max={Math.max(4, len - 2)} step={0.5} value={addOn.width} onChange={v => set({ width: v, at: Math.min(len - v / 2 - 1, Math.max(v / 2 + 1, addOn.at)) }, false)} onDone={commit} format={v => `${v} ft along the wall`} />
-      <Slider label="Depth" min={4} max={40} step={0.5} value={addOn.depth} onChange={v => set({ depth: v }, false)} onDone={commit} format={v => `${v} ft out`} />
-      <div className="mt-2"><Button small tone="danger" onClick={() => removeAddOn(item.id, addOn.id)} testid="addon-remove"><Trash2 size={13} /> Remove</Button></div>
+      {rows.filter(r => r.control).map(r => (r.wide ? <div key={r.id}>{r.control}</div> : <Field key={r.id} label={r.name}>{r.control}</Field>))}
+      <div className="mt-2 flex gap-1.5">
+        <Button small onClick={() => copyAddOn(addOn)} testid="addon-copy"><Copy size={13} /> Copy</Button>
+        <Button small tone="danger" onClick={() => removeAddOn(item.id, addOn.id)} testid="addon-remove"><Trash2 size={13} /> Remove</Button>
+      </div>
     </div>
   );
 }
@@ -253,8 +329,8 @@ export const addToWall = (st: StructureItem, wall: number, kind: Opening["kind"]
 };
 
 /** A porch, carport, deck or patio put against the wall (picked, ready to move or size). */
-export const addAddOnToWall = (st: StructureItem, wall: number, kind: AddOn["kind"], near?: number) => {
-  const got = addAddOn(st, frameOf(st), wall, kind, near);
+export const addAddOnToWall = (st: StructureItem, wall: number, kind: AddOn["kind"], near?: number, like?: AddOn) => {
+  const got = addAddOn(st, frameOf(st), wall, kind, near, like);
   if (!got) return false;
   updateItem(st.id, { addOns: got.addOns } as Partial<CourseItem>);
   setPart({ wall, addOn: got.id });
@@ -362,16 +438,7 @@ export function buildingPartSettings(item: StructureItem, part: { wall: number; 
   const opening = part.opening ? item.openings?.find(o => o.id === part.opening) : undefined;
   const commit = () => useCourse.getState().commit();
   const addOn = part.addOn ? item.addOns?.find(a => a.id === part.addOn) : undefined;
-  if (addOn) {
-    const set = (patch: Partial<AddOn>, history = true) => updateItem(item.id, { addOns: (item.addOns ?? []).map(a => (a.id === addOn.id ? { ...a, ...patch } : a)) } as Partial<CourseItem>, history);
-    const len = frameOf(item).walls[addOn.wall]?.len ?? 40;
-    return [
-      { id: "akind", name: "Kind", value: ADDON_LABEL[addOn.kind], control: <Segmented label="Kind" value={addOn.kind} onChange={v => set({ kind: v, depth: ADDON_SIZE[v].depth })} options={ADDON_KINDS} /> },
-      { id: "awidth", name: "Width", value: `${addOn.width} ft`, wide: true, control: <div className="p-2"><Slider label="Width" min={4} max={Math.max(4, len - 2)} step={0.5} value={addOn.width} onChange={v => set({ width: v, at: Math.min(len - v / 2 - 1, Math.max(v / 2 + 1, addOn.at)) }, false)} onDone={commit} format={v => `${v} ft along the wall`} /></div> },
-      { id: "adepth", name: "Depth", value: `${addOn.depth} ft`, wide: true, control: <div className="p-2"><Slider label="Depth" min={4} max={40} step={0.5} value={addOn.depth} onChange={v => set({ depth: v }, false)} onDone={commit} format={v => `${v} ft out`} /></div> },
-      { id: "aremove", name: "Remove", value: ADDON_LABEL[addOn.kind], icon: <Trash2 size={16} />, run: () => removeAddOn(item.id, addOn.id), testid: "addon-remove" }
-    ];
-  }
+  if (addOn) return addOnControls(item, addOn, useCourse.getState().doc.units).map(r => (r.wide ? r : r.run ? r : { ...r, control: <div className="p-1.5">{r.control}</div> }));
   if (opening) {
     const set = (patch: Partial<Opening>, history = true) => updateItem(item.id, { openings: (item.openings ?? []).map(o => (o.id === opening.id ? { ...o, ...patch } : o)) } as Partial<CourseItem>, history);
     return [

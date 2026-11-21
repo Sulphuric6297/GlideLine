@@ -17,6 +17,7 @@ import { courseTotals, holeStats, isOb, isOutOfPlay, playsOf, type HoleStats } f
 import { forestCanvas, forestCanvasAsync, paintedFrom, paintedLine, paintsAgain, paintsFromPhoto, treesOverOf, type CanopyGrid } from "./forest";
 import { BASKET_MARKS, RESTRICTED, STRUCTURE_INK, amenitySymbol, basketMark, dropZoneSymbol, gateSymbol, mandoSymbol, structureLegend, structureSymbol, type StructureDraw, type StructureInk } from "./symbols";
 import { isLineKind, structureHeight, structurePath, structureRoof, structureWidth } from "./structures";
+import { addOnRoof, buildingFrame } from "./buildingParts";
 import { chainContours, type Contours } from "./relief";
 import { fmtDist } from "./units";
 import { tallGrassOf } from "./landscapes";
@@ -404,7 +405,20 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     const order: StructureKind[] = ["wall", "stairs", "boardwalk", "deck", "bridge", "shelter", "building"];
     for (const st of [...structures].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind))) {
       const shape = isLineKind(st.kind) ? structurePath(st) : st.points;
-      out.push(`<g opacity="${dim(st.holeId, st.alsoHoles)}">${structureSymbol(st.kind, shape, structureWidth(st), structureHeight(st), structureRoof(st), { ...draw, id: `${uid}-s${st.id}`, ink: st.roofColor && st.roofColor !== "natural" ? { ...draw.ink, roof: st.roofColor, shelter: st.roofColor } : draw.ink }, { pitch: st.roofPitch, across: st.ridgeAcross })}</g>`);
+      const ink = st.roofColor && st.roofColor !== "natural" ? { ...draw.ink, roof: st.roofColor, shelter: st.roofColor } : draw.ink;
+      // (a building's porches, carports, decks and patios out from its walls, under it: a roof, a
+      // deck's boards, a patio's slab; one set into the house is under the house's roof)
+      if (st.kind === "building" && st.addOns?.length) {
+        const F = buildingFrame(st, () => 0);
+        for (const a of st.addOns) {
+          const w = F.walls[a.wall], roof = addOnRoof(a);
+          if (!w || roof === "house") continue;
+          const m = F.along(a.wall, a.at), h = a.width / 2, q = (sx: number, d: number) => ({ x: m.x + w.dir.x * sx + w.out.x * d, y: m.y + w.dir.y * sx + w.out.y * d });
+          const pts = [q(-h, 0), q(h, 0), q(h, a.depth), q(-h, a.depth)];
+          out.push(`<g opacity="${dim(st.holeId, st.alsoHoles)}">${roof === "own" ? structureSymbol("building", pts, 0, 8, "shed", { ...draw, id: `${uid}-a${a.id}`, ink }, { pitch: 0.25 }) : a.kind === "patio" ? `<polygon points="${pts.map(p => `${n(p.x)},${n(p.y)}`).join(" ")}" fill="${ink.stone}" stroke="${ink.casing}" stroke-width="${n(px(0.5))}" stroke-opacity="0.6"/>` : structureSymbol("deck", pts, 0, 2, "flat", { ...draw, id: `${uid}-a${a.id}`, ink })}</g>`);
+        }
+      }
+      out.push(`<g opacity="${dim(st.holeId, st.alsoHoles)}">${structureSymbol(st.kind, shape, structureWidth(st), structureHeight(st), structureRoof(st), { ...draw, id: `${uid}-s${st.id}`, ink }, { pitch: st.roofPitch, across: st.ridgeAcross })}</g>`);
     }
   }
   // (the painted treetops over the buildings, and their shade on the roofs: crowns overhang roofs
