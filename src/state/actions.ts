@@ -71,6 +71,8 @@ export const boxSelect = (ids: string[], add: boolean, trees: { tree: AnyTree; l
   if (lookedAtGroup) letGroupGoUntouched();
   const before = [...(add ? (ed.group.length ? ed.group : partsOf(ed.selectedId)) : []), ...ids];
   let made: string[] = [];
+  // (what could be redone before: a look at trees that turns out not to be an edit leaves it so)
+  const future = useCourse.getState().future;
   if (trees.length) {
     if (trees.length > BOX_TREES) toast(`${trees.length.toLocaleString()} trees in the box: the first ${BOX_TREES} are picked. Draw a smaller box for the rest.`, "info");
     made = adoptTrees(trees.slice(0, BOX_TREES));
@@ -79,8 +81,8 @@ export const boxSelect = (ids: string[], add: boolean, trees: { tree: AnyTree; l
   if (!made.length) return;
   // (one tree alone ends up simply picked: given back as a click's is)
   const now = editor(), doc = useCourse.getState().doc;
-  if (now.group.length) lookedAtGroup = { ids: made, doc };
-  else if (now.selectedId && made.includes(now.selectedId)) lookedAt = { id: now.selectedId, doc };
+  if (now.group.length) lookedAtGroup = { ids: made, doc, future };
+  else if (now.selectedId && made.includes(now.selectedId)) lookedAt = { id: now.selectedId, doc, future };
 };
 
 /** Everything on the course that isn't locked (Ctrl+A). */
@@ -891,11 +893,11 @@ const adoptTrees = (list: { tree: AnyTree; look: TreeLook }[]) => {
 };
 
 // Trees a drag box made the course's own: let go without a change, that's undone
-let lookedAtGroup: { ids: string[]; doc: CourseDoc } | null = null;
+let lookedAtGroup: { ids: string[]; doc: CourseDoc; future: CourseDoc[] } | null = null;
 const letGroupGoUntouched = () => {
   const l = lookedAtGroup;
   lookedAtGroup = null;
-  if (l && useCourse.getState().doc === l.doc) useCourse.getState().undo();
+  if (l && useCourse.getState().doc === l.doc) useCourse.getState().takeBack(l.future);
 };
 if (typeof window !== "undefined") {
   useEditor.subscribe(s => { if (lookedAtGroup && !lookedAtGroup.ids.every(id => s.group.includes(id))) letGroupGoUntouched(); });
@@ -903,12 +905,14 @@ if (typeof window !== "undefined") {
 type AnyTree = { kind: "measured"; k: number } | { kind: "spot"; x: number; y: number; height: number; width: number; conifer: boolean };
 
 // A tree made the course's own by a click only (to look at it, or change it): when it's let go
-// without a change, that's undone, so looking at a tree isn't an edit
-let lookedAt: { id: string; doc: CourseDoc } | null = null;
+// without a change, that's taken back as if it had never been, so looking at a tree isn't an edit:
+// Undo and Redo are as they were before the click (it used to be undone, which left a step to
+// redo for nothing and lost what could be redone before)
+let lookedAt: { id: string; doc: CourseDoc; future: CourseDoc[] } | null = null;
 const letGoUntouched = () => {
   const l = lookedAt;
   lookedAt = null;
-  if (l && useCourse.getState().doc === l.doc) useCourse.getState().undo();
+  if (l && useCourse.getState().doc === l.doc) useCourse.getState().takeBack(l.future);
 };
 if (typeof window !== "undefined") {
   useEditor.subscribe((s, prev) => { if (lookedAt && prev.selectedId === lookedAt.id && s.selectedId !== lookedAt.id) letGoUntouched(); });
@@ -934,9 +938,10 @@ export const adoptTree = (tree: AnyTree, look: TreeLook = null, quiet = true) =>
     patch = { cutTrees: [...(doc.cutTrees ?? []), { x: tree.x, y: tree.y }] };
   }
   const item: TreeItem = asDrawn(made, look);
+  const future = useCourse.getState().future;
   changeDoc(d => ({ ...patch, items: [...d.items, item] }));
   select(item.id);
-  if (quiet) lookedAt = { id: item.id, doc: useCourse.getState().doc };
+  if (quiet) lookedAt = { id: item.id, doc: useCourse.getState().doc, future };
   return item.id;
 };
 

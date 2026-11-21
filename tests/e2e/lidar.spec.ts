@@ -348,6 +348,11 @@ test("any tree the app planted in a wood acts like a tree placed by hand: picked
   }, [cx, cy]);
   const trees = async () => (await course(page)).items.filter((i: any) => i.type === "tree");
   const before = await forest();
+  // (a step to redo, from before: looking at a tree leaves it there, and adds none of its own)
+  await page.evaluate(() => { const w = window as any; w.__dgActions.style({ treeCover: 0.6 }); w.__dgStore.getState().undo(); });
+  const hist = () => page.evaluate(() => (window as any).__dgHistory() as { past: number; future: number });
+  const was = await hist();
+  expect(was.future).toBe(1);
   // A click: the tree is picked, with the Tree panel, where it stood and as tall
   const a = await spot(550, 500);
   await page.mouse.click(a.at.x, a.at.y);
@@ -362,6 +367,8 @@ test("any tree the app planted in a wood acts like a tree placed by hand: picked
   await page.keyboard.press("Escape");
   await expect.poll(async () => (await trees()).length).toBe(0);
   await expect.poll(forest).toBe(before);
+  // (Undo and Redo as they were: nothing to redo from the look, and the step from before still there)
+  expect(await hist()).toEqual(was);
   // Picked and deleted: it stays gone
   await page.mouse.click(a.at.x, a.at.y);
   await expect.poll(async () => (await trees()).length).toBe(1);

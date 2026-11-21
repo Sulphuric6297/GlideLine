@@ -24,6 +24,10 @@ type CourseStore = {
   commit: () => void;
   undo: () => void;
   redo: () => void;
+  /** The last step taken back as if it had never been: nothing to redo from it, and what could be
+   * redone before it (`future`) can be again. For a change that turns out not to be one (a tree
+   * clicked only to look at it). */
+  takeBack: (future: CourseDoc[]) => void;
   /** Replaces the document (open, new, shared link): no undo back into the old one. */
   load: (doc: CourseDoc) => void;
 };
@@ -54,6 +58,11 @@ export const useCourse = create<CourseStore>()((set, get) => ({
     if (gestureStart && gestureStart !== doc) { set({ doc: catchUp(gestureStart), future: [doc, ...future], gestureStart: null }); return; }
     if (!past.length) return;
     set({ doc: catchUp(past[past.length - 1]), past: past.slice(0, -1), future: [doc, ...future], gestureStart: null });
+  },
+  takeBack: future => {
+    const { past, readOnly } = get();
+    if (readOnly || !past.length) return;
+    set({ doc: catchUp(past[past.length - 1]), past: past.slice(0, -1), future, gestureStart: null });
   },
   redo: () => {
     const { past, future, doc, readOnly } = get();

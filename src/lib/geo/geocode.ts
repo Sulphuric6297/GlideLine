@@ -181,6 +181,9 @@ export const fetchPlaceSuggestions = async (text: string, near?: { lat: number; 
   if (had) return had;
   const quiet = <T,>(p: Promise<T[]>) => p.catch(err => { if (isAbort(err) && opts.signal?.aborted) throw err; return [] as T[]; });
   const photon = quiet(photonSearch(text, near, 6, opts.signal));
+  // (stopped while Esri's answer is awaited, by the next letter typed: this one isn't waited on any
+  // more, so its stop is caught here, not left for the page to report as an error)
+  photon.catch(() => {});
   const esri = await quiet(esriSuggest(text, near, opts.signal));
   // (Photon a little longer than Esri, at most: a slow one doesn't hold up the list)
   const late = await Promise.race([photon, new Promise<PlaceSuggestion[] | null>(r => setTimeout(() => r(null), esri.length ? 700 : 4000))]);
