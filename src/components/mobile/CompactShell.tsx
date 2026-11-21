@@ -38,6 +38,7 @@ import { ActionSheet, type SheetAction } from "./ActionSheet";
 import { BottomSheet, type Detent } from "./BottomSheet";
 import { PageTools } from "./PageTools";
 import { useHoleSettings, useItemSettings } from "./HoleStrip";
+import { buildingPartSettings, partName } from "../BuildingPanel";
 import { Disc } from "./SheetFold";
 import { ActRow, EdgeSlider, GlassBar, useBarNav, type BarSetting } from "./GlassBar";
 import { MoveCornerHere } from "../PlaceByGps";
@@ -685,6 +686,9 @@ function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: Course
   }, [sideOn, item.id]);
   // (a part of a field tapped on the map: its Parts open)
   const part = useEditor(e => e.fieldPart);
+  // (a building's wall, door or window tapped: its own settings, its name on the pill, back to the building)
+  const bpart = useEditor(e => e.buildingPart);
+  const bld = item.type === "structure" && item.kind === "building" && bpart ? item : null;
   const menu = (
     <div className="flex flex-col gap-0.5">
       {holeId && <ActRow icon={<Flag size={18} />} label={`Hole ${holeLabel(doc, holeId)}`} hint="Its par, fairway, tees and pins" onClick={() => select(holeId)} testid="pill-hole" />}
@@ -692,6 +696,10 @@ function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: Course
       <PillActions id={item.id} />
     </div>
   );
+  if (bld && bpart) {
+    const up = () => useEditor.getState().set({ buildingPart: bpart.opening ? { wall: bpart.wall } : null });
+    return <GlassBar key={`${bpart.wall}:${bpart.opening ?? ""}`} remember={`${kind}:part`} pill={{ name: partName(bld, bpart), small: itemTitle(item), back: up, testid: "selection-header" }} settings={buildingPartSettings(bld, bpart)} onDone={up} doneLabel="Done with this part" faded={faded} side={side} onHeight={onHeight} testid="item-strip" />;
+  }
   return <GlassBar remember={kind} pill={pill} pillMenu={menu} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} onOpen={setOpened} want={part ? "parts" : null} testid="item-strip" />;
 }
 

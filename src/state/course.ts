@@ -215,6 +215,8 @@ type EditorStore = {
   standTap?: "walk" | "edit";
   /** A part of the picked field (its backstop, its fence…): outlined, its own settings shown. */
   fieldPart?: FieldPart | null;
+  /** A wall of the picked building, or a door or window on it: outlined, its own settings shown. */
+  buildingPart?: { wall: number; opening?: string } | null;
   /** The tee view's flyover settings open over it. */
   teeSettings?: boolean;
   flyover: boolean;
@@ -357,7 +359,7 @@ if (typeof window !== "undefined") {
 // (another hole, or back to the map: standing on its tee again, unless a spot came with it)
 useEditor.subscribe((s, p) => { if (s.teeView !== p.teeView && s.teeStand && s.teeStand === p.teeStand) s.set({ teeStand: null }); });
 // (another thing picked: no part of the last one)
-useEditor.subscribe((s, p) => { if (s.selectedId !== p.selectedId && s.fieldPart) s.set({ fieldPart: null }); });
+useEditor.subscribe((s, p) => { if (s.selectedId !== p.selectedId && (s.fieldPart || s.buildingPart)) s.set({ fieldPart: null, buildingPart: null }); });
 // (a flyover that ends, or another hole's, starts unpaused)
 useEditor.subscribe((s, p) => { if (s.flyPaused && (!s.flyover || s.teeView !== p.teeView)) s.set({ flyPaused: false }); });
 // (a keyframe is held selected while the flyover is paused on it: played on, stopped or another

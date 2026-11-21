@@ -11,7 +11,7 @@ import { roofShape } from "../../src/lib/geo/buildings";
 import type { MapTheme, StructureKind } from "../../src/types";
 
 const structures = async (page: import("@playwright/test").Page) => (await course(page)).items.filter((i: any) => i.type === "structure");
-/** The meshes of a structure's 3D model, by material ("deck", "timber", "stone", "shingle"...). */
+/** The meshes of a structure's 3D model, by material ("deck", "timber", "stone", a building's "walls"...). */
 const model = (page: import("@playwright/test").Page, id: string) =>
   page.evaluate(id => {
     const g = (window as any).__dgView.scene.getObjectByName(`structure:${id}`);
@@ -68,7 +68,8 @@ test("a bridge drawn with the Build tool; the inspector sets its width, height a
 /** What each kind's model is made of (its meshes, one per material). */
 const MATERIALS: Record<StructureKind, string[]> = {
   bridge: ["deck", "stone", "timber"], boardwalk: ["deck", "timber"], stairs: ["concrete", "timber"], wall: ["stone"],
-  building: ["door", "glass", "shingle", "siding", "stone", "trim"], shelter: ["concrete", "metal", "timber"], deck: ["deck", "timber"]
+  // (a building: its walls and roof, foundation, trim, window frames, glass and the rooms behind it, a door)
+  building: ["dark", "door", "found", "frames", "glass", "roof", "room", "trim", "walls"], shelter: ["concrete", "shelterRoof", "timber"], deck: ["deck", "timber"]
 };
 
 // (a wall is a line now, drawn from Build beside the fence: tests/e2e/walls.spec.ts)
@@ -153,7 +154,7 @@ test("reshaping a building with its corner and mid handles, moving it, deleting 
   await expect.poll(() => model(page, id)).toBeNull();
 });
 
-test("buildings like the Security Camera Planner's: looks, roofs, colors, turning, height; a shelter as a gazebo", async ({ page }) => {
+test("buildings like the Security Camera Planner's: type, a color scheme, siding, roofs, turning, height; a shelter as a gazebo", async ({ page }) => {
   // (a long test: 45 s by itself on the test machine, twice that with others running beside it)
   test.setTimeout(180_000);
   await blankCourse(page);
@@ -167,10 +168,19 @@ test("buildings like the Security Camera Planner's: looks, roofs, colors, turnin
   const id = (await structures(page))[0].id;
   await page.keyboard.press("Escape");
   await page.evaluate(i => (window as any).__dgActions.select(i), id);
-  // Not every building is a house: a barn (red walls), restrooms (a flat roof)
-  await page.getByTestId("building-look-barn").click();
-  await expect.poll(async () => (await structures(page))[0].wallColor).toBe("#8e2f25");
-  await page.getByTestId("building-look-restrooms").click();
+  // Not every building is a house: a barn; painted in a color scheme (walls, trim and door at once);
+  // brick siding; each part's color its own
+  await page.getByTestId("building-type").getByRole("radio", { name: "Barn" }).click();
+  await expect.poll(async () => (await structures(page))[0].buildingType).toBe("barn");
+  await page.getByTestId("scheme-sage").click();
+  await expect.poll(async () => (await structures(page))[0].wallColor).toBe("#8e9b80");
+  expect((await structures(page))[0].doorColor).toBe("#8a2f26");
+  await page.getByTestId("building-siding-brick").click();
+  await expect.poll(async () => (await structures(page))[0].siding).toBe("brick");
+  await page.getByTestId("color-trimColor").click();
+  await page.getByRole("button", { name: "Navy" }).first().click();
+  await expect.poll(async () => (await structures(page))[0].trimColor).toBe("#2f3e55");
+  await page.getByRole("radiogroup", { name: "Roof" }).getByRole("radio", { name: "Flat" }).click();
   await expect.poll(async () => (await structures(page))[0].roof).toBe("flat");
   for (const roof of ["Shed", "Pyramid", "Gable"]) {
     await page.getByRole("radiogroup", { name: "Roof" }).getByRole("radio", { name: roof }).click();
@@ -459,4 +469,54 @@ plain("a building's roof read from the survey: a gable along it and one across, 
   plainExpect(tree).toMatchObject({ kind: "gable", across: false, pitch: 0.5 });
   // Too little roof to tell: none
   plainExpect(roofShape(survey(() => 10), [{ x: 20, y: 20 }, { x: 26, y: 20 }, { x: 26, y: 26 }, { x: 20, y: 26 }])).toBeNull();
+});
+
+test("a building's walls, doors and windows: a wall clicked in 3D, a window put on it, slid along, deleted; Esc goes back", async ({ page }) => {
+  test.setTimeout(180_000);
+  await blankCourse(page);
+  await page.getByRole("button", { name: "2 Design" }).click();
+  await page.keyboard.press("s");
+  await page.getByTestId("structure-kind-building").click();
+  await page.getByTestId("draw-shape-box").click();
+  await drag(page, await screenOf(page, 400, 400), await screenOf(page, 436, 424), 3);
+  await expect.poll(async () => (await structures(page)).length).toBe(1);
+  const id = (await structures(page))[0].id;
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("3");
+  // (looking at its north wall, the first, from the north)
+  await page.evaluate(() => { const v = (window as any).__dgView, g = v.groundHeight(418, 412); v.controls.setLookAt(410, g + 24, 350, 414, g + 5, 412, false); v.controls.update(0); });
+  await page.evaluate(i => (window as any).__dgActions.select(i), id);
+  await page.waitForTimeout(1500);
+  const screen = (x: number, h: number, z: number) => page.evaluate(([x, h, z]) => {
+    const v = (window as any).__dgView, c = v.camera, r = v.container.getBoundingClientRect();
+    const P = new c.position.constructor(x, h + v.groundHeight(x, z), z).project(c);
+    return { x: r.left + ((P.x + 1) / 2) * r.width, y: r.top + ((1 - P.y) / 2) * r.height };
+  }, [x, h, z]);
+  // Pointing at the wall outlines it and names it; a click picks it, its part at the top of the panel
+  const w = await screen(411, 4, 399.8);
+  await page.mouse.move(w.x, w.y);
+  await expect.poll(() => page.evaluate(() => (window as any).__dgView.container.title)).toBe("Front wall");
+  await page.mouse.click(w.x, w.y);
+  await expect.poll(async () => (await editorState(page)).buildingPart).toEqual({ wall: 0 });
+  await expect(page.getByTestId("building-part-name")).toHaveText("Front wall");
+  // + Window: one more on the wall, picked, with its handles
+  const before = (await structures(page))[0].openings?.length ?? 0;
+  await page.getByTestId("add-window").click();
+  await expect.poll(async () => (await structures(page))[0].openings?.length ?? 0).toBeGreaterThan(before);
+  const added = (await structures(page))[0].openings.at(-1);
+  expect((await editorState(page)).buildingPart).toEqual({ wall: 0, opening: added.id });
+  await expect(page.locator('[data-handle="opening"]')).toBeVisible();
+  await expect(page.locator('[data-handle="openw"]')).toBeVisible();
+  // Slid along the wall by its middle square
+  const h = await handleCenter(page, "opening");
+  await drag(page, h, { x: h.x + 60, y: h.y }, 10);
+  await expect.poll(async () => Math.abs((await structures(page))[0].openings.find((o: any) => o.id === added.id).at - added.at)).toBeGreaterThan(1);
+  // Delete takes only it; Esc goes back to the building, then puts it down
+  await page.keyboard.press("Delete");
+  await expect.poll(async () => (await structures(page))[0].openings.some((o: any) => o.id === added.id)).toBe(false);
+  expect((await structures(page)).length).toBe(1);
+  expect((await editorState(page)).buildingPart).toEqual({ wall: 0 });
+  await page.keyboard.press("Escape");
+  expect((await editorState(page)).buildingPart).toBeNull();
+  expect((await editorState(page)).selectedId).toBe(id);
 });

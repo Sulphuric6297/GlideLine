@@ -404,7 +404,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     const order: StructureKind[] = ["wall", "stairs", "boardwalk", "deck", "bridge", "shelter", "building"];
     for (const st of [...structures].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind))) {
       const shape = isLineKind(st.kind) ? structurePath(st) : st.points;
-      out.push(`<g opacity="${dim(st.holeId, st.alsoHoles)}">${structureSymbol(st.kind, shape, structureWidth(st), structureHeight(st), structureRoof(st), { ...draw, id: `${uid}-s${st.id}`, ink: st.roofColor ? { ...draw.ink, roof: st.roofColor, shelter: st.roofColor } : draw.ink }, { pitch: st.roofPitch, across: st.ridgeAcross })}</g>`);
+      out.push(`<g opacity="${dim(st.holeId, st.alsoHoles)}">${structureSymbol(st.kind, shape, structureWidth(st), structureHeight(st), structureRoof(st), { ...draw, id: `${uid}-s${st.id}`, ink: st.roofColor && st.roofColor !== "natural" ? { ...draw.ink, roof: st.roofColor, shelter: st.roofColor } : draw.ink }, { pitch: st.roofPitch, across: st.ridgeAcross })}</g>`);
     }
   }
   // (the painted treetops over the buildings, and their shade on the roofs: crowns overhang roofs

@@ -435,6 +435,8 @@ export default function App() {
       if (e.key === "Escape") {
         if (view?.cancelDrawing()) return;
         if (s.tool !== "select") { s.set({ tool: "select" }); return; }
+        // (a building's door or window picked: its wall; a wall: the building)
+        if (s.buildingPart) { s.set({ buildingPart: s.buildingPart.opening ? { wall: s.buildingPart.wall } : null }); return; }
         if (s.selectedId || s.group.length) { select(null); return; }
         // (steep ground's rock, picked: put away as a selection is)
         if (s.steepPicked) { s.set({ steepPicked: false }); return; }

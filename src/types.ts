@@ -320,6 +320,34 @@ export interface LineItem extends BaseItem {
  * (buildings, shelters, decks). Real-scale models in 3D, drawn to scale on the printed map. */
 export type StructureKind = "bridge" | "boardwalk" | "stairs" | "wall" | "building" | "shelter" | "deck";
 export type RoofKind = "gable" | "hip" | "flat" | "shed" | "pyramid";
+/** What a building is (its usual look, size and doors). */
+export type BuildingType = "house" | "garage" | "barn" | "shed" | "restrooms" | "clubhouse" | "church" | "school" | "store";
+/** A building's walls: lap siding, boards (board and batten), brick, stone, stucco, metal. */
+export type SidingKind = "lap" | "board" | "brick" | "stone" | "stucco" | "metal";
+/** A pitched roof's covering. */
+export type RoofingKind = "shingles" | "slate" | "clay" | "metal" | "shakes";
+/** How high a building's floor stands: a slab on the ground, a crawl space, raised. */
+export type FoundationKind = "slab" | "crawl" | "raised";
+/** How many windows a building has round its walls. */
+export type WindowAmount = "none" | "few" | "even" | "many";
+/** Its windows: plain sashes, a grid of panes, or a grid with shutters. */
+export type WindowStyle = "plain" | "grid" | "shutters";
+/** A door or a window put on a wall by hand. */
+export interface Opening {
+  id: string;
+  kind: "window" | "door" | "garage";
+  /** Which wall: the outline's edge from point `wall` to the next. */
+  wall: number;
+  /** Its middle, ft along the wall from that point. */
+  at: number;
+  /** Its size, ft. */
+  width: number;
+  height: number;
+  /** A window's sill, ft above its story's floor (unset: 3). */
+  sill?: number;
+  /** Which story it's on, 0 the ground floor (unset: 0). */
+  story?: number;
+}
 export interface StructureItem extends BaseItem {
   /** More holes it belongs to (an OB line along two fairways): with `holeId`, all of them. */
   alsoHoles?: string[];
@@ -339,9 +367,39 @@ export interface StructureItem extends BaseItem {
   roofPitch?: number;
   /** The ridge runs across the building, between its long sides (unset: along its length). */
   ridgeAcross?: boolean;
-  /** Its own colors (unset: the map's): the roof, and a building's walls. */
+  /** Its own colors (unset: the map's, or a building's walls and roof their own, "Natural"): the
+   * roof, and a building's walls. */
   roofColor?: string;
   wallColor?: string;
+  /** A building: what it is (unset: a house). */
+  buildingType?: BuildingType;
+  /** A building's stories (1, 1.5, 2, 3; unset: from its wall height). */
+  stories?: number;
+  /** A building's walls and pitched roof (unset: lap siding, shingles). */
+  siding?: SidingKind;
+  roofing?: RoofingKind;
+  /** A building's other colors (unset: white trim and frames, a navy door, forest green shutters,
+   * a stone foundation in its own colors). */
+  trimColor?: string;
+  frameColor?: string;
+  doorColor?: string;
+  shutterColor?: string;
+  foundationColor?: string;
+  /** One wall's own color, by its edge (over `wallColor`). */
+  wallColors?: Record<number, string>;
+  /** A building's floor (unset: a slab, half a foot up). */
+  foundation?: FoundationKind;
+  /** A building's windows round its walls, and their style (unset: even; a grid of panes). */
+  windows?: WindowAmount;
+  windowStyle?: WindowStyle;
+  /** The wall its front door is on (unset: its longest). */
+  front?: number;
+  /** Doors and windows put on by hand: a wall that has some, or is in `handWalls`, keeps only those. */
+  openings?: Opening[];
+  /** Walls whose doors and windows are set by hand (none, if it has no openings). */
+  handWalls?: number[];
+  /** What the import guessed rather than found: named on its panel. */
+  guessed?: ("type" | "stories" | "roof" | "colors")[];
   /** Brought in from OpenStreetMap, or (a building nobody's mapped) traced from the air: looking
    * the maps up again replaces it. */
   importSource?: "osm" | "traced" | "fema" | "lidar";

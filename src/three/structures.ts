@@ -1,11 +1,15 @@
 // Built things in 3D at real size (feet): bridges, boardwalks, stairs, walls, buildings, shelters
 // and decks. Each is a few meshes, one per material, with every board, post and stone merged into
 // it, so a course with many of them stays quick. The materials (weathered deck boards, timber,
-// stone, cedar shingles, a metal roof, siding, concrete, glass) and their textures are made once
-// and shared; texture coordinates are in feet, so every texture is at its real size.
+// stone, concrete) and their textures are made once and shared; a building's walls, roof, trim,
+// doors and windows, and a shelter's roof, are three/buildingLook's (scans painted any color).
+// Texture coordinates are in feet, so every texture is at its real size.
 import * as THREE from "three";
 import type { FenceStyle, P, StructureItem } from "../types";
 import { pointInPolygon } from "../lib/geom";
+import { buildingColors, buildingFrame, outlineOf, roofingOf, sidingOf, stepsUp, windowStyleOf } from "../lib/buildingParts";
+import { STRUCTURE_INK } from "../lib/symbols";
+import { glass, onLookLoaded, paint as paintOf, ROOF_SHADE, ROOFING_SCAN, room, SIDING_SCAN, surface } from "./buildingLook";
 import {
   boardwalkDeck, bridgeDeck, isLineKind, offsetPolygon, orientedBox, roofBreaks, roofFor, samplePath, stairSteps,
   structureHeight, structurePath, structureRoof, structureWidth, type Roof
@@ -17,7 +21,7 @@ type V = THREE.Vector3;
 
 // ------------------------------------------------------------------ materials
 
-type MatKey = "deck" | "timber" | "stone" | "shingle" | "metal" | "siding" | "concrete" | "glass" | "trim" | "door";
+type MatKey = "deck" | "timber" | "stone" | "concrete";
 
 /** A small seeded random generator, so the textures come out the same every time. */
 const rng = (seed: number) => () => {
@@ -65,7 +69,7 @@ const grain = (g: CanvasRenderingContext2D, r: () => number, along: "x" | "y", a
   }
 };
 
-const painters: Record<Exclude<MatKey, "glass" | "trim" | "door">, () => THREE.Texture | null> = {
+const painters: Record<MatKey, () => THREE.Texture | null> = {
   // Deck boards across a bridge (seams across u): weathered gray-brown, a few butt joints and knots
   deck: () => paint(512, 256, 8, 4, (g, r) => {
     const bw = 32;
@@ -126,64 +130,6 @@ const painters: Record<Exclude<MatKey, "glass" | "trim" | "door">, () => THREE.T
       g.fillRect(r() * 512, r() * 512, 1 + r() * 2, 1 + r() * 2);
     }
   }, 13),
-  // Cedar shingles: courses of tabs up the roof (v), each course's bottom edge in shadow
-  shingle: () => paint(512, 512, 8, 8, (g, r) => {
-    const row = 32;
-    for (let y = 0; y < 512; y += row) {
-      let x = (y / row) % 2 ? -16 - Math.floor(r() * 20) : -Math.floor(r() * 20);
-      while (x < 512) {
-        const tw = 34 + Math.floor(r() * 44);
-        const l = 0.23 + r() * 0.08;
-        g.fillStyle = hsl(22 + r() * 8, 0.1 + r() * 0.06, l);
-        g.fillRect(x, y, tw, row);
-        for (let k = 0; k < 4; k++) {
-          g.fillStyle = `rgba(${r() < 0.5 ? "20,10,5" : "255,235,210"},${0.05 + r() * 0.08})`;
-          g.fillRect(x + 3 + r() * (tw - 6), y + 4, 1 + r() * 2, row - 6);
-        }
-        g.fillStyle = "rgba(15,8,4,.55)";
-        g.fillRect(x, y, 2, row);
-        x += tw;
-      }
-      g.fillStyle = "rgba(10,6,3,.55)";
-      g.fillRect(0, y, 512, 4);
-      g.fillStyle = "rgba(255,230,200,.08)";
-      g.fillRect(0, y + 4, 512, 3);
-    }
-  }, 14),
-  // A standing-seam metal roof: ribs down the slope (along v) every 1⅓ ft
-  metal: () => paint(256, 128, 4, 2, (g, r) => {
-    const grad = g.createLinearGradient(0, 0, 256, 0);
-    grad.addColorStop(0, "#4f6f54");
-    grad.addColorStop(1, "#557659");
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 256, 128);
-    for (let x = 0; x < 256; x += 256 / 3) {
-      g.fillStyle = "rgba(255,255,255,.35)";
-      g.fillRect(x, 0, 3, 128);
-      g.fillStyle = "rgba(0,0,0,.35)";
-      g.fillRect(x + 3, 0, 4, 128);
-    }
-    for (let i = 0; i < 1200; i++) {
-      g.fillStyle = `rgba(${r() < 0.5 ? "0,0,0" : "255,255,255"},${r() * 0.05})`;
-      g.fillRect(r() * 256, r() * 128, 1, 4 + r() * 10);
-    }
-  }, 15),
-  // Lap siding: boards along the wall, a shadow under each lap
-  siding: () => paint(256, 256, 4, 4, (g, r) => {
-    const row = 32;
-    for (let y = 0; y < 256; y += row) {
-      g.fillStyle = hsl(36 + r() * 4, 0.22, 0.6 + r() * 0.04);
-      g.fillRect(0, y, 256, row);
-      grain(g, r, "x", y + 3, y + row - 3, 256, 10);
-      const sh = g.createLinearGradient(0, y + row - 9, 0, y + row);
-      sh.addColorStop(0, "rgba(0,0,0,0)");
-      sh.addColorStop(1, "rgba(0,0,0,.45)");
-      g.fillStyle = sh;
-      g.fillRect(0, y + row - 9, 256, 9);
-      g.fillStyle = "rgba(255,240,220,.18)";
-      g.fillRect(0, y, 256, 2);
-    }
-  }, 16),
   // Concrete: light, a little mottled and speckled
   concrete: () => paint(256, 256, 8, 8, (g, r) => {
     g.fillStyle = "#b8b3a9";
@@ -205,54 +151,12 @@ const mats = new Map<MatKey, THREE.Material>();
 const material = (key: MatKey) => {
   let m = mats.get(key);
   if (m) return m;
-  const map = key in painters ? painters[key as keyof typeof painters]() : null;
-  const fallback: Record<MatKey, string> = {
-    deck: "#8d7a62", timber: "#5a4330", stone: "#8c857a", shingle: "#5e4232", metal: "#4f6f54", siding: "#6e5036",
-    concrete: "#b8b3a9", glass: "#3b4c5a", trim: "#e8e1d1", door: "#3e5644"
-  };
-  m = new THREE.MeshStandardMaterial({
-    color: map ? 0xffffff : fallback[key],
-    map,
-    roughness: key === "glass" ? 0.18 : key === "metal" ? 0.42 : key === "trim" || key === "door" ? 0.65 : 0.92,
-    metalness: key === "glass" ? 0.3 : key === "metal" ? 0.35 : 0,
-    // Roofs are single sheets: seen from under the eaves too
-    side: key === "shingle" || key === "metal" ? THREE.DoubleSide : THREE.FrontSide
-  });
+  const map = painters[key]();
+  const fallback: Record<MatKey, string> = { deck: "#8d7a62", timber: "#5a4330", stone: "#8c857a", concrete: "#b8b3a9" };
+  m = new THREE.MeshStandardMaterial({ color: map ? 0xffffff : fallback[key], map, roughness: 0.92 });
   m.userData.shared = true;
   mats.set(key, m);
   return m;
-};
-
-const tints = new Map<string, THREE.Material>();
-
-/** A material in a color of its own, keeping its texture's grain (turned grey, so the color shows
- * true rather than mixing with the texture's). */
-const tinted = (key: MatKey, color: string) => {
-  const id = `${key}|${color}`;
-  let m = tints.get(id);
-  if (m) return m;
-  const base = material(key) as THREE.MeshStandardMaterial;
-  const own = base.clone();
-  const src = base.map?.image as HTMLCanvasElement | undefined;
-  if (src && typeof document !== "undefined") {
-    const c = document.createElement("canvas");
-    c.width = src.width;
-    c.height = src.height;
-    const g = c.getContext("2d");
-    if (g) {
-      g.filter = "grayscale(1) brightness(1.45)";
-      g.drawImage(src, 0, 0);
-      const t = base.map!.clone();
-      t.image = c;
-      t.needsUpdate = true;
-      t.userData.shared = true;
-      own.map = t;
-    }
-  }
-  own.color = new THREE.Color(color);
-  own.userData.shared = true;
-  tints.set(id, own);
-  return own;
 };
 
 // ------------------------------------------------------------------ geometry
@@ -439,7 +343,8 @@ const railings = (timber: Mesher, deck: { x: number; y: number; s: number; angle
 
 // ------------------------------------------------------------------ the models
 
-type Parts = Partial<Record<MatKey, Mesher>>;
+/** A model's meshes by what they're made of: the materials' (MatKey), or a building's parts. */
+type Parts = Record<string, Mesher | undefined>;
 
 const bridge = (st: StructureItem, g: Ground, parts: Parts) => {
   const deck = bridgeDeck(structurePath(st), g, structureHeight(st), 1);
@@ -584,63 +489,110 @@ const soffit = (roof: Roof, walls: P[], eave: number, overhang: number, m: Meshe
   }
 };
 
-const outlineOf = (st: StructureItem) => {
-  const pts = st.points.filter((p, i) => i === 0 || Math.hypot(p.x - st.points[i - 1].x, p.y - st.points[i - 1].y) > 1e-3);
-  if (pts.length > 3 && Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-3) pts.pop();
-  return pts;
-};
 
 const building = (st: StructureItem, g: Ground, parts: Parts) => {
-  const outline = outlineOf(st);
-  if (outline.length < 3) return;
-  const H = Math.max(6, structureHeight(st));
-  const gs = [...alongEdges(outline, 6), orientedBox(outline).c].map(p => g(p.x, p.y));
-  const gMin = Math.min(...gs), gMax = Math.max(...gs);
-  const floor = gMax + 0.6, eave = floor + H;
-  const roof = roofFor(st, 1.5, 0.5, outline);
-  const roofY = (p: P) => eave + roof.pitch * roof.run(p);
-  const siding = (parts.siding ??= new Mesher()), stone = (parts.stone ??= new Mesher()), trim = (parts.trim ??= new Mesher());
-  const glass = (parts.glass ??= new Mesher()), door = (parts.door ??= new Mesher());
-  // A stone foundation, a little proud of the walls
-  prism(stone, offsetPolygon(outline, 0.18), gMin - 0.6, floor + 0.15, p => [p.x, p.y]);
-  // Walls up to the roof (a gable end's triangle included)
-  let s = 0;
-  const edges = outline.map((a, i) => ({ a, b: outline[(i + 1) % outline.length] }));
-  const longest = edges.reduce((best, e) => (Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y) > Math.hypot(best.b.x - best.a.x, best.b.y - best.a.y) ? e : best), edges[0]);
-  for (const e of edges) {
-    const out = outward(outline, e.a, e.b);
-    const pts = roofBreaks(e.a, e.b, roof);
-    for (let k = 1; k < pts.length; k++) {
-      const p = pts[k - 1], q = pts[k], l = Math.hypot(q.x - p.x, q.y - p.y);
-      siding.quad(w3(p, floor), w3(q, floor), w3(q, roofY(q)), w3(p, roofY(p)), [[s, floor], [s + l, floor], [s + l, roofY(q)], [s, roofY(p)]], out);
-      s += l;
+  if (outlineOf(st).length < 3) return;
+  const F = buildingFrame(st, g);
+  const { outline, gMin, floor, eave, roof, roofY } = F;
+  const C = buildingColors(st);
+  const at = (k: string) => (parts[k] ??= new Mesher());
+  const trim = at("trim"), frames = at("frames"), found = at("found");
+  const style = windowStyleOf(st), siding = sidingOf(st);
+  // A foundation, a little proud of the walls
+  prism(found, offsetPolygon(outline, 0.18), gMin - 0.6, floor + 0.15, p => [p.x, p.y]);
+  const edges = F.walls.map(e => ({ ...e, dir: new V3(e.dir.x, 0, e.dir.y), out: new V3(e.out.x, 0, e.out.y) }));
+  const along = F.along;
+  let s0 = 0;
+  edges.forEach((e, w) => {
+    if (e.len < 1e-3) return;
+    // (a point on this wall: s ft along it, y up, d ft out from its face)
+    const pt = (s: number, y: number, d = 0) => { const p = along(w, s); return new V3(p.x, y, p.y).addScaledVector(e.out, d); };
+    const box = (m: Mesher, sa: number, sb: number, ya: number, yb: number, da: number, db: number) =>
+      m.box(pt((sa + sb) / 2, (ya + yb) / 2, (da + db) / 2), e.dir, UP, e.out, Math.abs(sb - sa) / 2, Math.abs(yb - ya) / 2, Math.abs(db - da) / 2);
+    const mine = F.placed.filter(o => o.wall === w).map(o => ({ ...o, y0: o.bottom }));
+    // The wall: up to the roof (a gable end's triangle too), its doors and windows cut out
+    const tops = F.tops(w);
+    const contour = [new THREE.Vector2(0, floor), new THREE.Vector2(e.len, floor), ...tops.reverse().map(t => new THREE.Vector2(t.s, t.y))];
+    const doorsAtFloor = mine.filter(o => o.y0 <= floor + 0.01);
+    // (a door opens the wall from the floor: its hole and the wall's foot are one, so the foot runs round it)
+    const foot = [new THREE.Vector2(0, floor)];
+    for (const o of [...doorsAtFloor].sort((x, y) => x.x0 - y.x0)) foot.push(new THREE.Vector2(o.x0, floor), new THREE.Vector2(o.x0, o.y1), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x1, floor));
+    const ring = [...foot, ...contour.slice(1)];
+    const holes = mine.filter(o => !doorsAtFloor.includes(o)).map(o => [new THREE.Vector2(o.x0, o.y0), new THREE.Vector2(o.x1, o.y0), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x0, o.y1)]);
+    const pts = [...ring, ...holes.flat()];
+    const wallM = at(`walls|${st.wallColors?.[w] ?? C.walls ?? ""}`);
+    for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(ring, holes))
+      wallM.tri(pt(pts[i].x, pts[i].y), pt(pts[j].x, pts[j].y), pt(pts[k].x, pts[k].y), [[s0 + pts[i].x, pts[i].y], [s0 + pts[j].x, pts[j].y], [s0 + pts[k].x, pts[k].y]], e.out);
+    s0 += e.len;
+    // Corner boards (wood siding's)
+    if (siding === "lap" || siding === "board") {
+      box(trim, 0, 0.45, floor, roofY(e.a) - 0.1, 0, 0.1);
+      box(trim, e.len - 0.45, e.len, floor, roofY(e.b) - 0.1, 0, 0.1);
     }
-    // Windows (and the door, on the longest wall)
-    const len = Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y);
-    if (len < 7 || H < 7.5) continue;
-    const dir = new V3((e.b.x - e.a.x) / len, 0, (e.b.y - e.a.y) / len);
-    const count = Math.max(1, Math.floor((len - 2) / 9));
-    for (let k = 0; k < count; k++) {
-      const t = (k + 0.5) / count;
-      const at = { x: e.a.x + (e.b.x - e.a.x) * t, y: e.a.y + (e.b.y - e.a.y) * t };
-      const isDoor = e === longest && k === Math.floor(count / 2) && H >= 8;
-      const wHalf = isDoor ? 1.6 : 1.5, y0 = isDoor ? floor : floor + 3, y1 = isDoor ? floor + 7 : floor + 6.5;
-      const c = (o: number, y: number) => new V3(at.x, y, at.y).addScaledVector(out, o);
-      trim.box(c(0.06, (y0 + y1) / 2 + (isDoor ? 0.15 : 0)), dir, UP, out, wHalf + 0.3, (y1 - y0) / 2 + (isDoor ? 0.15 : 0.3), 0.08);
-      if (isDoor) door.box(c(0.12, (y0 + y1) / 2), dir, UP, out, wHalf, (y1 - y0) / 2, 0.08);
-      else {
-        glass.box(c(0.1, (y0 + y1) / 2), dir, UP, out, wHalf, (y1 - y0) / 2, 0.06);
-        // Muntins
-        trim.box(c(0.16, (y0 + y1) / 2), dir, UP, out, 0.06, (y1 - y0) / 2, 0.03);
-        trim.box(c(0.16, (y0 + y1) / 2), dir, UP, out, wHalf, 0.06, 0.03);
+    for (const o of mine) {
+      const { x0, x1, y0, y1 } = o;
+      const sides = (m: Mesher, d0: number, d1: number, bottom: boolean) => {
+        m.quad(pt(x0, y0, d0), pt(x0, y0, d1), pt(x0, y1, d1), pt(x0, y1, d0), [[0, 0], [1, 0], [1, 1], [0, 1]], e.dir);
+        m.quad(pt(x1, y0, d0), pt(x1, y0, d1), pt(x1, y1, d1), pt(x1, y1, d0), [[0, 0], [1, 0], [1, 1], [0, 1]], e.dir.clone().negate());
+        m.quad(pt(x0, y1, d0), pt(x1, y1, d0), pt(x1, y1, d1), pt(x0, y1, d1), [[0, 0], [1, 0], [1, 1], [0, 1]], UP.clone().negate());
+        if (bottom) m.quad(pt(x0, y0, d0), pt(x1, y0, d0), pt(x1, y0, d1), pt(x0, y0, d1), [[0, 0], [1, 0], [1, 1], [0, 1]], UP);
+      };
+      const tw = o.kind === "garage" ? 0.4 : 0.36;
+      // (its casing round it, a head over it)
+      box(trim, x0 - tw, x0, o.kind === "window" ? y0 - 0.05 : y0, y1 + tw, 0, 0.1);
+      box(trim, x1, x1 + tw, o.kind === "window" ? y0 - 0.05 : y0, y1 + tw, 0, 0.1);
+      box(trim, x0 - tw - 0.1, x1 + tw + 0.1, y1, y1 + tw + 0.06, 0, 0.15);
+      if (o.kind === "window") {
+        const d = 0.45, f = 0.16, mid = (y0 + y1) / 2;
+        sides(trim, 0, -d, true);
+        // (the room behind: its sides dark, its back one of the four rooms)
+        sides(at("dark"), -d, -d - 1.6, true);
+        const v = Math.floor(Math.abs(Math.sin(w * 12.9898 + o.at * 78.233) * 43758.5453)) % 4;
+        at("room").quad(pt(x0, y0, -d - 1.6), pt(x1, y0, -d - 1.6), pt(x1, y1, -d - 1.6), pt(x0, y1, -d - 1.6), [[v / 4, 0], [(v + 1) / 4, 0], [(v + 1) / 4, 1], [v / 4, 1]], e.out);
+        at("glass").quad(pt(x0, y0, -d + 0.08), pt(x1, y0, -d + 0.08), pt(x1, y1, -d + 0.08), pt(x0, y1, -d + 0.08), [[0, 0], [1, 0], [1, 1], [0, 1]], e.out);
+        // (two sashes: their frames and the rail where they meet; a grid of panes)
+        box(frames, x0, x0 + f, y0, y1, -d + 0.04, -d + 0.18);
+        box(frames, x1 - f, x1, y0, y1, -d + 0.04, -d + 0.18);
+        box(frames, x0, x1, y1 - f, y1, -d + 0.04, -d + 0.18);
+        box(frames, x0, x1, y0, y0 + f, -d + 0.04, -d + 0.18);
+        box(frames, x0, x1, mid - 0.08, mid + 0.08, -d + 0.04, -d + 0.22);
+        if (style !== "plain") {
+          for (const k of [1, 2]) box(frames, x0 + ((x1 - x0) * k) / 3 - 0.03, x0 + ((x1 - x0) * k) / 3 + 0.03, y0, y1, -d + 0.18, -d + 0.22);
+          for (const yy of [y0 + (y1 - y0) / 4, y0 + (3 * (y1 - y0)) / 4]) box(frames, x0, x1, yy - 0.03, yy + 0.03, -d + 0.18, -d + 0.22);
+        }
+        // (its sill, out over the wall)
+        box(trim, x0 - tw - 0.15, x1 + tw + 0.15, y0 - 0.22, y0, -0.1, 0.3);
+        if (style === "shutters") for (const [a, b] of [[x0 - tw - o.width / 2 - 0.05, x0 - tw - 0.05], [x1 + tw + 0.05, x1 + tw + o.width / 2 + 0.05]]) {
+          box(at("shutters"), a, b, y0, y1, 0, 0.12);
+          box(at("shutters"), a + 0.12, b - 0.12, (y0 + y1) / 2 - 0.12, (y0 + y1) / 2 + 0.12, 0.12, 0.17);
+        }
+      } else {
+        // A door, or a garage's: set in, panels on it
+        const d = 0.3, slab = at(o.kind === "garage" ? "garage" : "door");
+        sides(trim, 0, -d, false);
+        box(slab, x0, x1, y0, y1, -d - 0.15, -d);
+        if (o.kind === "garage") for (let k = 1; k < 4; k++) box(slab, x0 + 0.1, x1 - 0.1, y0 + ((y1 - y0) * k) / 4 - 0.05, y0 + ((y1 - y0) * k) / 4 + 0.05, -d, -d + 0.05);
+        else for (const [a, b] of [[0.18, 0.47], [0.53, 0.82]]) for (const [c, dd] of [[0.08, 0.42], [0.5, 0.78]]) box(slab, x0 + o.width * a, x0 + o.width * b, y0 + o.height * c, y0 + o.height * dd, -d, -d + 0.05);
+        // Steps up to it where the floor stands over the ground: a landing, then steps down
+        const ground = g(pt(o.at, 0, 3).x, pt(o.at, 0, 3).z), rise = y0 - ground, n = stepsUp(rise);
+        if (n && o.kind !== "garage") {
+          const steps = at("steps"), wide = o.width / 2 + 1.1, land = 3.5, riser = rise / n;
+          box(steps, o.at - wide, o.at + wide, ground - 0.4, y0 - 0.05, 0, land);
+          for (let k = 1; k < n; k++) box(steps, o.at - wide, o.at + wide, ground - 0.4, y0 - 0.05 - k * riser, 0, land + k * 0.95);
+        } else if (o.kind === "garage" && rise > 0.15) {
+          // (a garage's: a concrete apron sloping down from its door to the ground)
+          const apron = at("steps"), run = Math.max(4, rise * 6), a0 = x0 - 0.5, a1 = x1 + 0.5, lo = ground - 0.3;
+          apron.quad(pt(a0, y0, 0), pt(a1, y0, 0), pt(a1, lo, run), pt(a0, lo, run), [[a0, 0], [a1, 0], [a1, run], [a0, run]], UP);
+          for (const [x, sgn] of [[a0, -1], [a1, 1]] as [number, number][]) apron.tri(pt(x, y0, 0), pt(x, lo, run), pt(x, lo, 0), [[0, y0], [run, lo], [0, lo]], e.dir.clone().multiplyScalar(sgn));
+        }
       }
     }
-  }
+  });
   if (structureRoof(st) === "flat") {
     // A flat roof: a membrane, and a low parapet round its edge
-    roofFaces(roof, eave, (parts.concrete ??= new Mesher()), trim);
-    sweep(stone, roof.eaves, roof.eaves.map(() => eave - 0.45), roof.eaves.map(() => eave + 1.1), 0, 0.28, true);
-  } else roofFaces(roof, eave, (parts.shingle ??= new Mesher()), trim);
+    roofFaces(roof, eave, at("flatroof"), trim);
+    sweep(found, roof.eaves, roof.eaves.map(() => eave - 0.45), roof.eaves.map(() => eave + 1.1), 0, 0.28, true);
+  } else roofFaces(roof, eave, at("roof"), trim);
   soffit(roof, outline, eave, 1.5, trim);
 };
 
@@ -658,7 +610,7 @@ const shelter = (st: StructureItem, g: Ground, parts: Parts) => {
   for (const p of alongEdges(inset, 10)) post(timber, p, floor, eave, 0.6);
   sweep(timber, inset, inset.map(() => eave - 1.05), inset.map(() => eave), 0, 0.3, true);
   const roof = roofFor(st, 2, 0.42, outline);
-  roofFaces(roof, eave + 0.2, (parts.metal ??= new Mesher()), timber);
+  roofFaces(roof, eave + 0.2, (parts.shelterRoof ??= new Mesher()), timber);
   // Picnic tables under it
   const box = orientedBox(outline);
   if (box.a >= 5 && box.b >= 4) {
@@ -700,6 +652,26 @@ const deckModel = (st: StructureItem, g: Ground, parts: Parts) => {
   }
 };
 
+/** A building's part's material: its walls (`walls|<color>`), roof, trim, doors and windows. */
+const buildingMaterial = (key: string, st: StructureItem): THREE.Material => {
+  const C = buildingColors(st);
+  if (key.startsWith("walls|")) return surface(SIDING_SCAN[sidingOf(st)], key.slice(6) || undefined);
+  switch (key) {
+    case "roof": return surface(ROOFING_SCAN[roofingOf(st)], C.roof, true, C.roof ? ROOF_SHADE : 1);
+    case "flatroof": return surface("stucco", C.roof ?? "#8d8b86");
+    case "frames": return paintOf(C.frames, 0.5);
+    case "door": return paintOf(C.door, 0.45);
+    case "garage": return paintOf(C.trim, 0.5);
+    case "shutters": return paintOf(C.shutters, 0.6);
+    case "found": return surface("stone", C.foundation);
+    case "steps": return surface("stucco", "#bdb8ae");
+    case "glass": return glass();
+    case "room": return room();
+    case "dark": return paintOf("#2a2622", 1);
+    default: return paintOf(C.trim, 0.55);
+  }
+};
+
 /**
  * A built thing as a 3D model on the ground (`groundAt` gives the ground's height). The group is
  * named "structure:<id>"; its meshes cast and catch shadows.
@@ -711,13 +683,12 @@ export const createStructure = (st: StructureItem, groundAt: Ground) => {
   if (st.points.length < (isLineKind(st.kind) ? 2 : 3)) return group;
   const parts: Parts = {};
   ({ bridge, boardwalk, stairs, wall, building, shelter, deck: deckModel })[st.kind](st, groundAt, parts);
-  for (const [key, m] of Object.entries(parts) as [MatKey, Mesher][]) {
-    if (m.empty) continue;
-    // (its own roof and wall colors, where it has them)
-    const own = key === "shingle" || key === "metal" || (key === "concrete" && st.kind === "building") ? st.roofColor : key === "siding" ? st.wallColor : undefined;
-    const mesh = new THREE.Mesh(m.geometry(), own ? tinted(key, own) : material(key));
-    mesh.name = key;
-    mesh.castShadow = true;
+  for (const [key, m] of Object.entries(parts) as [string, Mesher][]) {
+    if (!m || m.empty) continue;
+    const mesh = new THREE.Mesh(m.geometry(), st.kind === "building" ? buildingMaterial(key, st) : key === "shelterRoof" ? surface("roofmetal", st.roofColor ?? STRUCTURE_INK.shelter, true, ROOF_SHADE) : material(key as MatKey));
+    mesh.name = key.split("|")[0];
+    // (glass and the rooms behind it cast no shadow)
+    mesh.castShadow = key !== "glass" && key !== "room";
     mesh.receiveShadow = true;
     group.add(mesh);
   }
@@ -889,7 +860,7 @@ export const createFence = (points: P[], groundAt: Ground, height = 4, style: Fe
 // (the 3D view only draws when something changes: told when a part's picture arrives)
 const partLoaded = new Set<() => void>();
 /** Calls back when a part's real texture has loaded; returns the call to stop. */
-export const onPartLoaded = (f: () => void) => { partLoaded.add(f); return () => { partLoaded.delete(f); }; };
+export const onPartLoaded = (f: () => void) => { partLoaded.add(f); const off = onLookLoaded(f); return () => { partLoaded.delete(f); off(); }; };
 let chainMat: THREE.MeshStandardMaterial | null = null, chainShadow: THREE.MeshDepthMaterial | null = null, chainPostMat: THREE.Material | null = null;
 /** Galvanized posts and rails. */
 const chainPost = () => (chainPostMat ??= Object.assign(new THREE.MeshStandardMaterial({ color: "#8a9296", roughness: 0.5, metalness: 0.55 }), { userData: { shared: true } }));

@@ -29,7 +29,9 @@ import { TREE_KINDS, speciesNow } from "../TreeSettings";
 import { ROCK_ICONS, kindPatch, ovalOutline, rockShapes, sizePatch } from "../RockSettings";
 import { ROCK_BURIED, rockSpan } from "../../three/rocks";
 import { SPECIES } from "../../three/ezShapes";
-import { ChipPick, ColorInput, OnlyGroup, PickRow, Segmented, Select, TextInput, Toggle } from "../ui";
+import { ChipPick, OnlyGroup, PickRow, Segmented, Select, TextInput, Toggle } from "../ui";
+import { ColorInput } from "../ColorSwatches";
+import { buildingSettings } from "../BuildingPanel";
 import { ActRow, type BarSetting } from "./GlassBar";
 
 /** A wall from before walls were lines: the row that makes it the new wall. */
@@ -326,8 +328,9 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     const kinds = STRUCTURE_ORDER.filter(k => STRUCTURE_KINDS[k].shape === meta.shape && (k !== "wall" || s.kind === "wall"));
     out.push({ id: "kind", name: "Kind", value: meta.label, wide: true, control: <KindTiles label="Structure kind" value={s.kind} onChange={(v: StructureKind) => set({ kind: v })} options={kinds.map(k => ({ value: k, label: STRUCTURE_KINDS[k].label, picture: bigIcon(builtIcon(k)) }))} /> });
     if (s.kind === "wall" && !s.locked) out.push(newWall(s.id, false));
-    if (s.kind === "building" || s.kind === "shelter") out.push({ id: "look", name: "Look", value: "Roof and walls", wide: true, control: <div className="p-1.5"><StructureLook item={s} /></div> });
-    if (meta.heightLabel) {
+    if (s.kind === "building") out.push(...buildingSettings(s, (p, h) => set(p as Record<string, unknown>, h), done, u));
+    if (s.kind === "shelter") out.push({ id: "look", name: "Look", value: "Shape and roof", wide: true, control: <div className="p-1.5"><StructureLook item={s} /></div> });
+    if (meta.heightLabel && s.kind !== "building") {
       const h = structureHeight(s);
       dial("height", meta.heightLabel.split(" ")[0], fmtSize(h, u), { label: meta.heightLabel, value: h, min: meta.heights[0], max: Math.max(meta.heights[1], h), step: 0.5, format: v => fmtSize(v, u), onChange: v => live({ height: v }), onDone: done });
     }

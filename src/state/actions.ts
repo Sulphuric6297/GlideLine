@@ -297,9 +297,11 @@ export const addDrawn = (kind: "area" | "line" | "structure", points: P[], opts:
 };
 
 export const deleteSelection = () => {
-  const { selectedId, group } = editor();
+  const { selectedId, group, buildingPart } = editor();
   if (group.length) return deleteGroup(group);
   if (!selectedId) return;
+  // (a building's door or window picked: only it goes)
+  if (buildingPart?.opening) return removeOpening(selectedId, buildingPart.opening);
   const doc = getDoc();
   const hole = doc.holes.find(h => h.id === selectedId);
   if (hole) {
@@ -952,3 +954,13 @@ export const adoptTreeAt = (spot: { x: number; y: number; height: number; width:
 
 /** The trees cut down by hand (saplings, planted ones) all back. */
 export const uncutTrees = () => changeDoc(() => ({ cutTrees: undefined }));
+
+/** Takes a door or window off a building (its wall keeps the rest as they are). */
+export const removeOpening = (id: string, opening: string) => {
+  const st = getDoc().items.find(i => i.id === id);
+  if (st?.type !== "structure") return;
+  const o = st.openings?.find(q => q.id === opening);
+  if (!o) return;
+  updateItem(id, { openings: st.openings!.filter(q => q.id !== opening), handWalls: [...new Set([...(st.handWalls ?? []), o.wall])] } as Partial<CourseItem>);
+  editor().set({ buildingPart: { wall: o.wall } });
+};

@@ -18,6 +18,9 @@ export type TracedBuilding = {
   /** Who traced it ("Microsoft ML Buildings", "Esri Community Maps", ...), and how sure they are (0-1). */
   source: string;
   confidence: number | null;
+  /** What Overture calls it (its class, as "house" or "garage", and subtype, as "residential"), where it says. */
+  cls?: string;
+  subtype?: string;
 };
 
 const CATALOG = "https://stac.overturemaps.org/catalog.json";
@@ -274,7 +277,7 @@ const overtureBuildings = async (bounds: GeoBounds): Promise<TracedBuilding[]> =
         let confidence: number | null = null;
         try { const s = JSON.parse(String(b.props.sources ?? "[]")); confidence = typeof s[0]?.confidence === "number" ? s[0].confidence : null; } catch { /* (no sources given) */ }
         const height = typeof b.props.height === "number" ? b.props.height : undefined;
-        out.push({ points, heightM: height, source, confidence });
+        out.push({ points, heightM: height, source, confidence, cls: typeof b.props.class === "string" ? b.props.class : undefined, subtype: typeof b.props.subtype === "string" ? b.props.subtype : undefined });
       }
     }
   }

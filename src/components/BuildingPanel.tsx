@@ -1,0 +1,309 @@
+// A building's settings: what it is, its size and floor, its roof, its outside (a color scheme,
+// its siding and roofing, each part's color) and its doors and windows. On a computer, parts of
+// its panel; on a phone, settings in the glass bar's row (the same controls).
+import type { CSSProperties, ReactNode } from "react";
+import { useCourse, useEditor, updateItem } from "../state/course";
+import { getView } from "../state/view";
+import { removeOpening } from "../state/actions";
+import type { Opening, BuildingType, CourseItem, FoundationKind, RoofingKind, RoofKind, SidingKind, StructureItem, WindowAmount, WindowStyle } from "../types";
+import { NATURAL, addOpening, buildingFrame, OPENING_LABEL, ownWall, wallName, buildingColors, colorName, DEFAULT_COLORS, heightForStories, HOUSE_COLORS, ROOF_COLORS, roofingOf, SCHEMES, schemeOf, schemePatch, sidingOf, storiesOf, windowAmountOf, windowStyleOf, type Scheme } from "../lib/buildingParts";
+import { structureHeight, structureRoof } from "../lib/structures";
+import { ROOF_SHADE_CSS, ROOFING_SCAN, SIDING_SCAN } from "../three/buildingLook";
+import { ColorInput } from "./ColorSwatches";
+import { fmtSize, IconPick } from "./Inspector";
+import { Button, Field, FOCUS, Segmented, Slider } from "./ui";
+import { Plus, Trash2 } from "lucide-react";
+
+export const BUILDING_TYPES: { value: BuildingType; label: string }[] = [
+  { value: "house", label: "House" }, { value: "garage", label: "Garage" }, { value: "barn", label: "Barn" }, { value: "shed", label: "Shed" },
+  { value: "restrooms", label: "Restrooms" }, { value: "clubhouse", label: "Clubhouse" }, { value: "church", label: "Church" }, { value: "school", label: "School" }, { value: "store", label: "Store" }
+];
+export const SIDINGS: { value: SidingKind; label: string }[] = [
+  { value: "lap", label: "Lap siding" }, { value: "board", label: "Board" }, { value: "brick", label: "Brick" }, { value: "stone", label: "Stone" }, { value: "stucco", label: "Stucco" }, { value: "metal", label: "Metal" }
+];
+export const ROOFINGS: { value: RoofingKind; label: string }[] = [
+  { value: "shingles", label: "Shingles" }, { value: "slate", label: "Slate" }, { value: "clay", label: "Clay tile" }, { value: "metal", label: "Metal" }, { value: "shakes", label: "Wood shakes" }
+];
+const STORIES = [{ value: "1", label: "1" }, { value: "1.5", label: "1½" }, { value: "2", label: "2" }, { value: "3", label: "3" }];
+const FOUNDATIONS: { value: FoundationKind; label: string }[] = [{ value: "slab", label: "Slab" }, { value: "crawl", label: "Crawl space" }, { value: "raised", label: "Raised" }];
+const AMOUNTS: { value: WindowAmount; label: string }[] = [{ value: "none", label: "None" }, { value: "few", label: "Few" }, { value: "even", label: "Even" }, { value: "many", label: "Many" }];
+const STYLES: { value: WindowStyle; label: string }[] = [{ value: "plain", label: "Plain" }, { value: "grid", label: "Grid" }, { value: "shutters", label: "Shutters" }];
+
+const base = import.meta.env.BASE_URL;
+/** A scan's picture as it is (a tile's, Natural's). */
+export const scanStyle = (scan: string): CSSProperties => ({ backgroundImage: `url(${base}buildings/${scan}.jpg)`, backgroundSize: "cover", backgroundPosition: "center" });
+/** A color painted on a scan, for a swatch: the scan's light and dark over the color. */
+export const paintedStyle = (scan: string) => (c: string): CSSProperties => ({ backgroundColor: c, backgroundImage: `url(${base}buildings/${scan}-detail.jpg)`, backgroundSize: "cover", backgroundBlendMode: "overlay" });
+/** A roof's color on its roofing, as the 3D roof shows it (a roof reads darker than its paint chip). */
+export const roofStyle = (scan: string) => (c: string): CSSProperties => ({ ...paintedStyle(scan)(c), filter: `brightness(${ROOF_SHADE_CSS})` });
+
+/** A small house in a scheme's colors: its roof, walls, trim and door. */
+export const SchemeIcon = ({ s, size = 40 }: { s: Scheme; size?: number }) => {
+  const walls = s.walls ?? (s.siding === "brick" ? "#8b4a3a" : "#9a8a72"), roof = ROOF_COLORS.find(r => r.name === s.roof)?.color ?? "#555";
+  return (
+    <svg width={size} height={size * 0.72} viewBox="0 0 40 29" aria-hidden>
+      <path d="M3 13 L20 3 L37 13 Z" fill={roof} stroke={s.trim} strokeWidth="1.2" strokeLinejoin="round" />
+      <rect x="7" y="13" width="26" height="14" fill={walls} stroke={s.trim} strokeWidth="1.2" />
+      <rect x="17.5" y="18" width="5" height="9" fill={s.door} />
+      <rect x="10" y="17" width="4.5" height="4.5" fill="#2a3440" stroke={s.trim} strokeWidth=".9" />
+      <rect x="25.5" y="17" width="4.5" height="4.5" fill="#2a3440" stroke={s.trim} strokeWidth=".9" />
+    </svg>
+  );
+};
+
+/** Tiles of a scan each (siding, roofing): its picture and its name. */
+function ScanTiles<T extends string>({ value, options, scanOf, onChange, label, testid }: { value: T; options: { value: T; label: string }[]; scanOf: (v: T) => string; onChange: (v: T) => void; label: string; testid: string }) {
+  return (
+    <div className="grid gap-1.5" style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }} role="radiogroup" aria-label={label} data-testid={testid}>
+      {options.map(o => {
+        const on = value === o.value;
+        return (
+          <button key={o.value} type="button" role="radio" aria-checked={on} aria-label={o.label} onClick={() => onChange(o.value)} data-testid={`${testid}-${o.value}`}
+            className={`flex flex-col items-center gap-1 rounded-lg p-1 ${on ? "bg-white/[0.1] ring-1 ring-zinc-100" : "hover:bg-white/[0.06]"} ${FOCUS}`}>
+            <span className="w-full aspect-square rounded-md ring-1 ring-white/20" style={scanStyle(scanOf(o.value))} />
+            <span className={`text-[10.5px] leading-tight font-semibold text-center ${on ? "text-zinc-50" : "text-zinc-300"}`}>{o.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const Part = ({ title, children }: { title: string; children: ReactNode }) => (
+  <div className="mt-3 pt-3 border-t border-white/[0.06]">
+    <h3 className="text-xs font-semibold text-zinc-400 mb-2">{title}</h3>
+    {children}
+  </div>
+);
+
+/** A scheme picked: its colors and siding; the roof's color kept where it suits the scheme (read
+ * from the photo, say), else the scheme's. */
+const schemeOn = (st: StructureItem, s: Scheme) => {
+  const roof = ROOF_COLORS.find(r => r.color === st.roofColor)?.name;
+  return schemePatch(s, !!roof && s.roofs.includes(roof));
+};
+
+/** Its color scheme, as tiles. */
+export function Schemes({ item, set }: { item: StructureItem; set: (p: Partial<StructureItem>) => void }) {
+  const on = schemeOf(item)?.id;
+  return (
+    <div className="grid grid-cols-3 gap-1" role="radiogroup" aria-label="Color scheme" data-testid="building-schemes">
+      {SCHEMES.map(s => (
+        <button key={s.id} type="button" role="radio" aria-checked={on === s.id} onClick={() => set(schemeOn(item, s))} data-testid={`scheme-${s.id}`}
+          className={`rounded-md border px-1 py-1.5 flex flex-col items-center gap-0.5 text-[11px] font-semibold ${on === s.id ? "border-zinc-100 bg-white/[0.1] text-zinc-50" : "border-white/[0.12] text-zinc-300 hover:border-zinc-500"} ${FOCUS}`}>
+          <SchemeIcon s={s} />{s.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Each part's color: walls and roof painted on their scans (or Natural), the rest plain paint. */
+export function BuildingColors({ item, set, commit }: { item: StructureItem; set: (p: Partial<StructureItem>, history?: boolean) => void; commit: () => void }) {
+  const C = buildingColors(item);
+  const wallScan = SIDING_SCAN[sidingOf(item)], roofScan = ROOFING_SCAN[roofingOf(item)];
+  const flat = structureRoof(item) === "flat";
+  const house = [{ title: "House colors", list: HOUSE_COLORS }];
+  const row = (label: string, key: keyof StructureItem, value: string | undefined, usual: string | undefined, extra: Partial<Parameters<typeof ColorInput>[0]> = {}) => (
+    <ColorInput key={label} label={label} value={value} name={value === undefined && usual === undefined ? "Natural" : colorName(value ?? usual)} testid={`color-${String(key)}`}
+      onChange={(v, live) => set({ [key]: v } as Partial<StructureItem>, live ? false : true)} onDone={commit} palettes={house} {...extra} />
+  );
+  return (
+    <div data-testid="building-colors">
+      {row("Walls", "wallColor", C.walls, undefined, { swatch: paintedStyle(wallScan), natural: { on: () => set({ wallColor: NATURAL }), style: scanStyle(wallScan) } })}
+      {row("Roof", "roofColor", C.roof, undefined, flat ? { palettes: [{ title: "Roof colors", list: ROOF_COLORS }] } : { palettes: [{ title: "Roof colors", list: ROOF_COLORS }], swatch: roofStyle(roofScan), natural: { on: () => set({ roofColor: NATURAL }), style: scanStyle(roofScan) } })}
+      {row("Trim", "trimColor", C.trim, DEFAULT_COLORS.trim)}
+      {row("Door", "doorColor", C.door, DEFAULT_COLORS.door)}
+      {windowStyleOf(item) === "shutters" && row("Shutters", "shutterColor", C.shutters, DEFAULT_COLORS.shutters)}
+      {row("Window frames", "frameColor", C.frames, C.trim)}
+      {row("Foundation", "foundationColor", C.foundation, undefined, { swatch: paintedStyle("stone"), natural: { on: () => set({ foundationColor: NATURAL }), style: scanStyle("stone") } })}
+    </div>
+  );
+}
+
+/** A building's panel parts (under its kind). */
+/** The colors' settings: a change to one takes away the import's "guessed". */
+const COLOR_KEYS = ["wallColor", "roofColor", "trimColor", "frameColor", "doorColor", "shutterColor", "foundationColor", "siding", "roofing", "wallColors"];
+const ownColors = (item: StructureItem, patch: Partial<StructureItem>): Partial<StructureItem> =>
+  item.guessed?.includes("colors") && Object.keys(patch).some(k => COLOR_KEYS.includes(k)) ? { ...patch, guessed: item.guessed.filter(g => g !== "colors").length ? item.guessed.filter(g => g !== "colors") : undefined } : patch;
+
+export function BuildingFields({ item }: { item: StructureItem }) {
+  const u = useCourse(s => s.doc.units);
+  const set = (patch: Partial<StructureItem>, history = true) => updateItem(item.id, ownColors(item, patch) as Partial<CourseItem>, history);
+  const commit = () => useCourse.getState().commit();
+  const roof = structureRoof(item), H = structureHeight(item), stories = storiesOf(item);
+  return (
+    <div data-testid="building-fields">
+      <BuildingPart item={item} />
+      <Field label="Type" help="buildings">
+        <div className="grid grid-cols-3 gap-1" role="radiogroup" aria-label="Building type" data-testid="building-type">
+          {BUILDING_TYPES.map(t => {
+            const on = (item.buildingType ?? "house") === t.value;
+            return <button key={t.value} type="button" role="radio" aria-checked={on} onClick={() => set({ buildingType: t.value === "house" ? undefined : t.value })} className={`rounded-md border px-1.5 py-1 text-[11px] font-semibold ${on ? "border-zinc-100 bg-white/[0.1] text-zinc-50" : "border-white/[0.12] text-zinc-300 hover:border-zinc-500"} ${FOCUS}`}>{t.label}</button>;
+          })}
+        </div>
+      </Field>
+      <Part title="Size">
+        <Field label="Stories"><Segmented label="Stories" value={String(item.stories ?? stories)} onChange={v => { const n = Number(v); set({ stories: n, height: heightForStories(n) }); }} options={STORIES} /></Field>
+        <Slider label="Wall height" min={6} max={Math.max(40, H)} step={0.5} value={H} onChange={v => set({ height: v, stories: undefined }, false)} onDone={commit} format={v => `${fmtSize(v, u)} to the eaves`} />
+        <Field label="Foundation"><Segmented label="Foundation" value={item.foundation ?? "slab"} onChange={v => set({ foundation: v === "slab" ? undefined : v })} options={FOUNDATIONS} /></Field>
+      </Part>
+      <Part title="Roof">
+        <IconPick label="Roof" value={roof} onChange={v => set({ roof: v as RoofKind })} options={[{ value: "gable", label: "Gable" }, { value: "hip", label: "Hip" }, { value: "pyramid", label: "Pyramid" }, { value: "shed", label: "Shed" }, { value: "flat", label: "Flat" }]} />
+        {roof !== "flat" && <div className="mt-3"><Slider label="Slope" min={2} max={14} step={1} value={Math.round((item.roofPitch ?? 0.5) * 12)} onChange={v => set({ roofPitch: v / 12 }, false)} onDone={commit} format={v => `${v} in 12`} /></div>}
+      </Part>
+      <Part title="Outside">
+        {item.guessed?.includes("colors") && <p className="text-[11.5px] text-zinc-400 mb-2" data-testid="colors-guessed">Picked on import to go with its roof on the photo.</p>}
+        <Field label="Color scheme"><Schemes item={item} set={set} /></Field>
+        <Field label="Siding"><ScanTiles label="Siding" testid="building-siding" value={sidingOf(item)} options={SIDINGS} scanOf={v => SIDING_SCAN[v]} onChange={v => set({ siding: v === "lap" ? undefined : v })} /></Field>
+        {roof !== "flat" && <Field label="Roofing"><ScanTiles label="Roofing" testid="building-roofing" value={roofingOf(item)} options={ROOFINGS} scanOf={v => ROOFING_SCAN[v]} onChange={v => set({ roofing: v === "shingles" ? undefined : v })} /></Field>}
+        <Field label="Colors"><BuildingColors item={item} set={set} commit={commit} /></Field>
+      </Part>
+      <Part title="Doors and windows">
+        <Field label="Windows"><Segmented label="Windows" value={windowAmountOf(item)} onChange={v => set({ windows: v === "even" ? undefined : v })} options={AMOUNTS} /></Field>
+        <Field label="Window style"><Segmented label="Window style" value={windowStyleOf(item)} onChange={v => set({ windowStyle: v === "grid" ? undefined : v })} options={STYLES} /></Field>
+      </Part>
+    </div>
+  );
+}
+
+/** The same settings for the phone's bar: one each, its control opening from the row. */
+export function buildingSettings(item: StructureItem, set0: (patch: Partial<StructureItem>, history?: boolean) => void, commit: () => void, units: Parameters<typeof fmtSize>[1]) {
+  const set = (patch: Partial<StructureItem>, history?: boolean) => set0(ownColors(item, patch), history);
+  const roof = structureRoof(item), H = structureHeight(item);
+  const C = buildingColors(item);
+  const label = <T extends string>(list: { value: T; label: string }[], v: T) => list.find(o => o.value === v)?.label ?? v;
+  const scheme = schemeOf(item);
+  return [
+    { id: "btype", name: "Type", value: label(BUILDING_TYPES, item.buildingType ?? "house"), control: <Segmented label="Building type" value={item.buildingType ?? "house"} onChange={v => set({ buildingType: v === "house" ? undefined : v })} options={BUILDING_TYPES} /> },
+    { id: "stories", name: "Stories", value: STORIES.find(s => Number(s.value) === storiesOf(item))?.label ?? String(storiesOf(item)), control: <Segmented label="Stories" value={String(item.stories ?? storiesOf(item))} onChange={v => { const n = Number(v); set({ stories: n, height: heightForStories(n) }); }} options={STORIES} /> },
+    { id: "roof", name: "Roof", value: roof[0].toUpperCase() + roof.slice(1), wide: true, control: <div className="p-1.5"><IconPick label="Roof" value={roof} onChange={v => set({ roof: v as RoofKind })} options={[{ value: "gable", label: "Gable" }, { value: "hip", label: "Hip" }, { value: "pyramid", label: "Pyramid" }, { value: "shed", label: "Shed" }, { value: "flat", label: "Flat" }]} />{roof !== "flat" && <div className="mt-3"><Slider label="Slope" min={2} max={14} step={1} value={Math.round((item.roofPitch ?? 0.5) * 12)} onChange={v => set({ roofPitch: v / 12 }, false)} onDone={commit} format={v => `${v} in 12`} /></div>}</div> },
+    { id: "colors", name: "Colors", value: <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded-full ring-1 ring-white/40" style={C.walls ? paintedStyle(SIDING_SCAN[sidingOf(item)])(C.walls) : scanStyle(SIDING_SCAN[sidingOf(item)])} />{scheme?.name ?? colorName(C.walls)}</span>, wide: true, control: <div className="p-1.5"><Field label="Color scheme"><Schemes item={item} set={set} /></Field><BuildingColors item={item} set={set} commit={commit} /></div> },
+    { id: "siding", name: "Siding", value: label(SIDINGS, sidingOf(item)), wide: true, control: <div className="p-1.5"><ScanTiles label="Siding" testid="building-siding" value={sidingOf(item)} options={SIDINGS} scanOf={v => SIDING_SCAN[v]} onChange={v => set({ siding: v === "lap" ? undefined : v })} /></div> },
+    ...(roof !== "flat" ? [{ id: "roofing", name: "Roofing", value: label(ROOFINGS, roofingOf(item)), wide: true, control: <div className="p-1.5"><ScanTiles label="Roofing" testid="building-roofing" value={roofingOf(item)} options={ROOFINGS} scanOf={v => ROOFING_SCAN[v]} onChange={v => set({ roofing: v === "shingles" ? undefined : v })} /></div> }] : []),
+    { id: "height", name: "Walls", value: fmtSize(H, units), wide: true, control: <div className="p-2"><Slider label="Wall height" min={6} max={Math.max(40, H)} step={0.5} value={H} onChange={v => set({ height: v, stories: undefined }, false)} onDone={commit} format={v => `${fmtSize(v, units)} to the eaves`} /></div> },
+    { id: "foundation", name: "Foundation", value: label(FOUNDATIONS, item.foundation ?? "slab"), control: <Segmented label="Foundation" value={item.foundation ?? "slab"} onChange={v => set({ foundation: v === "slab" ? undefined : v })} options={FOUNDATIONS} /> },
+    { id: "windows", name: "Windows", value: label(AMOUNTS, windowAmountOf(item)), control: <Segmented label="Windows" value={windowAmountOf(item)} onChange={v => set({ windows: v === "even" ? undefined : v })} options={AMOUNTS} /> },
+    { id: "wstyle", name: "Window style", value: label(STYLES, windowStyleOf(item)), control: <Segmented label="Window style" value={windowStyleOf(item)} onChange={v => set({ windowStyle: v === "grid" ? undefined : v })} options={STYLES} /> }
+  ];
+}
+
+// ------------------------------------------------------------------ a wall, a door or a window picked
+
+/** The building as it stands on the map's ground. */
+const frameOf = (st: StructureItem) => buildingFrame(st, (x, y) => getView()?.standGround(x, y) ?? 0);
+const setPart = (part: { wall: number; opening?: string } | null) => useEditor.getState().set({ buildingPart: part });
+const KINDS: { value: Opening["kind"]; label: string }[] = [{ value: "window", label: "Window" }, { value: "door", label: "Door" }, { value: "garage", label: "Garage door" }];
+/** The usual size for a kind (changing a window to a door, say). */
+const sizeOf = (k: Opening["kind"]) => (k === "window" ? { width: 3, height: 4.75, sill: 2.75 } : k === "door" ? { width: 3.1, height: 6.9, sill: undefined } : { width: 9, height: 7.25, sill: undefined });
+
+/** A door or window put on the picked wall (picked, ready to move). */
+export const addToWall = (st: StructureItem, wall: number, kind: Opening["kind"]) => {
+  const got = addOpening(st, frameOf(st), wall, kind);
+  if (!got) return false;
+  updateItem(st.id, { openings: got.openings, handWalls: [...new Set([...(st.handWalls ?? []), wall])] } as Partial<CourseItem>);
+  setPart({ wall, opening: got.id });
+  return true;
+};
+
+/** A picked wall's or opening's name (for its heading and the phone's bar). */
+export const partName = (st: StructureItem, part: { wall: number; opening?: string }) => {
+  const o = part.opening && st.openings?.find(q => q.id === part.opening);
+  return o ? OPENING_LABEL[o.kind] : wallName(st, frameOf(st).walls, part.wall);
+};
+
+/** The picked wall's parts: add a door or window, make it the front, its own color, its doors and
+ * windows (each to pick or remove), and back to laid out by itself. */
+function WallFields({ item, wall }: { item: StructureItem; wall: number }) {
+  const F = frameOf(item);
+  const set = (patch: Partial<StructureItem>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
+  const commit = () => useCourse.getState().commit();
+  const mine = F.placed.filter(o => o.wall === wall);
+  const own = (item.handWalls ?? []).includes(wall) || (item.openings ?? []).some(o => o.wall === wall);
+  const front = item.front === wall || (item.front === undefined && F.walls.reduce((b, x, i) => (x.len > F.walls[b].len ? i : b), 0) === wall);
+  const wallScan = SIDING_SCAN[sidingOf(item)];
+  const ownColor = item.wallColors?.[wall];
+  const C = buildingColors(item);
+  return (
+    <div data-testid="wall-fields">
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {KINDS.map(k => <Button key={k.value} small onClick={() => addToWall(item, wall, k.value)} testid={`add-${k.value}`}><Plus size={13} /> {k.label}</Button>)}
+      </div>
+      {!front && <div className="mb-3"><Button small tone="ghost" onClick={() => set({ front: wall })} testid="wall-front">Make this the front</Button></div>}
+      <ColorInput label="This wall's color" value={ownColor} name={ownColor ? colorName(ownColor) : "Same as the walls"} testid="color-thiswall"
+        onChange={(v, live) => set({ wallColors: { ...item.wallColors, [wall]: v } }, !live)} onDone={commit} palettes={[{ title: "House colors", list: HOUSE_COLORS }]} swatch={paintedStyle(wallScan)}
+        natural={{ on: () => { const w = { ...item.wallColors }; delete w[wall]; set({ wallColors: Object.keys(w).length ? w : undefined }); }, style: C.walls ? paintedStyle(wallScan)(C.walls) : scanStyle(wallScan) }} />
+      <div className="mt-2" data-testid="wall-openings">
+        {mine.length === 0 && <p className="text-[11.5px] text-zinc-400">No doors or windows.</p>}
+        {mine.map((o, i) => (
+          <div key={o.id ?? `auto${i}`} className="flex items-center gap-2 py-1.5 border-t border-white/[0.06] first:border-t-0">
+            <button type="button" className={`min-w-0 flex-1 text-left ${FOCUS}`} onClick={() => {
+              // (a laid-out one: the wall's made its own first, as it stands)
+              if (!o.id) { const list = ownWall(item, F, wall); const got = list.find(q => q.wall === wall && Math.abs(q.at - o.at) < 0.01); set({ openings: list, handWalls: [...new Set([...(item.handWalls ?? []), wall])] }, false); setPart({ wall, opening: got?.id }); }
+              else setPart({ wall, opening: o.id });
+            }}>
+              <div className="text-xs text-zinc-100">{OPENING_LABEL[o.kind]}</div>
+              <div className="text-[11px] text-zinc-400">{Math.round(o.width * 2) / 2} × {Math.round(o.height * 2) / 2} ft{o.story ? ` · story ${o.story + 1}` : ""}</div>
+            </button>
+            {o.id && <button type="button" className={`text-[11px] text-zinc-400 hover:text-zinc-100 ${FOCUS}`} onClick={() => removeOpening(item.id, o.id!)}>Remove</button>}
+          </div>
+        ))}
+      </div>
+      {own && <div className="mt-2"><Button small tone="ghost" onClick={() => { set({ openings: (item.openings ?? []).filter(o => o.wall !== wall), handWalls: (item.handWalls ?? []).filter(w => w !== wall) }); setPart({ wall }); }} testid="wall-auto">Lay them out evenly</Button></div>}
+    </div>
+  );
+}
+
+/** The picked door's or window's settings: its kind, size and (a window's) sill; Remove. */
+function OpeningFields({ item, opening }: { item: StructureItem; opening: Opening }) {
+  const set = (patch: Partial<Opening>, history = true) => updateItem(item.id, { openings: (item.openings ?? []).map(o => (o.id === opening.id ? { ...o, ...patch } : o)) } as Partial<CourseItem>, history);
+  const commit = () => useCourse.getState().commit();
+  return (
+    <div data-testid="opening-fields">
+      <Field label="Kind"><Segmented label="Kind" value={opening.kind} onChange={v => { const z = sizeOf(v); set({ kind: v, width: z.width, height: z.height, sill: z.sill, story: v === "window" ? opening.story : 0 }); }} options={KINDS} /></Field>
+      <Slider label="Width" min={1.5} max={opening.kind === "garage" ? 20 : 12} step={0.25} value={opening.width} onChange={v => set({ width: v }, false)} onDone={commit} format={v => `${v} ft`} />
+      <Slider label="Height" min={1.5} max={opening.kind === "garage" ? 14 : 10} step={0.25} value={opening.height} onChange={v => set({ height: v }, false)} onDone={commit} format={v => `${v} ft`} />
+      {opening.kind === "window" && <Slider label="Sill height" min={0.5} max={8} step={0.25} value={opening.sill ?? 3} onChange={v => set({ sill: v }, false)} onDone={commit} format={v => `${v} ft off the floor`} />}
+      <div className="mt-2"><Button small tone="danger" onClick={() => removeOpening(item.id, opening.id)} testid="opening-remove"><Trash2 size={13} /> Remove</Button></div>
+    </div>
+  );
+}
+
+/** The picked wall's or opening's part of the panel, at its top: its name, back to the whole
+ * building (or its wall), and its settings. */
+export function BuildingPart({ item }: { item: StructureItem }) {
+  const part = useEditor(e => e.buildingPart);
+  if (!part) return null;
+  const opening = part.opening ? item.openings?.find(o => o.id === part.opening) : undefined;
+  if (part.opening && !opening) return null;
+  return (
+    <div className="mb-3 rounded-xl bg-white/[0.05] ring-1 ring-white/10 p-2.5" data-testid="building-part">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[13px] font-semibold text-zinc-50" data-testid="building-part-name">{partName(item, part)}</span>
+        <button type="button" className={`ml-auto text-[11px] text-orange-300 hover:text-orange-200 ${FOCUS}`} onClick={() => setPart(opening ? { wall: part.wall } : null)} data-testid="building-part-back">{opening ? "Its wall" : "Whole building"}</button>
+      </div>
+      {opening ? <OpeningFields item={item} opening={opening} /> : <WallFields item={item} wall={part.wall} />}
+    </div>
+  );
+}
+
+/** The picked wall's or opening's settings for the phone's bar (the same as its panel part). */
+export function buildingPartSettings(item: StructureItem, part: { wall: number; opening?: string }) {
+  const opening = part.opening ? item.openings?.find(o => o.id === part.opening) : undefined;
+  const commit = () => useCourse.getState().commit();
+  if (opening) {
+    const set = (patch: Partial<Opening>, history = true) => updateItem(item.id, { openings: (item.openings ?? []).map(o => (o.id === opening.id ? { ...o, ...patch } : o)) } as Partial<CourseItem>, history);
+    return [
+      { id: "okind", name: "Kind", value: OPENING_LABEL[opening.kind], control: <Segmented label="Kind" value={opening.kind} onChange={v => { const z = sizeOf(v); set({ kind: v, width: z.width, height: z.height, sill: z.sill, story: v === "window" ? opening.story : 0 }); }} options={KINDS} /> },
+      { id: "owidth", name: "Width", value: `${opening.width} ft`, wide: true, control: <div className="p-2"><Slider label="Width" min={1.5} max={opening.kind === "garage" ? 20 : 12} step={0.25} value={opening.width} onChange={v => set({ width: v }, false)} onDone={commit} format={v => `${v} ft`} /></div> },
+      { id: "oheight", name: "Height", value: `${opening.height} ft`, wide: true, control: <div className="p-2"><Slider label="Height" min={1.5} max={opening.kind === "garage" ? 14 : 10} step={0.25} value={opening.height} onChange={v => set({ height: v }, false)} onDone={commit} format={v => `${v} ft`} /></div> },
+      ...(opening.kind === "window" ? [{ id: "osill", name: "Sill", value: `${opening.sill ?? 3} ft`, wide: true, control: <div className="p-2"><Slider label="Sill height" min={0.5} max={8} step={0.25} value={opening.sill ?? 3} onChange={v => set({ sill: v }, false)} onDone={commit} format={v => `${v} ft off the floor`} /></div> }] : []),
+      { id: "oremove", name: "Remove", value: OPENING_LABEL[opening.kind], icon: <Trash2 size={16} />, run: () => removeOpening(item.id, opening.id), testid: "opening-remove" }
+    ];
+  }
+  const w = part.wall;
+  return [
+    ...KINDS.map(k => ({ id: `add-${k.value}`, name: "Add", value: k.label, icon: <Plus size={16} />, run: () => { addToWall(item, w, k.value); }, testid: `add-${k.value}` })),
+    { id: "wall", name: "This wall", value: "Color, doors, windows", wide: true, control: <div className="p-1.5"><WallFields item={item} wall={w} /></div> }
+  ];
+}

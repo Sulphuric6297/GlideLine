@@ -6,7 +6,6 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { createPortal } from "react-dom";
 import { Loader2 } from "lucide-react";
 import { TOPICS } from "../lib/guide";
-import { useEditor } from "../state/course";
 
 /** The nearest box that scrolls (or the page). */
 const scrollerOf = (el: HTMLElement | null): HTMLElement | null => {
@@ -394,81 +393,6 @@ export const Button = ({ children, onClick, tone = "default", disabled, title, t
     </button>
   );
 };
-
-/** A color, picked with the system's color picker. `onDone` once it's closed (its one undo step,
- * when the colors on the way there were live without one). */
-// (colour by hue 0..360, saturation and lightness 0..100)
-const hexHsl = (hex: string): [number, number, number] => {
-  const n = parseInt(hex.slice(1), 16), r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
-  if (!d) return [0, 0, Math.round(l * 100)];
-  const sat = d / (1 - Math.abs(2 * l - 1)), h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  return [Math.round(h * 60), Math.round(sat * 100), Math.round(l * 100)];
-};
-const hslHex = (h: number, sat: number, l: number) => {
-  const S = sat / 100, L = l / 100, c = (1 - Math.abs(2 * L - 1)) * S, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = L - c / 2;
-  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-  return "#" + [r, g, b].map(v => Math.round((v + m) * 255).toString(16).padStart(2, "0")).join("");
-};
-/**
- * A colour: its swatch, and tapped, the app's own picker under it, starting on the colour it is
- * (a phone's own picker opens on its presets instead): hue, saturation and lightness, each a
- * slider painted with the colours it goes through, and the colour's code. Live as it moves;
- * `onDone` when a slider is let go or the picker closes.
- */
-export function ColorInput({ value, onChange, label, onDone }: { value: string; onChange: (v: string) => void; label: string; onDone?: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [hsl, setHsl] = useState(() => hexHsl(value));
-  const [code, setCode] = useState(value);
-  const box = useRef<HTMLDivElement>(null);
-  // (opened: from the colour it is now)
-  useEffect(() => { if (open) { setHsl(hexHsl(value)); setCode(value); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  // (open, the thing it colours shows solid on the map, though it's selected: see-through, its
-  // colours couldn't be judged)
-  useEffect(() => {
-    if (!open) return;
-    const ed = useEditor.getState();
-    ed.set({ colorPicking: ed.colorPicking + 1 });
-    return () => { const e = useEditor.getState(); e.set({ colorPicking: Math.max(0, e.colorPicking - 1) }); };
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) { setOpen(false); onDone?.(); } };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); onDone?.(); } };
-    window.addEventListener("pointerdown", away); window.addEventListener("keydown", esc, true);
-    return () => { window.removeEventListener("pointerdown", away); window.removeEventListener("keydown", esc, true); };
-  }, [open, onDone]);
-  const set = (next: [number, number, number]) => { setHsl(next); const hex = hslHex(...next); setCode(hex); onChange(hex); };
-  const [h, sat, l] = hsl;
-  const bars: { name: string; v: number; max: number; bg: string; to: (v: number) => [number, number, number] }[] = [
-    { name: "Hue", v: h, max: 359, bg: `linear-gradient(to right, ${[0, 60, 120, 180, 240, 300, 360].map(x => hslHex(x % 360, Math.max(30, sat), Math.min(70, Math.max(30, l)))).join(",")})`, to: v => [v, sat, l] },
-    { name: "Saturation", v: sat, max: 100, bg: `linear-gradient(to right, ${hslHex(h, 0, l)}, ${hslHex(h, 100, l)})`, to: v => [h, v, l] },
-    { name: "Lightness", v: l, max: 100, bg: `linear-gradient(to right, #000, ${hslHex(h, sat, 50)}, #fff)`, to: v => [h, sat, v] }
-  ];
-  return (
-    <div ref={box} className="py-1">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-zinc-300">{label}</span>
-        <button type="button" aria-label={label} aria-expanded={open} onClick={() => { if (open) onDone?.(); setOpen(o => !o); }} className={`w-9 h-7 touch:w-11 touch:h-9 rounded-md ring-1 ring-white/25 ${FOCUS}`} style={{ background: value }} data-testid="color-swatch" />
-      </div>
-      {open && (
-        <div className="mt-2 rounded-xl bg-black/25 ring-1 ring-white/10 p-2.5 space-y-2.5" data-testid="color-picker">
-          {bars.map(b => (
-            <label key={b.name} className="block">
-              <span className="flex justify-between text-[11px] text-zinc-400"><span>{b.name}</span><span className="tabular-nums">{b.v}{b.name === "Hue" ? "°" : "%"}</span></span>
-              <input type="range" aria-label={`${label}: ${b.name.toLowerCase()}`} min={0} max={b.max} value={b.v} onChange={e => set(b.to(Number(e.target.value)))} onPointerUp={onDone} onKeyUp={onDone}
-                className="dg-colorbar w-full h-5 touch:h-7 rounded-full appearance-none cursor-pointer" style={{ background: b.bg }} />
-            </label>
-          ))}
-          <label className="flex items-center gap-2 text-[11px] text-zinc-400">Code
-            <input aria-label={`${label}: code`} value={code} maxLength={7} spellCheck={false} onChange={e => { const v = e.target.value.trim(); setCode(v); if (/^#[0-9a-f]{6}$/i.test(v)) { setHsl(hexHsl(v)); onChange(v.toLowerCase()); } }} onBlur={onDone}
-              className={`flex-1 min-w-0 rounded-md bg-white/[0.07] px-2 py-1 text-xs text-zinc-100 font-mono ${FOCUS}`} />
-          </label>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** One number with its name under it (for a row of a few). */
 export const Stat = ({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) => (

@@ -15,7 +15,7 @@ import { LOOK_LABEL, TREE_LOOKS, kindsOf, regionAt, sharesOf, type TreeLookId } 
 import { ChangeScope, HolePageLook, OwnHoles, PrintPanel, ScorecardSettings, Sponsors } from "./PrintPanel";
 import { boardSize } from "./printouts";
 import { FontPicker } from "./FontPicker";
-import { ColorField } from "./ColorSwatches";
+import { ColorInput } from "./ColorSwatches";
 import { SHOW_EVENT } from "./showSetting";
 import { fontsIn } from "../lib/fontLoad";
 
@@ -328,7 +328,7 @@ export function DesignPanel() {
       <Section title="Lettering and colors" testid="card-style" help="card-style" right={s.card ? <button className="text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1" onClick={() => setStyle({ card: undefined })}><RotateCcw size={12} /> Reset</button> : undefined}>
         <div className="grid grid-cols-2 gap-x-3">
           {([["header", "Header"], ["accent", "Header lettering"], ["paper", "Page color"], ["ink", "Text color"]] as const).map(([key, label]) => (
-            <ColorField key={key} label={label} value={s.card?.[key] ?? CARD_DEFAULTS[key]} onChange={(v, live) => setStyle({ card: { ...s.card, [key]: v } }, !live)} onDone={done} />
+            <ColorInput key={key} label={label} value={s.card?.[key] ?? CARD_DEFAULTS[key]} onChange={(v, live) => setStyle({ card: { ...s.card, [key]: v } }, !live)} onDone={done} />
           ))}
         </div>
         <Field label="Tagline">
@@ -380,9 +380,9 @@ export function DesignPanel() {
           ))}
         </div>
         <div className="mt-2 grid grid-cols-2 gap-x-2">
-          <ColorField label="Basket color" value={s.basket} onChange={(v, live) => setStyle({ basket: v }, !live)} onDone={done} />
-          {s.markings !== "pdga" && <ColorField label="OB" value={s.ob} onChange={(v, live) => setStyle({ ob: v }, !live)} onDone={done} />}
-          <ColorField label="Hazard" value={s.hazard} onChange={(v, live) => setStyle({ hazard: v }, !live)} onDone={done} />
+          <ColorInput label="Basket color" value={s.basket} onChange={(v, live) => setStyle({ basket: v }, !live)} onDone={done} />
+          {s.markings !== "pdga" && <ColorInput label="OB" value={s.ob} onChange={(v, live) => setStyle({ ob: v }, !live)} onDone={done} />}
+          <ColorInput label="Hazard" value={s.hazard} onChange={(v, live) => setStyle({ hazard: v }, !live)} onDone={done} />
         </div>
       </Section>
       <Section title="Sponsors" testid="print-sponsors" help="sponsors">
