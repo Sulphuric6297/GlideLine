@@ -490,7 +490,7 @@ export function ItemMenu({ itemId, at, onClose }: { itemId: string; at?: MenuInf
   const holeId = hole?.id ?? (item && "holeId" in item ? item.holeId : undefined);
   const trees = hole ? [] : treeRows(at);
   // (the thing's own rows named for it, beside the trees')
-  const a: SheetAction[] = [...trees, ...sheetRows(itemActions(itemId, at?.ground ?? null, trees.length > 0))];
+  const a: SheetAction[] = [...trees, ...sheetRows(itemActions(itemId, at?.ground ?? null, trees.length > 0, at))];
   const title = hole ? `Hole ${holeLabel(doc, hole.id)}${hole.name ? ` · ${hole.name}` : ""}` : itemTitle(item!);
   const sub = holeId && !hole ? `Hole ${holeLabel(doc, holeId)}` : undefined;
   return <ActionSheet title={title} subtitle={sub} actions={a} onClose={onClose} testid="item-menu" />;
@@ -697,8 +697,8 @@ function PhoneItemBar({ item, faded, side, onHeight }: BarProps & { item: Course
     </div>
   );
   if (bld && bpart) {
-    const up = () => useEditor.getState().set({ buildingPart: bpart.opening ? { wall: bpart.wall } : null });
-    return <GlassBar key={`${bpart.wall}:${bpart.opening ?? ""}`} remember={`${kind}:part`} pill={{ name: partName(bld, bpart), small: itemTitle(item), back: up, testid: "selection-header" }} settings={buildingPartSettings(bld, bpart)} onDone={up} doneLabel="Done with this part" faded={faded} side={side} onHeight={onHeight} testid="item-strip" />;
+    const up = () => useEditor.getState().set({ buildingPart: bpart.opening ? { wall: bpart.wall } : null });  // (a porch or the like: the building)
+    return <GlassBar key={`${bpart.wall}:${bpart.opening ?? ""}:${bpart.addOn ?? ""}`} remember={`${kind}:part`} pill={{ name: partName(bld, bpart), small: itemTitle(item), back: up, testid: "selection-header" }} settings={buildingPartSettings(bld, bpart)} onDone={up} doneLabel="Done with this part" faded={faded} side={side} onHeight={onHeight} testid="item-strip" />;
   }
   return <GlassBar remember={kind} pill={pill} pillMenu={menu} settings={settings} onDone={() => select(null)} doneLabel="Done: put it down" faded={faded} side={side} onHeight={onHeight} onOpen={setOpened} want={part ? "parts" : null} testid="item-strip" />;
 }

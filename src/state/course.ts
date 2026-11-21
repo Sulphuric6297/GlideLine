@@ -225,7 +225,7 @@ type EditorStore = {
   /** A part of the picked field (its backstop, its fence…): outlined, its own settings shown. */
   fieldPart?: FieldPart | null;
   /** A wall of the picked building, or a door or window on it: outlined, its own settings shown. */
-  buildingPart?: { wall: number; opening?: string } | null;
+  buildingPart?: { wall: number; opening?: string; addOn?: string } | null;
   /** The tee view's flyover settings open over it. */
   teeSettings?: boolean;
   flyover: boolean;

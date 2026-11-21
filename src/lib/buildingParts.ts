@@ -1,7 +1,7 @@
 // A building's parts and colors, as the 3D view, its panel and the import all see them: its
 // stories and floor, where its doors and windows go (laid out by itself, or put on by hand), when a
 // door needs steps, and the colors and color schemes it can be painted.
-import type { BuildingType, FoundationKind, Opening, P, RoofingKind, SidingKind, StructureItem, WindowAmount, WindowStyle } from "../types";
+import type { AddOn, BuildingType, FoundationKind, Opening, P, RoofingKind, SidingKind, StructureItem, WindowAmount, WindowStyle } from "../types";
 import { orientedBox, roofBreaks, roofFor, structureHeight } from "./structures";
 
 /** Ft from one story's floor to the next. */
@@ -239,8 +239,8 @@ let nextId = 0;
 const newId = () => `op${Date.now().toString(36)}${(nextId++).toString(36)}`;
 
 /** A wall's name: the front, the back, a side (as you face the front), or which way it faces. */
-export const wallName = (st: StructureItem, walls: Wall[], w: number) => {
-  const f = frontWall(st, walls.map(x => x.a));
+export const wallName = (st: StructureItem, F: { walls: Wall[]; front?: number }, w: number) => {
+  const walls = F.walls, f = F.front ?? frontWall(st, walls.map(x => x.a));
   if (w === f) return "Front wall";
   const fo = walls[f].out, o = walls[w].out;
   const dot = fo.x * o.x + fo.y * o.y, cross = fo.x * o.y - fo.y * o.x;
@@ -258,24 +258,45 @@ export const ownWall = (st: StructureItem, frame: Frame, w: number): Opening[] =
   return [...(st.openings ?? []), ...laid];
 };
 
-/** A new door or window on a wall: in its widest stretch clear of the others (the ground floor for
- * a door, the story the windows are on otherwise); null where there's no room. */
-export const addOpening = (st: StructureItem, frame: Frame, w: number, kind: Opening["kind"]): { openings: Opening[]; id: string } | null => {
+/** A new door or window on a wall: at `near` (ft along it) where there's room, else the nearest
+ * spot clear of the others (without `near`: the middle of its widest clear stretch); null where
+ * there's no room on that wall. */
+export const addOpening = (st: StructureItem, frame: Frame, w: number, kind: Opening["kind"], near?: number): { openings: Opening[]; id: string } | null => {
   const list = ownWall(st, frame, w);
   const size = kind === "window" ? { width: WINDOW.width, height: WINDOW.height, sill: WINDOW.sill } : kind === "door" ? DOOR : GARAGE;
-  const len = frame.walls[w].len;
+  const len = frame.walls[w].len, half = size.width / 2;
   const taken = list.filter(o => o.wall === w && (kind === "window" ? true : (o.story ?? 0) === 0)).map(o => [o.at - o.width / 2 - 1, o.at + o.width / 2 + 1] as [number, number]).sort((a, b) => a[0] - b[0]);
-  let best: [number, number] | null = null, from = 1.5;
+  // (the clear stretches, each where a middle can go)
+  const free: [number, number][] = [];
+  let from = 1.5;
   for (const [a, b] of [...taken, [len - 1.5, len] as [number, number]]) {
-    if (a - from > (best ? best[1] - best[0] : 0)) best = [from, a];
+    if (a - from >= size.width) free.push([from + half, a - half]);
     from = Math.max(from, b);
   }
-  if (!best || best[1] - best[0] < size.width) return null;
-  const at = (best[0] + best[1]) / 2;
   const top = (kind === "window" ? WINDOW.sill : 0) + size.height + 0.6;
-  if (!frame.fits(w, at, top)) return null;
+  const spots = free.map(([a, b]) => (near === undefined ? (a + b) / 2 : Math.min(b, Math.max(a, near))));
+  const order = spots.map((at, k) => ({ at, k, d: near === undefined ? -(free[k][1] - free[k][0]) : Math.abs(at - near) })).sort((x, y) => x.d - y.d);
+  const pick = order.find(o => frame.fits(w, o.at, top));
+  if (!pick) return null;
   const id = newId();
-  return { openings: [...list, { id, kind, wall: w, at, width: size.width, height: size.height, ...(kind === "window" ? { sill: WINDOW.sill } : {}) }], id };
+  return { openings: [...list, { id, kind, wall: w, at: pick.at, width: size.width, height: size.height, ...(kind === "window" ? { sill: WINDOW.sill } : {}) }], id };
+};
+
+// ------------------------------------------------------------------ porches, carports, decks, patios
+
+export const ADDON_LABEL: Record<AddOn["kind"], string> = { porch: "Porch", carport: "Carport", deck: "Deck", patio: "Patio" };
+/** Each kind's usual size, ft: along the wall (at most the wall less a foot each side), and out. */
+export const ADDON_SIZE: Record<AddOn["kind"], { width: number; depth: number }> = { porch: { width: 20, depth: 8 }, carport: { width: 20, depth: 20 }, deck: { width: 14, depth: 12 }, patio: { width: 12, depth: 10 } };
+
+/** A porch, carport, deck or patio put against a wall, its middle at `near` (ft along it) or the
+ * wall's middle, kept on the wall; null where the wall's too short for one. */
+export const addAddOn = (st: StructureItem, frame: Frame, w: number, kind: AddOn["kind"], near?: number): { addOns: AddOn[]; id: string } | null => {
+  const len = frame.walls[w]?.len ?? 0;
+  if (len < 6) return null;
+  const size = ADDON_SIZE[kind], width = Math.min(size.width, len - 2);
+  const at = Math.min(len - width / 2 - 1, Math.max(width / 2 + 1, near ?? len / 2));
+  const id = `ad${Date.now().toString(36)}${(nextId++).toString(36)}`;
+  return { addOns: [...(st.addOns ?? []), { id, kind, wall: w, at: Math.round(at * 4) / 4, width, depth: size.depth }], id };
 };
 
 // ------------------------------------------------------------------ corners added or taken away
@@ -284,7 +305,7 @@ export const addOpening = (st: StructureItem, frame: Frame, w: number, kind: Ope
  * after the wall from corner `i` is split in two at its middle (`split`) or corner `i` is taken
  * away (`merge`): each thing stays on the wall it was on, now numbered as it is. */
 export const wallsAfter = (st: StructureItem, change: "split" | "merge", i: number): Partial<StructureItem> => {
-  if (st.kind !== "building" || (!st.openings?.length && !st.handWalls?.length && !st.wallColors && st.front === undefined)) return {};
+  if (st.kind !== "building" || (!st.openings?.length && !st.addOns?.length && !st.handWalls?.length && !st.wallColors && st.front === undefined)) return {};
   const pts = outlineOf(st), n = pts.length;
   const len = (k: number) => { const a = pts[((k % n) + n) % n], b = pts[(((k + 1) % n) + n) % n]; return Math.hypot(b.x - a.x, b.y - a.y); };
   // (where a point `at` ft along wall `w` is now)
@@ -303,6 +324,7 @@ export const wallsAfter = (st: StructureItem, change: "split" | "merge", i: numb
   };
   const out: Partial<StructureItem> = {};
   if (st.openings?.length) out.openings = st.openings.map(o => ({ ...o, ...map(o.wall, o.at) }));
+  if (st.addOns?.length) out.addOns = st.addOns.map(o => ({ ...o, ...map(o.wall, o.at) }));
   if (st.handWalls?.length) out.handWalls = [...new Set(st.handWalls.flatMap(w => (change === "split" && w === i ? [i, i + 1] : [map(w).wall])))];
   if (st.wallColors) {
     const c: Record<number, string> = {};

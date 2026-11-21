@@ -116,7 +116,7 @@ function ContextMenu({ info, onClose }: { info: { clientX: number; clientY: numb
   const under = trees.length ? underAction(doc, info.under) : null;
   // The thing's own rows (the same list as a phone's), or on open ground what can start there
   // (not on a tree standing over something: that's the tree's menu)
-  const rows = hole || item ? itemActions(info.itemId!, info.ground, trees.length > 0) : [];
+  const rows = hole || item ? itemActions(info.itemId!, info.ground, trees.length > 0, info) : [];
   const ground = !hole && !item && info.ground ? groundActions(info.ground, !info.under) : null;
   const here = !!ground && !info.under && !readOnly && useEditor.getState().step === "design";
   if (!rows.length && !trees.length && !ground?.rows.length) return null;
@@ -436,7 +436,7 @@ export default function App() {
         if (view?.cancelDrawing()) return;
         if (s.tool !== "select") { s.set({ tool: "select" }); return; }
         // (a building's door or window picked: its wall; a wall: the building)
-        if (s.buildingPart) { s.set({ buildingPart: s.buildingPart.opening ? { wall: s.buildingPart.wall } : null }); return; }
+        if (s.buildingPart) { s.set({ buildingPart: s.buildingPart.opening ? { wall: s.buildingPart.wall } : null }); return; }  // (a porch or the like: back to the building)
         if (s.selectedId || s.group.length) { select(null); return; }
         // (steep ground's rock, picked: put away as a selection is)
         if (s.steepPicked) { s.set({ steepPicked: false }); return; }

@@ -505,11 +505,14 @@ test("a building's walls, doors and windows: a wall clicked in 3D, a window put 
   await expect.poll(async () => (await structures(page))[0].openings?.length ?? 0).toBeGreaterThan(before);
   const added = (await structures(page))[0].openings.at(-1);
   expect((await editorState(page)).buildingPart).toEqual({ wall: 0, opening: added.id });
-  await expect(page.locator('[data-handle="opening"]')).toBeVisible();
   await expect(page.locator('[data-handle="openw"]')).toBeVisible();
-  // Slid along the wall by its middle square
-  const h = await handleCenter(page, "opening");
-  await drag(page, h, { x: h.x + 60, y: h.y }, 10);
+  await expect(page.locator('[data-handle="openh"]')).toBeVisible();
+  // Picked, the building is solid (its outside is what's being worked on)
+  expect(await page.evaluate(() => (window as any).__dgView.seeThrough)).toBeNull();
+  // Slid along the wall by dragging it anywhere on it (here, its lower part)
+  const side = await handleCenter(page, "openw"), top = await handleCenter(page, "openh");
+  const on = { x: top.x - (side.x - top.x) * 0.4, y: side.y + (side.y - top.y) * 0.5 };
+  await drag(page, on, { x: on.x + 60, y: on.y }, 10);
   await expect.poll(async () => Math.abs((await structures(page))[0].openings.find((o: any) => o.id === added.id).at - added.at)).toBeGreaterThan(1);
   // Delete takes only it; Esc goes back to the building, then puts it down
   await page.keyboard.press("Delete");
@@ -519,4 +522,14 @@ test("a building's walls, doors and windows: a wall clicked in 3D, a window put 
   await page.keyboard.press("Escape");
   expect((await editorState(page)).buildingPart).toBeNull();
   expect((await editorState(page)).selectedId).toBe(id);
+  // Right-click the wall: Add a porch here; it's picked; Delete takes only it
+  await page.mouse.click(w.x, w.y, { button: "right" });
+  await page.getByTestId("menu-add-porch").click();
+  await expect.poll(async () => (await structures(page))[0].addOns?.length ?? 0).toBe(1);
+  const porch = (await structures(page))[0].addOns[0];
+  expect(porch.kind).toBe("porch");
+  expect((await editorState(page)).buildingPart).toEqual({ wall: 0, addOn: porch.id });
+  await page.keyboard.press("Delete");
+  await expect.poll(async () => (await structures(page))[0].addOns?.length ?? 0).toBe(0);
+  expect((await structures(page)).length).toBe(1);
 });

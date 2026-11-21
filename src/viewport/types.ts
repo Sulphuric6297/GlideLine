@@ -112,7 +112,7 @@ export type ViewCallbacks = {
   /** A click on the picked field: the part of it there (null: none, the field as a whole). */
   onFieldPart?: (part: FieldPart | null) => void;
   /** A click on the picked building: its wall, and the door or window there (null: none, the building as a whole). */
-  onBuildingPart?: (part: { wall: number; opening?: string } | null) => void;
+  onBuildingPart?: (part: { wall: number; opening?: string; addOn?: string } | null) => void;
   onPose: (pose: "top" | "tilt") => void;
   /** Tee view: moved to another hole with the arrow keys, or closed. */
   onTeeView: (holeId: string | null) => void;

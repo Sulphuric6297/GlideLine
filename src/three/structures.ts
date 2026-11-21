@@ -5,9 +5,10 @@
 // doors and windows, and a shelter's roof, are three/buildingLook's (scans painted any color).
 // Texture coordinates are in feet, so every texture is at its real size.
 import * as THREE from "three";
-import type { FenceStyle, P, StructureItem } from "../types";
+import type { AddOn, FenceStyle, P, StructureItem } from "../types";
 import { pointInPolygon } from "../lib/geom";
-import { buildingColors, buildingFrame, outlineOf, roofingOf, sidingOf, stepsUp, windowStyleOf } from "../lib/buildingParts";
+import { clamp } from "../constants";
+import { buildingColors, buildingFrame, outlineOf, roofingOf, sidingOf, stepsUp, windowStyleOf, type Frame } from "../lib/buildingParts";
 import { STRUCTURE_INK } from "../lib/symbols";
 import { glass, onLookLoaded, paint as paintOf, ROOF_SHADE, ROOFING_SCAN, room, SIDING_SCAN, surface } from "./buildingLook";
 import {
@@ -490,6 +491,95 @@ const soffit = (roof: Roof, walls: P[], eave: number, overhang: number, m: Meshe
 };
 
 
+/**
+ * A porch, carport, deck or patio against a building's wall: a porch's floor at the house's floor
+ * on a stone skirt, posts and a shed roof tied in under the eaves; a carport's slab on the ground,
+ * posts and a metal roof; a deck's boards at the floor on posts, no roof; a patio's slab on the
+ * ground. Raised ones get a railing and steps down at the front's middle.
+ */
+const addOnModel = (a: AddOn, F: Frame, g: Ground, at: (k: string) => Mesher) => {
+  const w = F.walls[a.wall];
+  if (!w || a.width < 2 || a.depth < 2) return;
+  const dir = new V3(w.dir.x, 0, w.dir.y), out = new V3(w.out.x, 0, w.out.y);
+  const mid = F.along(a.wall, a.at);
+  const P = (s: number, d: number, y: number) => new V3(mid.x + w.dir.x * s + w.out.x * d, y, mid.y + w.dir.y * s + w.out.y * d);
+  const box = (m: Mesher, s0: number, s1: number, y0: number, y1: number, d0: number, d1: number) =>
+    m.box(P((s0 + s1) / 2, (d0 + d1) / 2, (y0 + y1) / 2), dir, UP, out, Math.abs(s1 - s0) / 2, Math.max(0.01, Math.abs(y1 - y0) / 2), Math.abs(d1 - d0) / 2);
+  const half = a.width / 2, D = a.depth;
+  const gAt = (s: number, d: number) => { const p = P(s, d, 0); return g(p.x, p.z); };
+  const spots = [[-half, 0], [half, 0], [-half, D], [half, D], [0, D / 2], [0, D]];
+  const gs = spots.map(([s, d]) => gAt(s, d));
+  const gMin = Math.min(...gs), gMax = Math.max(...gs);
+  const onGround = a.kind === "patio" || a.kind === "carport";
+  const top = onGround ? gMax + 0.3 : F.floor;
+  const raised = top - gMin;
+  // The floor: boards (a deck, a porch), or a slab
+  if (onGround) box(at("pslab"), -half, half, gMin - 0.4, top, 0, D);
+  else {
+    box(at("pdeck"), -half, half, top - 0.2, top, 0, D);
+    if (a.kind === "porch") box(at("found"), -half + 0.15, half - 0.15, gMin - 0.5, top - 0.2, 0.05, D - 0.15);
+    else {
+      // (a deck: its rim joist, and posts down to the ground every 6 ft or so)
+      box(at("ptimber"), -half, half, top - 0.9, top - 0.2, D - 0.2, D);
+      for (const s of [-half, half]) box(at("ptimber"), s - 0.1 * Math.sign(s) - 0.1, s - 0.1 * Math.sign(s) + 0.1, top - 0.9, top - 0.2, 0, D);
+      const n = Math.max(1, Math.ceil(a.width / 6));
+      for (let k = 0; k <= n; k++) for (const d of [D - 0.4, D / 2]) {
+        const s = -half + 0.3 + ((a.width - 0.6) * k) / n;
+        box(at("ptimber"), s - 0.25, s + 0.25, gAt(s, d) - 0.5, top - 0.9, d - 0.25, d + 0.25);
+      }
+    }
+  }
+  // Steps down at the front's middle, where it stands over the ground (as wide as a door's)
+  const steps = !onGround ? stepsUp(top - gAt(0, D + 1)) : 0;
+  const sw = Math.min(half - 0.3, 2.4);
+  if (steps) {
+    const riser = (top - gAt(0, D + 1)) / steps;
+    for (let k = 1; k <= steps; k++) box(at("steps"), -sw, sw, gAt(0, D + 1) - 0.4, top - k * riser + 0.02, D, D + k * 0.95);
+  }
+  // A railing round a raised one (a porch over 2 ft, a deck over 1½), open at the steps
+  if ((a.kind === "deck" && raised > 1.5) || (a.kind === "porch" && raised > 2)) {
+    const rail = at("rail"), y0 = top, y1 = top + 3;
+    const run = (pts: [number, number][]) => {
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const [s0, d0] = pts[i], [s1, d1] = pts[i + 1];
+        const L = Math.hypot(s1 - s0, d1 - d0), n = Math.max(1, Math.round(L / 0.45));
+        // (top rail and bottom rail, and balusters between)
+        const e = P(0, 0, 0), u = P(s1 - s0, d1 - d0, 0).sub(e).normalize(), v = new V3(-u.z, 0, u.x);
+        const c = (t: number, y: number) => P(s0 + (s1 - s0) * t, d0 + (d1 - d0) * t, y);
+        rail.box(c(0.5, y1 - 0.1), u, UP, v, L / 2 + 0.1, 0.1, 0.15);
+        rail.box(c(0.5, y0 + 0.4), u, UP, v, L / 2, 0.06, 0.08);
+        for (let k = 0; k <= n; k++) rail.box(c(k / n, (y0 + y1) / 2), u, UP, v, 0.05, (y1 - y0) / 2 - 0.1, 0.05);
+      }
+    };
+    const inset = 0.2;
+    run([[-half + inset, 0.2], [-half + inset, D - inset], [steps ? -sw - 0.2 : half - inset, D - inset]]);
+    if (steps) run([[sw + 0.2, D - inset], [half - inset, D - inset], [half - inset, 0.2]]);
+    else run([[half - inset, D - inset], [half - inset, 0.2]]);
+  }
+  // A roof (a porch's, a carport's): a shed roof from under the eaves, out past the posts
+  if (a.kind === "porch" || a.kind === "carport") {
+    const yWall = Math.min(F.eave - 0.4, top + (a.kind === "carport" ? 10 : 9.5));
+    // (3 in 12 where there's height for it, gentler over a deep one, down to 1 in 12; at least 7 ft
+    // clear under its edge)
+    const over = 1, pitch = clamp((yWall - top - 7.5) / (D + over), 1 / 12, 0.25), yOut = yWall - (D + over) * pitch;
+    if (yOut < top + 6.5) return;
+    const roof = at(a.kind === "carport" ? "proofm" : "proof");
+    const p0 = P(-half - over, 0, yWall + 0.15), p1 = P(half + over, 0, yWall + 0.15), p2 = P(half + over, D + over, yOut), p3 = P(-half - over, D + over, yOut);
+    const slope = Math.hypot(D + over, (D + over) * pitch);
+    roof.quad(p0, p1, p2, p3, [[0, 0], [a.width + 2 * over, 0], [a.width + 2 * over, slope], [0, slope]], UP);
+    // (its fascia, a beam over the posts, and the posts every 10 ft or so)
+    const trim = at("post"), yAt = (d: number) => yWall - d * pitch;
+    trim.quad(p3, p2, p2.clone().setY(yOut - 0.5), p3.clone().setY(yOut - 0.5), [[0, 0], [1, 0], [1, 1], [0, 1]], out);
+    box(trim, -half, half, yAt(D - 0.4) - 0.9, yAt(D - 0.4) - 0.15, D - 0.65, D - 0.15);
+    const n = Math.max(1, Math.ceil(a.width / 10));
+    for (let k = 0; k <= n; k++) {
+      const s = -half + 0.35 + ((a.width - 0.7) * k) / n;
+      if (steps && Math.abs(s) < sw + 0.3) continue;
+      box(trim, s - 0.25, s + 0.25, top, yAt(D - 0.4) - 0.8, D - 0.65, D - 0.15);
+    }
+  }
+};
+
 const building = (st: StructureItem, g: Ground, parts: Parts) => {
   if (outlineOf(st).length < 3) return;
   const F = buildingFrame(st, g);
@@ -574,7 +664,10 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
         if (o.kind === "garage") for (let k = 1; k < 4; k++) box(slab, x0 + 0.1, x1 - 0.1, y0 + ((y1 - y0) * k) / 4 - 0.05, y0 + ((y1 - y0) * k) / 4 + 0.05, -d, -d + 0.05);
         else for (const [a, b] of [[0.18, 0.47], [0.53, 0.82]]) for (const [c, dd] of [[0.08, 0.42], [0.5, 0.78]]) box(slab, x0 + o.width * a, x0 + o.width * b, y0 + o.height * c, y0 + o.height * dd, -d, -d + 0.05);
         // Steps up to it where the floor stands over the ground: a landing, then steps down
-        const ground = g(pt(o.at, 0, 3).x, pt(o.at, 0, 3).z), rise = y0 - ground, n = stepsUp(rise);
+        const ground = g(pt(o.at, 0, 3).x, pt(o.at, 0, 3).z), rise = y0 - ground;
+        // (a porch or a deck in front of it: its own steps)
+        const covered = (st.addOns ?? []).some(a => a.wall === w && (a.kind === "porch" || a.kind === "deck") && Math.abs(a.at - o.at) < a.width / 2);
+        const n = covered ? 0 : stepsUp(rise);
         if (n && o.kind !== "garage") {
           const steps = at("steps"), wide = o.width / 2 + 1.1, land = 3.5, riser = rise / n;
           box(steps, o.at - wide, o.at + wide, ground - 0.4, y0 - 0.05, 0, land);
@@ -588,6 +681,7 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
       }
     }
   });
+  for (const a of st.addOns ?? []) addOnModel(a, F, g, at);
   if (structureRoof(st) === "flat") {
     // A flat roof: a membrane, and a low parapet round its edge
     roofFaces(roof, eave, at("flatroof"), trim);
@@ -665,6 +759,12 @@ const buildingMaterial = (key: string, st: StructureItem): THREE.Material => {
     case "shutters": return paintOf(C.shutters, 0.6);
     case "found": return surface("stone", C.foundation);
     case "steps": return surface("stucco", "#bdb8ae");
+    case "pslab": return material("concrete");
+    case "pdeck": return material("deck");
+    case "ptimber": return material("timber");
+    case "proof": return surface(ROOFING_SCAN[roofingOf(st)], C.roof, true, C.roof ? ROOF_SHADE : 1);
+    case "proofm": return surface("roofmetal", C.roof, true, C.roof ? ROOF_SHADE : 1);
+    case "post": case "rail": return paintOf(C.trim, 0.55);
     case "glass": return glass();
     case "room": return room();
     case "dark": return paintOf("#2a2622", 1);

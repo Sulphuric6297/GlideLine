@@ -4,15 +4,17 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useCourse, useEditor, updateItem } from "../state/course";
 import { getView } from "../state/view";
-import { removeOpening } from "../state/actions";
-import type { Opening, BuildingType, CourseItem, FoundationKind, RoofingKind, RoofKind, SidingKind, StructureItem, WindowAmount, WindowStyle } from "../types";
-import { NATURAL, addOpening, buildingFrame, OPENING_LABEL, ownWall, wallName, buildingColors, colorName, DEFAULT_COLORS, heightForStories, HOUSE_COLORS, ROOF_COLORS, roofingOf, SCHEMES, schemeOf, schemePatch, sidingOf, storiesOf, windowAmountOf, windowStyleOf, type Scheme } from "../lib/buildingParts";
+import { removeAddOn, removeOpening } from "../state/actions";
+import type { AddOn, Opening, BuildingType, CourseItem, FoundationKind, RoofingKind, RoofKind, SidingKind, StructureItem, WindowAmount, WindowStyle } from "../types";
+import { ADDON_LABEL, ADDON_SIZE, addAddOn, frontWall, NATURAL, addOpening, buildingFrame, OPENING_LABEL, ownWall, wallName, buildingColors, colorName, DEFAULT_COLORS, heightForStories, HOUSE_COLORS, ROOF_COLORS, roofingOf, SCHEMES, schemeOf, schemePatch, sidingOf, storiesOf, windowAmountOf, windowStyleOf, type Scheme } from "../lib/buildingParts";
 import { structureHeight, structureRoof } from "../lib/structures";
 import { ROOF_SHADE_CSS, ROOFING_SCAN, SIDING_SCAN } from "../three/buildingLook";
 import { ColorInput } from "./ColorSwatches";
 import { fmtSize, IconPick } from "./Inspector";
 import { Button, Field, FOCUS, Segmented, Slider } from "./ui";
-import { Plus, Trash2 } from "lucide-react";
+import { AppWindow, CarFront, DoorOpen, Fence, Grid2x2, Home, Plus, Trash2, Warehouse } from "lucide-react";
+import { ActRow } from "./mobile/GlassBar";
+const ADD_ICON: Record<string, JSX.Element> = { window: <AppWindow size={18} />, door: <DoorOpen size={18} />, garage: <Warehouse size={18} />, porch: <Home size={18} />, carport: <CarFront size={18} />, deck: <Fence size={18} />, patio: <Grid2x2 size={18} /> };
 
 export const BUILDING_TYPES: { value: BuildingType; label: string }[] = [
   { value: "house", label: "House" }, { value: "garage", label: "Garage" }, { value: "barn", label: "Barn" }, { value: "shed", label: "Shed" },
@@ -163,6 +165,20 @@ export function BuildingFields({ item }: { item: StructureItem }) {
         <Field label="Windows"><Segmented label="Windows" value={windowAmountOf(item)} onChange={v => set({ windows: v === "even" ? undefined : v })} options={AMOUNTS} /></Field>
         <Field label="Window style"><Segmented label="Window style" value={windowStyleOf(item)} onChange={v => set({ windowStyle: v === "grid" ? undefined : v })} options={STYLES} /></Field>
       </Part>
+      <Part title="Porches and more">
+        {(item.addOns ?? []).map(a => (
+          <div key={a.id} className="flex items-center gap-2 py-1.5 border-t border-white/[0.06] first:border-t-0">
+            <button type="button" className={`min-w-0 flex-1 text-left ${FOCUS}`} onClick={() => setPart({ wall: a.wall, addOn: a.id })} data-testid="addon-row">
+              <div className="text-xs text-zinc-100">{ADDON_LABEL[a.kind]}</div>
+              <div className="text-[11px] text-zinc-400">{wallName(item, frameOf(item), a.wall)} · {a.width} × {a.depth} ft</div>
+            </button>
+            <button type="button" className={`text-[11px] text-zinc-400 hover:text-zinc-100 ${FOCUS}`} onClick={() => removeAddOn(item.id, a.id)}>Remove</button>
+          </div>
+        ))}
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {ADDON_KINDS.map(k => <Button key={k.value} small onClick={() => addAddOnToWall(item, frontOf(item), k.value)} testid={`add-addon-${k.value}`}><Plus size={13} /> {k.label}</Button>)}
+        </div>
+      </Part>
     </div>
   );
 }
@@ -184,7 +200,19 @@ export function buildingSettings(item: StructureItem, set0: (patch: Partial<Stru
     { id: "height", name: "Walls", value: fmtSize(H, units), wide: true, control: <div className="p-2"><Slider label="Wall height" min={6} max={Math.max(40, H)} step={0.5} value={H} onChange={v => set({ height: v, stories: undefined }, false)} onDone={commit} format={v => `${fmtSize(v, units)} to the eaves`} /></div> },
     { id: "foundation", name: "Foundation", value: label(FOUNDATIONS, item.foundation ?? "slab"), control: <Segmented label="Foundation" value={item.foundation ?? "slab"} onChange={v => set({ foundation: v === "slab" ? undefined : v })} options={FOUNDATIONS} /> },
     { id: "windows", name: "Windows", value: label(AMOUNTS, windowAmountOf(item)), control: <Segmented label="Windows" value={windowAmountOf(item)} onChange={v => set({ windows: v === "even" ? undefined : v })} options={AMOUNTS} /> },
-    { id: "wstyle", name: "Window style", value: label(STYLES, windowStyleOf(item)), control: <Segmented label="Window style" value={windowStyleOf(item)} onChange={v => set({ windowStyle: v === "grid" ? undefined : v })} options={STYLES} /> }
+    { id: "wstyle", name: "Window style", value: label(STYLES, windowStyleOf(item)), control: <Segmented label="Window style" value={windowStyleOf(item)} onChange={v => set({ windowStyle: v === "grid" ? undefined : v })} options={STYLES} /> },
+    { id: "addons", name: "Porches and more", value: item.addOns?.length ? `${item.addOns.length}` : "Add", wide: true, control: (
+      <div className="p-1.5">
+        {(item.addOns ?? []).map(a => (
+          <button key={a.id} type="button" className={`w-full text-left px-2 py-2.5 rounded-[12px] hover:bg-white/[0.06] ${FOCUS}`} onClick={() => setPart({ wall: a.wall, addOn: a.id })}>
+            <div className="text-[14px] text-zinc-100 font-semibold">{ADDON_LABEL[a.kind]}</div>
+            <div className="text-[12px] text-zinc-400">{wallName(item, frameOf(item), a.wall)} · {a.width} × {a.depth} ft</div>
+          </button>
+        ))}
+        <div className="flex flex-wrap gap-1.5 mt-1.5">
+          {ADDON_KINDS.map(k => <Button key={k.value} small onClick={() => addAddOnToWall(item, frontOf(item), k.value)}><Plus size={13} /> {k.label}</Button>)}
+        </div>
+      </div>) }
   ];
 }
 
@@ -192,24 +220,64 @@ export function buildingSettings(item: StructureItem, set0: (patch: Partial<Stru
 
 /** The building as it stands on the map's ground. */
 const frameOf = (st: StructureItem) => buildingFrame(st, (x, y) => getView()?.standGround(x, y) ?? 0);
-const setPart = (part: { wall: number; opening?: string } | null) => useEditor.getState().set({ buildingPart: part });
+/** The wall its front door's on (as set, or as it's laid out). */
+const frontOf = (st: StructureItem) => { const F = frameOf(st); return F.front ?? frontWall(st, F.walls.map(w => w.a)); };
+const setPart = (part: { wall: number; opening?: string; addOn?: string } | null) => useEditor.getState().set({ buildingPart: part });
+const ADDON_KINDS: { value: AddOn["kind"]; label: string }[] = [{ value: "porch", label: "Porch" }, { value: "deck", label: "Deck" }, { value: "carport", label: "Carport" }, { value: "patio", label: "Patio" }];
+
+/** A picked porch's (carport's, deck's, patio's) settings: its kind, width, depth; Remove. */
+function AddOnFields({ item, addOn }: { item: StructureItem; addOn: AddOn }) {
+  const set = (patch: Partial<AddOn>, history = true) => updateItem(item.id, { addOns: (item.addOns ?? []).map(a => (a.id === addOn.id ? { ...a, ...patch } : a)) } as Partial<CourseItem>, history);
+  const commit = () => useCourse.getState().commit();
+  const len = frameOf(item).walls[addOn.wall]?.len ?? 40;
+  return (
+    <div data-testid="addon-fields">
+      <Field label="Kind"><Segmented label="Kind" value={addOn.kind} onChange={v => set({ kind: v, depth: ADDON_SIZE[v].depth })} options={ADDON_KINDS} /></Field>
+      <Slider label="Width" min={4} max={Math.max(4, len - 2)} step={0.5} value={addOn.width} onChange={v => set({ width: v, at: Math.min(len - v / 2 - 1, Math.max(v / 2 + 1, addOn.at)) }, false)} onDone={commit} format={v => `${v} ft along the wall`} />
+      <Slider label="Depth" min={4} max={40} step={0.5} value={addOn.depth} onChange={v => set({ depth: v }, false)} onDone={commit} format={v => `${v} ft out`} />
+      <div className="mt-2"><Button small tone="danger" onClick={() => removeAddOn(item.id, addOn.id)} testid="addon-remove"><Trash2 size={13} /> Remove</Button></div>
+    </div>
+  );
+}
 const KINDS: { value: Opening["kind"]; label: string }[] = [{ value: "window", label: "Window" }, { value: "door", label: "Door" }, { value: "garage", label: "Garage door" }];
 /** The usual size for a kind (changing a window to a door, say). */
 const sizeOf = (k: Opening["kind"]) => (k === "window" ? { width: 3, height: 4.75, sill: 2.75 } : k === "door" ? { width: 3.1, height: 6.9, sill: undefined } : { width: 9, height: 7.25, sill: undefined });
 
 /** A door or window put on the picked wall (picked, ready to move). */
-export const addToWall = (st: StructureItem, wall: number, kind: Opening["kind"]) => {
-  const got = addOpening(st, frameOf(st), wall, kind);
+export const addToWall = (st: StructureItem, wall: number, kind: Opening["kind"], near?: number) => {
+  const got = addOpening(st, frameOf(st), wall, kind, near);
   if (!got) return false;
   updateItem(st.id, { openings: got.openings, handWalls: [...new Set([...(st.handWalls ?? []), wall])] } as Partial<CourseItem>);
   setPart({ wall, opening: got.id });
   return true;
 };
 
+/** A porch, carport, deck or patio put against the wall (picked, ready to move or size). */
+export const addAddOnToWall = (st: StructureItem, wall: number, kind: AddOn["kind"], near?: number) => {
+  const got = addAddOn(st, frameOf(st), wall, kind, near);
+  if (!got) return false;
+  updateItem(st.id, { addOns: got.addOns } as Partial<CourseItem>);
+  setPart({ wall, addOn: got.id });
+  return true;
+};
+
+/** A door or window laid out by itself taken off (its wall's others kept as they stand). */
+export const removeLaidOut = (st: StructureItem, wall: number, at: number) => {
+  const list = ownWall(st, frameOf(st), wall);
+  const o = list.find(q => q.wall === wall && Math.abs(q.at - at) < 0.01);
+  if (!o) return;
+  updateItem(st.id, { openings: list.filter(q => q.id !== o.id), handWalls: [...new Set([...(st.handWalls ?? []), wall])] } as Partial<CourseItem>);
+  setPart({ wall });
+};
+/** What a laid-out door or window at a spot is (for its menu row). */
+export const laidOutKind = (st: StructureItem, wall: number, at: number) => frameOf(st).placed.find(q => q.wall === wall && q.auto && Math.abs(q.at - at) < 0.01)?.kind;
+
 /** A picked wall's or opening's name (for its heading and the phone's bar). */
-export const partName = (st: StructureItem, part: { wall: number; opening?: string }) => {
+export const partName = (st: StructureItem, part: { wall: number; opening?: string; addOn?: string }) => {
+  const ad = part.addOn && st.addOns?.find(q => q.id === part.addOn);
+  if (ad) return ADDON_LABEL[ad.kind];
   const o = part.opening && st.openings?.find(q => q.id === part.opening);
-  return o ? OPENING_LABEL[o.kind] : wallName(st, frameOf(st).walls, part.wall);
+  return o ? OPENING_LABEL[o.kind] : wallName(st, frameOf(st), part.wall);
 };
 
 /** The picked wall's parts: add a door or window, make it the front, its own color, its doors and
@@ -220,7 +288,7 @@ function WallFields({ item, wall }: { item: StructureItem; wall: number }) {
   const commit = () => useCourse.getState().commit();
   const mine = F.placed.filter(o => o.wall === wall);
   const own = (item.handWalls ?? []).includes(wall) || (item.openings ?? []).some(o => o.wall === wall);
-  const front = item.front === wall || (item.front === undefined && F.walls.reduce((b, x, i) => (x.len > F.walls[b].len ? i : b), 0) === wall);
+  const front = (F.front ?? frontWall(item, F.walls.map(x => x.a))) === wall;
   const wallScan = SIDING_SCAN[sidingOf(item)];
   const ownColor = item.wallColors?.[wall];
   const C = buildingColors(item);
@@ -230,7 +298,7 @@ function WallFields({ item, wall }: { item: StructureItem; wall: number }) {
         {KINDS.map(k => <Button key={k.value} small onClick={() => addToWall(item, wall, k.value)} testid={`add-${k.value}`}><Plus size={13} /> {k.label}</Button>)}
       </div>
       {!front && <div className="mb-3"><Button small tone="ghost" onClick={() => set({ front: wall })} testid="wall-front">Make this the front</Button></div>}
-      <ColorInput label="This wall's color" value={ownColor} name={ownColor ? colorName(ownColor) : "Same as the walls"} testid="color-thiswall"
+      <ColorInput label="Color" value={ownColor} name={ownColor ? colorName(ownColor) : "As the walls"} testid="color-thiswall"
         onChange={(v, live) => set({ wallColors: { ...item.wallColors, [wall]: v } }, !live)} onDone={commit} palettes={[{ title: "House colors", list: HOUSE_COLORS }]} swatch={paintedStyle(wallScan)}
         natural={{ on: () => { const w = { ...item.wallColors }; delete w[wall]; set({ wallColors: Object.keys(w).length ? w : undefined }); }, style: C.walls ? paintedStyle(wallScan)(C.walls) : scanStyle(wallScan) }} />
       <div className="mt-2" data-testid="wall-openings">
@@ -276,21 +344,34 @@ export function BuildingPart({ item }: { item: StructureItem }) {
   if (!part) return null;
   const opening = part.opening ? item.openings?.find(o => o.id === part.opening) : undefined;
   if (part.opening && !opening) return null;
+  const addOn = part.addOn ? item.addOns?.find(a => a.id === part.addOn) : undefined;
+  if (part.addOn && !addOn) return null;
   return (
     <div className="mb-3 rounded-xl bg-white/[0.05] ring-1 ring-white/10 p-2.5" data-testid="building-part">
       <div className="flex items-center gap-2 mb-2">
         <span className="text-[13px] font-semibold text-zinc-50" data-testid="building-part-name">{partName(item, part)}</span>
         <button type="button" className={`ml-auto text-[11px] text-orange-300 hover:text-orange-200 ${FOCUS}`} onClick={() => setPart(opening ? { wall: part.wall } : null)} data-testid="building-part-back">{opening ? "Its wall" : "Whole building"}</button>
       </div>
-      {opening ? <OpeningFields item={item} opening={opening} /> : <WallFields item={item} wall={part.wall} />}
+      {addOn ? <AddOnFields item={item} addOn={addOn} /> : opening ? <OpeningFields item={item} opening={opening} /> : <WallFields item={item} wall={part.wall} />}
     </div>
   );
 }
 
 /** The picked wall's or opening's settings for the phone's bar (the same as its panel part). */
-export function buildingPartSettings(item: StructureItem, part: { wall: number; opening?: string }) {
+export function buildingPartSettings(item: StructureItem, part: { wall: number; opening?: string; addOn?: string }) {
   const opening = part.opening ? item.openings?.find(o => o.id === part.opening) : undefined;
   const commit = () => useCourse.getState().commit();
+  const addOn = part.addOn ? item.addOns?.find(a => a.id === part.addOn) : undefined;
+  if (addOn) {
+    const set = (patch: Partial<AddOn>, history = true) => updateItem(item.id, { addOns: (item.addOns ?? []).map(a => (a.id === addOn.id ? { ...a, ...patch } : a)) } as Partial<CourseItem>, history);
+    const len = frameOf(item).walls[addOn.wall]?.len ?? 40;
+    return [
+      { id: "akind", name: "Kind", value: ADDON_LABEL[addOn.kind], control: <Segmented label="Kind" value={addOn.kind} onChange={v => set({ kind: v, depth: ADDON_SIZE[v].depth })} options={ADDON_KINDS} /> },
+      { id: "awidth", name: "Width", value: `${addOn.width} ft`, wide: true, control: <div className="p-2"><Slider label="Width" min={4} max={Math.max(4, len - 2)} step={0.5} value={addOn.width} onChange={v => set({ width: v, at: Math.min(len - v / 2 - 1, Math.max(v / 2 + 1, addOn.at)) }, false)} onDone={commit} format={v => `${v} ft along the wall`} /></div> },
+      { id: "adepth", name: "Depth", value: `${addOn.depth} ft`, wide: true, control: <div className="p-2"><Slider label="Depth" min={4} max={40} step={0.5} value={addOn.depth} onChange={v => set({ depth: v }, false)} onDone={commit} format={v => `${v} ft out`} /></div> },
+      { id: "aremove", name: "Remove", value: ADDON_LABEL[addOn.kind], icon: <Trash2 size={16} />, run: () => removeAddOn(item.id, addOn.id), testid: "addon-remove" }
+    ];
+  }
   if (opening) {
     const set = (patch: Partial<Opening>, history = true) => updateItem(item.id, { openings: (item.openings ?? []).map(o => (o.id === opening.id ? { ...o, ...patch } : o)) } as Partial<CourseItem>, history);
     return [
@@ -303,7 +384,13 @@ export function buildingPartSettings(item: StructureItem, part: { wall: number; 
   }
   const w = part.wall;
   return [
-    ...KINDS.map(k => ({ id: `add-${k.value}`, name: "Add", value: k.label, icon: <Plus size={16} />, run: () => { addToWall(item, w, k.value); }, testid: `add-${k.value}` })),
+    // (one Add, its list: on this wall, a door or window in its widest clear stretch, a porch or
+    // the like in its middle)
+    { id: "add", name: "Add", value: "Window, door, porch…", control: (
+      <div className="flex flex-col gap-0.5" data-testid="wall-add">
+        {KINDS.map(k => <ActRow key={k.value} label={k.label} icon={ADD_ICON[k.value]} onClick={() => { addToWall(item, w, k.value); }} testid={`add-${k.value}`} />)}
+        {ADDON_KINDS.map(k => <ActRow key={k.value} label={k.label} icon={ADD_ICON[k.value]} onClick={() => { addAddOnToWall(item, w, k.value); }} testid={`add-addon-${k.value}`} />)}
+      </div>) },
     { id: "wall", name: "This wall", value: "Color, doors, windows", wide: true, control: <div className="p-1.5"><WallFields item={item} wall={w} /></div> }
   ];
 }

@@ -332,6 +332,18 @@ export type FoundationKind = "slab" | "crawl" | "raised";
 export type WindowAmount = "none" | "few" | "even" | "many";
 /** Its windows: plain sashes, a grid of panes, or a grid with shutters. */
 export type WindowStyle = "plain" | "grid" | "shutters";
+/** Something built against a building's wall: a porch (its floor, posts and roof), a carport, a
+ * deck (raised, railed, no roof) or a patio (a slab on the ground). */
+export interface AddOn {
+  id: string;
+  kind: "porch" | "carport" | "deck" | "patio";
+  /** Which wall, and its middle, ft along it from the wall's first corner. */
+  wall: number;
+  at: number;
+  /** Ft along the wall, and out from it. */
+  width: number;
+  depth: number;
+}
 /** A door or a window put on a wall by hand. */
 export interface Opening {
   id: string;
@@ -396,6 +408,8 @@ export interface StructureItem extends BaseItem {
   front?: number;
   /** Doors and windows put on by hand: a wall that has some, or is in `handWalls`, keeps only those. */
   openings?: Opening[];
+  /** Porches, carports, decks and patios built against its walls. */
+  addOns?: AddOn[];
   /** Walls whose doors and windows are set by hand (none, if it has no openings). */
   handWalls?: number[];
   /** What the import guessed rather than found: named on its panel. */

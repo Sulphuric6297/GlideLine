@@ -304,6 +304,7 @@ export const deleteSelection = () => {
   if (!selectedId) return;
   // (a building's door or window picked: only it goes)
   if (buildingPart?.opening) return removeOpening(selectedId, buildingPart.opening);
+  if (buildingPart?.addOn) return removeAddOn(selectedId, buildingPart.addOn);
   const doc = getDoc();
   const hole = doc.holes.find(h => h.id === selectedId);
   if (hole) {
@@ -968,4 +969,13 @@ export const removeOpening = (id: string, opening: string) => {
   if (!o) return;
   updateItem(id, { openings: st.openings!.filter(q => q.id !== opening), handWalls: [...new Set([...(st.handWalls ?? []), o.wall])] } as Partial<CourseItem>);
   editor().set({ buildingPart: { wall: o.wall } });
+};
+
+/** Takes a porch, carport, deck or patio off a building. */
+export const removeAddOn = (id: string, addOn: string) => {
+  const st = getDoc().items.find(i => i.id === id);
+  if (st?.type !== "structure" || !st.addOns?.some(a => a.id === addOn)) return;
+  const left = st.addOns.filter(a => a.id !== addOn);
+  updateItem(id, { addOns: left.length ? left : undefined } as Partial<CourseItem>);
+  editor().set({ buildingPart: null });
 };
