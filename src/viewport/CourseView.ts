@@ -7729,9 +7729,11 @@ export class CourseView {
     }
     const pt = (s: number, y: number) => { const q = F.along(wall, s); return new THREE.Vector3(q.x + w.out.x * 0.25, y, q.y + w.out.y * 0.25); };
     if (opening) {
+      // (on a porch's back wall, where it's set in: as far back as that)
       const o = F.placed.find(q => q.id === opening);
       if (!o) return null;
-      return [pt(o.x0, o.bottom), pt(o.x1, o.bottom), pt(o.x1, o.y1), pt(o.x0, o.y1), pt(o.x0, o.bottom)];
+      const back = F.backOf(wall, o.at), at = (s: number, y: number) => pt(s, y).addScaledVector(new THREE.Vector3(w.out.x, 0, w.out.y), -back);
+      return [at(o.x0, o.bottom), at(o.x1, o.bottom), at(o.x1, o.y1), at(o.x0, o.y1), at(o.x0, o.bottom)];
     }
     const tops = F.tops(wall);
     return [pt(0, F.floor), pt(w.len, F.floor), ...[...tops].reverse().map(t => pt(t.s, t.y)), pt(0, F.floor)];
@@ -7788,7 +7790,7 @@ export class CourseView {
     } else if (part && st?.type === "structure") {
       const o = part.frame.placed.find(q => (part.opening && q.id === part.opening) || (part.at !== undefined && q.wall === part.wall && q.auto && Math.abs(q.at - part.at) < 0.01));
       const picked = this.bPart && this.bPart.wall === part.wall && (this.bPart.opening ?? "") === (o?.id ?? part.opening ?? "") && !!o === !!this.bPart.opening;
-      const pts = picked ? null : o ? (() => { const w = part.frame.walls[part.wall]; const pt = (s: number, y: number) => { const q = part.frame.along(part.wall, s); return new THREE.Vector3(q.x + w.out.x * 0.25, y, q.y + w.out.y * 0.25); }; return [pt(o.x0, o.bottom), pt(o.x1, o.bottom), pt(o.x1, o.y1), pt(o.x0, o.y1), pt(o.x0, o.bottom)]; })() : this.partOutline(st, part.frame, part.wall);
+      const pts = picked ? null : o ? (() => { const w = part.frame.walls[part.wall], d = 0.25 - part.frame.backOf(part.wall, o.at); const pt = (s: number, y: number) => { const q = part.frame.along(part.wall, s); return new THREE.Vector3(q.x + w.out.x * d, y, q.y + w.out.y * d); }; return [pt(o.x0, o.bottom), pt(o.x1, o.bottom), pt(o.x1, o.y1), pt(o.x0, o.y1), pt(o.x0, o.bottom)]; })() : this.partOutline(st, part.frame, part.wall);
       if (pts) { this.bHoverFx = this.partLine(pts, true); this.fx.add(this.bHoverFx); }
       this.container.title = o ? `${OPENING_LABEL[o.kind]}: drag to move it` : wallName(st, part.frame, part.wall);
     } else this.container.title = "";
@@ -7809,8 +7811,8 @@ export class CourseView {
       if (st?.type !== "structure" || st.kind !== "building") return null;
       const F = buildingFrame(st, this.standGround), o = F.placed.find(q => q.id === oid);
       if (!o) return null;
-      const w = F.walls[o.wall], q = F.along(o.wall, pos === "side" ? o.x1 : o.at);
-      return new THREE.Vector3(q.x + w.out.x * 0.3, pos === "top" ? o.y1 : (o.bottom + o.y1) / 2, q.y + w.out.y * 0.3);
+      const w = F.walls[o.wall], q = F.along(o.wall, pos === "side" ? o.x1 : o.at), d = 0.3 - F.backOf(o.wall, o.at);
+      return new THREE.Vector3(q.x + w.out.x * d, pos === "top" ? o.y1 : (o.bottom + o.y1) / 2, q.y + w.out.y * d);
     };
     add("openw", where("side"), e => this.openingDrag(id, oid, "side", e), { title: "Drag to make it wider or narrower" });
     add("openh", where("top"), e => this.openingDrag(id, oid, "top", e), { title: "Drag to make it taller or shorter" });
@@ -8001,8 +8003,9 @@ export class CourseView {
     const F = buildingFrame(it, this.standGround), o0 = F.placed.find(q => q.id === oid), op0 = it.openings?.find(q => q.id === oid);
     if (!o0 || !op0) return null;
     const w = F.walls[o0.wall];
-    // (on the wall's plane)
-    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(w.out.x, 0, w.out.y), new THREE.Vector3(w.a.x, 0, w.a.y));
+    // (on the wall's plane: on a porch's back wall, where it's set in, that one's)
+    const back0 = F.backOf(o0.wall, o0.at);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(w.out.x, 0, w.out.y), new THREE.Vector3(w.a.x - w.out.x * back0, 0, w.a.y - w.out.y * back0));
     const at = (ev: PointerEvent) => { const hit = this.ray(ev.clientX, ev.clientY).intersectPlane(plane, new THREE.Vector3()); return hit ? { s: (hit.x - w.a.x) * w.dir.x + (hit.z - w.a.y) * w.dir.y, y: hit.y } : null; };
     const start = at(e);
     if (!start) return null;
@@ -8020,6 +8023,9 @@ export class CourseView {
         if (t <= 0 || (best && t >= best.t)) return;
         const q = ray.at(t, new THREE.Vector3()), sAlong = (q.x - x.a.x) * x.dir.x + (q.z - x.a.y) * x.dir.y;
         if (sAlong < -1 || sAlong > x.len + 1 || q.y < F.floor - 2 || q.y > F.roofY(F.along(i, clamp(sAlong, 0, x.len))) + 2) return;
+        // (in a porch set in there, under its beam: on its back wall)
+        const back = q.y < F.head ? F.backOf(i, sAlong) : 0;
+        if (back) { const t2 = t - back / den, q2 = ray.at(t2, new THREE.Vector3()); best = { wall: i, s: (q2.x - x.a.x) * x.dir.x + (q2.z - x.a.y) * x.dir.y, y: q2.y, t }; return; }
         best = { wall: i, s: sAlong, y: q.y, t };
       });
       return best as { wall: number; s: number; y: number; t: number } | null;

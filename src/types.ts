@@ -376,6 +376,13 @@ export interface Opening {
   sill?: number;
   /** Which story it's on, 0 the ground floor (unset: 0). */
   story?: number;
+  /** A window's own style, over the building's `windowStyle` (unset: the building's). */
+  style?: WindowStyle;
+  /** Its own color over the building's: a window's frames, a door's or a garage door's (unset:
+   * the building's). */
+  color?: string;
+  /** A window's shutters' own color (unset: the building's). */
+  shutterColor?: string;
 }
 export interface StructureItem extends BaseItem {
   /** More holes it belongs to (an OB line along two fairways): with `holeId`, all of them. */

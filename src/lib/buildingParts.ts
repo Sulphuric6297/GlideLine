@@ -256,7 +256,10 @@ export const buildingFrame = (st: StructureItem, groundAt: (x: number, y: number
   // (no door or window where a wall's been cut away round a corner, nor across a porch's edge:
   // only wholly on its back wall or wholly beside it)
   const shown = placed.filter(o => o.bottom >= head || !cuts.some(c => c.wall === o.wall && (c.wall !== recesses.find(r => r.id === c.id)?.wall ? o.x1 > c.x0 && o.x0 < c.x1 : (o.x0 < c.x0 + 0.3 && o.x1 > c.x0 - 0.3) || (o.x0 < c.x1 + 0.3 && o.x1 > c.x1 - 0.3))));
-  return { outline, H, gMin, gMax, floor, eave, head, roof, roofY, walls, along, fits, placed: shown, tops, front, recesses, cuts, inRecess };
+  /** How far back from its wall's line a spot on wall `w` (s ft along it) stands: a porch set in
+   * there, its back wall's depth; else 0. */
+  const backOf = (w: number, s: number) => recesses.find(r => r.wall === w && s > r.s0 && s < r.s1)?.D ?? 0;
+  return { outline, H, gMin, gMax, floor, eave, head, roof, roofY, walls, along, fits, placed: shown, tops, front, recesses, cuts, inRecess, backOf };
 };
 export type Frame = ReturnType<typeof buildingFrame>;
 

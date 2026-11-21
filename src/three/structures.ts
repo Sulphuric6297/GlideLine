@@ -633,7 +633,7 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
   const { outline, gMin, floor, eave, roof, roofY } = F;
   const C = buildingColors(st);
   const at = (k: string) => (parts[k] ??= new Mesher());
-  const trim = at("trim"), frames = at("frames"), found = at("found");
+  const trim = at("trim"), found = at("found");
   const style = windowStyleOf(st), siding = sidingOf(st);
   // A foundation, a little proud of the walls (round any porch set into the house)
   // (a corner a porch is open round taken off: the notch goes round it)
@@ -719,6 +719,8 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
         if (bottom) m.quad(pt(x0, y0, d0), pt(x1, y0, d0), pt(x1, y0, d1), pt(x0, y0, d1), [[0, 0], [1, 0], [1, 1], [0, 1]], UP);
       };
       const tw = o.kind === "garage" ? 0.4 : 0.36;
+      // (its own style and colors, where it has them, over the building's)
+      const sty = o.style ?? style, frames = at(o.color && o.kind === "window" ? `frames|${o.color}` : "frames"), shutters = at(o.shutterColor ? `shutters|${o.shutterColor}` : "shutters");
       // (its casing round it, a head over it)
       box(trim, x0 - tw, x0, o.kind === "window" ? y0 - 0.05 : y0, y1 + tw, 0, 0.1);
       box(trim, x1, x1 + tw, o.kind === "window" ? y0 - 0.05 : y0, y1 + tw, 0, 0.1);
@@ -737,19 +739,19 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
         box(frames, x0, x1, y1 - f, y1, -d + 0.04, -d + 0.18);
         box(frames, x0, x1, y0, y0 + f, -d + 0.04, -d + 0.18);
         box(frames, x0, x1, mid - 0.08, mid + 0.08, -d + 0.04, -d + 0.22);
-        if (style !== "plain") {
+        if (sty !== "plain") {
           for (const k of [1, 2]) box(frames, x0 + ((x1 - x0) * k) / 3 - 0.03, x0 + ((x1 - x0) * k) / 3 + 0.03, y0, y1, -d + 0.18, -d + 0.22);
           for (const yy of [y0 + (y1 - y0) / 4, y0 + (3 * (y1 - y0)) / 4]) box(frames, x0, x1, yy - 0.03, yy + 0.03, -d + 0.18, -d + 0.22);
         }
         // (its sill, out over the wall)
         box(trim, x0 - tw - 0.15, x1 + tw + 0.15, y0 - 0.22, y0, -0.1, 0.3);
-        if (style === "shutters") for (const [a, b] of [[x0 - tw - o.width / 2 - 0.05, x0 - tw - 0.05], [x1 + tw + 0.05, x1 + tw + o.width / 2 + 0.05]]) {
-          box(at("shutters"), a, b, y0, y1, 0, 0.12);
-          box(at("shutters"), a + 0.12, b - 0.12, (y0 + y1) / 2 - 0.12, (y0 + y1) / 2 + 0.12, 0.12, 0.17);
+        if (sty === "shutters") for (const [a, b] of [[x0 - tw - o.width / 2 - 0.05, x0 - tw - 0.05], [x1 + tw + 0.05, x1 + tw + o.width / 2 + 0.05]]) {
+          box(shutters, a, b, y0, y1, 0, 0.12);
+          box(shutters, a + 0.12, b - 0.12, (y0 + y1) / 2 - 0.12, (y0 + y1) / 2 + 0.12, 0.12, 0.17);
         }
       } else {
         // A door, or a garage's: set in, panels on it
-        const d = 0.3, slab = at(o.kind === "garage" ? "garage" : "door");
+        const d = 0.3, slab = at(`${o.kind === "garage" ? "garage" : "door"}${o.color ? `|${o.color}` : ""}`);
         sides(trim, 0, -d, false);
         box(slab, x0, x1, y0, y1, -d - 0.15, -d);
         if (o.kind === "garage") for (let k = 1; k < 4; k++) box(slab, x0 + 0.1, x1 - 0.1, y0 + ((y1 - y0) * k) / 4 - 0.05, y0 + ((y1 - y0) * k) / 4 + 0.05, -d, -d + 0.05);
@@ -841,6 +843,14 @@ const deckModel = (st: StructureItem, g: Ground, parts: Parts) => {
 const buildingMaterial = (key: string, st: StructureItem): THREE.Material => {
   const C = buildingColors(st);
   if (key.startsWith("walls|")) return surface(SIDING_SCAN[sidingOf(st)], key.slice(6) || undefined);
+  // (a door's or window's own color)
+  const [base, own] = key.split("|");
+  if (own) switch (base) {
+    case "frames": return paintOf(own, 0.5);
+    case "door": return paintOf(own, 0.45);
+    case "garage": return paintOf(own, 0.5);
+    case "shutters": return paintOf(own, 0.6);
+  }
   switch (key) {
     case "roof": return surface(ROOFING_SCAN[roofingOf(st)], C.roof, true, C.roof ? ROOF_SHADE : 1);
     case "flatroof": return surface("stucco", C.roof ?? "#8d8b86");

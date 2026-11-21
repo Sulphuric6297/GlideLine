@@ -727,3 +727,29 @@ test("a porch set into the house opens at its sides round the house's corners, a
   await page.getByRole("radiogroup", { name: "Open sides" }).getByRole("radio", { name: "None" }).click();
   await expect.poll(ends).toEqual([2, 22, false, false]);
 });
+
+test("a window looks its own way: its Style and Frame color over the building's, and As the house puts it back", async ({ page }) => {
+  test.setTimeout(90_000);
+  await blankCourse(page);
+  await page.getByRole("button", { name: "2 Design" }).click();
+  await page.keyboard.press("s");
+  await page.getByTestId("structure-kind-building").click();
+  await page.getByTestId("draw-shape-box").click();
+  await drag(page, await screenOf(page, 400, 400), await screenOf(page, 436, 424), 3);
+  await expect.poll(async () => (await structures(page)).length).toBe(1);
+  const id = (await structures(page))[0].id;
+  await page.evaluate(i => (window as any).__dgStore.getState().change((d: any) => ({ items: d.items.map((x: any) => (x.id === i ? { ...x, openings: [{ id: "w1", kind: "window", wall: 0, at: 10, width: 3, height: 4.75, sill: 2.75 }, { id: "w2", kind: "window", wall: 0, at: 20, width: 3, height: 4.75, sill: 2.75 }] } : x)) }), false), id);
+  await page.evaluate(i => { (window as any).__dgActions.select(i); (window as any).__dgEditor().set({ buildingPart: { wall: 0, opening: "w1" } }); }, id);
+  const win = (k: string) => page.evaluate(([i, k]) => (window as any).__dgCourse().items.find((x: any) => x.id === i).openings.find((o: any) => o.id === k), [id, k] as const);
+  await page.getByRole("radiogroup", { name: "Style", exact: true }).getByRole("radio", { name: "Shutters" }).click();
+  await expect.poll(async () => (await win("w1")).style).toBe("shutters");
+  expect((await win("w2")).style).toBeUndefined();
+  await page.getByRole("button", { name: "Frame color", exact: true }).click();
+  await page.getByTestId("color-palette").nth(3).click();
+  await expect.poll(async () => typeof (await win("w1")).color).toBe("string");
+  await expect(page.getByTestId("color-natural")).toHaveText("As the house");
+  await page.getByTestId("color-natural").click();
+  await expect.poll(async () => (await win("w1")).color).toBeUndefined();
+  await page.getByRole("radiogroup", { name: "Style", exact: true }).getByRole("radio", { name: "As the house" }).click();
+  await expect.poll(async () => (await win("w1")).style).toBeUndefined();
+});

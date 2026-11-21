@@ -76,7 +76,7 @@ const CONIC = "conic-gradient(#ef4444, #f59e0b, #84cc16, #06b6d4, #6366f1, #d946
  */
 export function ColorSwatches({ value, onPick, onDone, none, palettes = [], swatch, natural, top, label = "Color" }: {
   value?: string; onPick: (c: string, live?: boolean) => void; onDone?: () => void; none?: { label: string; on: () => void };
-  palettes?: Palette[]; swatch?: (c: string) => CSSProperties; natural?: { on: () => void; style: CSSProperties; picked: boolean }; top?: ReactNode; label?: string;
+  palettes?: Palette[]; swatch?: (c: string) => CSSProperties; natural?: { on: () => void; style: CSSProperties; picked: boolean; label?: string }; top?: ReactNode; label?: string;
 }) {
   const doc = useCourse(c => c.doc);
   const v = value?.toLowerCase();
@@ -115,7 +115,7 @@ export function ColorSwatches({ value, onPick, onDone, none, palettes = [], swat
       <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
         {natural && (
           <button type="button" className={`${PILL} ${natural.picked ? "bg-zinc-100 text-zinc-900" : "bg-white/[0.08] hover:bg-white/[0.14] text-zinc-100"}`} onClick={() => { before.current = undefined; natural.on(); onDone?.(); }} data-testid="color-natural">
-            <span className="w-5 h-5 rounded-full ring-1 ring-white/30" style={natural.style} />Natural
+            <span className="w-5 h-5 rounded-full ring-1 ring-white/30" style={natural.style} />{natural.label ?? "Natural"}
           </button>
         )}
         <button type="button" aria-expanded={custom} className={`${PILL} ${custom ? "bg-zinc-100 text-zinc-900" : "bg-white/[0.08] hover:bg-white/[0.14] text-zinc-100"}`} onClick={() => setCustom(o => !o)} data-testid="color-custom">
@@ -134,7 +134,7 @@ export function ColorSwatches({ value, onPick, onDone, none, palettes = [], swat
  */
 export function ColorInput({ label, value, onChange, onDone, name, palettes, swatch, natural, top, testid }: {
   label: string; value?: string; onChange: (v: string, live?: boolean) => void; onDone?: () => void; name?: string;
-  palettes?: Palette[]; swatch?: (c: string) => CSSProperties; natural?: { on: () => void; style: CSSProperties }; top?: ReactNode; testid?: string;
+  palettes?: Palette[]; swatch?: (c: string) => CSSProperties; natural?: { on: () => void; style: CSSProperties; label?: string }; top?: ReactNode; testid?: string;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);

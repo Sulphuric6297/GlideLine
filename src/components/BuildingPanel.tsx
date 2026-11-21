@@ -399,7 +399,7 @@ function WallFields({ item, wall }: { item: StructureItem; wall: number }) {
       {!front && <div className="mb-3"><Button small tone="ghost" onClick={() => set({ front: wall })} testid="wall-front">Make this the front</Button></div>}
       <ColorInput label="Color" value={ownColor} name={ownColor ? colorName(ownColor) : "As the walls"} testid="color-thiswall"
         onChange={(v, live) => set({ wallColors: { ...item.wallColors, [wall]: v } }, !live)} onDone={commit} palettes={[{ title: "House colors", list: HOUSE_COLORS }]} swatch={paintedStyle(wallScan)}
-        natural={{ on: () => { const w = { ...item.wallColors }; delete w[wall]; set({ wallColors: Object.keys(w).length ? w : undefined }); }, style: C.walls ? paintedStyle(wallScan)(C.walls) : scanStyle(wallScan) }} />
+        natural={{ on: () => { const w = { ...item.wallColors }; delete w[wall]; set({ wallColors: Object.keys(w).length ? w : undefined }); }, style: C.walls ? paintedStyle(wallScan)(C.walls) : scanStyle(wallScan), label: "As the walls" }} />
       <div className="mt-2" data-testid="wall-openings">
         {mine.length === 0 && <p className="text-[11.5px] text-zinc-400">No doors or windows.</p>}
         {mine.map((o, i) => (
@@ -421,16 +421,37 @@ function WallFields({ item, wall }: { item: StructureItem; wall: number }) {
   );
 }
 
-/** The picked door's or window's settings: its kind, size and (a window's) sill; Remove. */
-function OpeningFields({ item, opening }: { item: StructureItem; opening: Opening }) {
+/** A picked door's or window's settings: its kind, size, (a window's) sill; its own style and
+ * colors over the building's (each "As the house" till set); Remove. `rows`: as the phone's bar's
+ * rows, the panel showing the same. */
+function openingControls(item: StructureItem, opening: Opening): { id: string; name: string; value: ReactNode; control?: ReactNode; wide?: boolean; run?: () => void; icon?: ReactNode; testid?: string }[] {
   const set = (patch: Partial<Opening>, history = true) => updateItem(item.id, { openings: (item.openings ?? []).map(o => (o.id === opening.id ? { ...o, ...patch } : o)) } as Partial<CourseItem>, history);
   const commit = () => useCourse.getState().commit();
+  const C = buildingColors(item), house = [{ title: "House colors", list: HOUSE_COLORS }];
+  const win = opening.kind === "window", sty = opening.style ?? windowStyleOf(item);
+  // (its color: a window's frames, a door's; a garage door's is the trim's)
+  const usual = win ? C.frames : opening.kind === "door" ? C.door : C.trim;
+  const colorRow = (id: string, name: string, value: string | undefined, usualColor: string, key: "color" | "shutterColor") => ({
+    id, name, value: <span className="flex items-center gap-1.5"><span className="w-3.5 h-3.5 rounded-full ring-1 ring-white/40" style={{ background: value ?? usualColor }} />{value ? colorName(value) : "As the house"}</span>, wide: true,
+    control: <div className="p-1.5"><ColorInput label={name} value={value} name={value ? colorName(value) : "As the house"} testid={`opening-${key}`} onChange={(v, live) => set({ [key]: v }, !live)} onDone={commit} palettes={house} natural={{ on: () => set({ [key]: undefined }), style: { background: usualColor }, label: "As the house" }} /></div>
+  });
+  return [
+    { id: "okind", name: "Kind", value: OPENING_LABEL[opening.kind], control: <Segmented label="Kind" value={opening.kind} onChange={v => { const z = sizeOf(v); set({ kind: v, width: z.width, height: z.height, sill: z.sill, story: v === "window" ? opening.story : 0, style: undefined, shutterColor: undefined }); }} options={KINDS} /> },
+    { id: "owidth", name: "Width", value: `${opening.width} ft`, wide: true, control: <div className="p-2"><Slider label="Width" min={1.5} max={opening.kind === "garage" ? 20 : 12} step={0.25} value={opening.width} onChange={v => set({ width: v }, false)} onDone={commit} format={v => `${v} ft`} /></div> },
+    { id: "oheight", name: "Height", value: `${opening.height} ft`, wide: true, control: <div className="p-2"><Slider label="Height" min={1.5} max={opening.kind === "garage" ? 14 : 10} step={0.25} value={opening.height} onChange={v => set({ height: v }, false)} onDone={commit} format={v => `${v} ft`} /></div> },
+    ...(win ? [{ id: "osill", name: "Sill", value: `${opening.sill ?? 3} ft`, wide: true, control: <div className="p-2"><Slider label="Sill height" min={0.5} max={8} step={0.25} value={opening.sill ?? 3} onChange={v => set({ sill: v }, false)} onDone={commit} format={v => `${v} ft off the floor`} /></div> }] : []),
+    ...(win ? [{ id: "ostyle", name: "Style", value: opening.style ? STYLES.find(x => x.value === opening.style)!.label : "As the house", control: <Segmented label="Style" value={opening.style ?? "house"} onChange={v => set({ style: v === "house" ? undefined : v })} options={[{ value: "house" as const, label: "As the house" }, ...STYLES]} /> }] : []),
+    colorRow("ocolor", win ? "Frame color" : "Color", opening.color, usual, "color"),
+    ...(win && sty === "shutters" ? [colorRow("oshutters", "Shutter color", opening.shutterColor, C.shutters, "shutterColor")] : []),
+    { id: "oremove", name: "Remove", value: OPENING_LABEL[opening.kind], icon: <Trash2 size={16} />, run: () => removeOpening(item.id, opening.id), testid: "opening-remove" }
+  ];
+}
+
+function OpeningFields({ item, opening }: { item: StructureItem; opening: Opening }) {
+  const rows = openingControls(item, opening);
   return (
     <div data-testid="opening-fields">
-      <Field label="Kind"><Segmented label="Kind" value={opening.kind} onChange={v => { const z = sizeOf(v); set({ kind: v, width: z.width, height: z.height, sill: z.sill, story: v === "window" ? opening.story : 0 }); }} options={KINDS} /></Field>
-      <Slider label="Width" min={1.5} max={opening.kind === "garage" ? 20 : 12} step={0.25} value={opening.width} onChange={v => set({ width: v }, false)} onDone={commit} format={v => `${v} ft`} />
-      <Slider label="Height" min={1.5} max={opening.kind === "garage" ? 14 : 10} step={0.25} value={opening.height} onChange={v => set({ height: v }, false)} onDone={commit} format={v => `${v} ft`} />
-      {opening.kind === "window" && <Slider label="Sill height" min={0.5} max={8} step={0.25} value={opening.sill ?? 3} onChange={v => set({ sill: v }, false)} onDone={commit} format={v => `${v} ft off the floor`} />}
+      {rows.filter(r => r.control).map(r => (r.wide ? <div key={r.id}>{r.control}</div> : <Field key={r.id} label={r.name}>{r.control}</Field>))}
       <div className="mt-2"><Button small tone="danger" onClick={() => removeOpening(item.id, opening.id)} testid="opening-remove"><Trash2 size={13} /> Remove</Button></div>
     </div>
   );
@@ -459,19 +480,9 @@ export function BuildingPart({ item }: { item: StructureItem }) {
 /** The picked wall's or opening's settings for the phone's bar (the same as its panel part). */
 export function buildingPartSettings(item: StructureItem, part: { wall: number; opening?: string; addOn?: string }) {
   const opening = part.opening ? item.openings?.find(o => o.id === part.opening) : undefined;
-  const commit = () => useCourse.getState().commit();
   const addOn = part.addOn ? item.addOns?.find(a => a.id === part.addOn) : undefined;
   if (addOn) return addOnControls(item, addOn, useCourse.getState().doc.units).map(r => (r.wide ? r : r.run ? r : { ...r, control: <div className="p-1.5">{r.control}</div> }));
-  if (opening) {
-    const set = (patch: Partial<Opening>, history = true) => updateItem(item.id, { openings: (item.openings ?? []).map(o => (o.id === opening.id ? { ...o, ...patch } : o)) } as Partial<CourseItem>, history);
-    return [
-      { id: "okind", name: "Kind", value: OPENING_LABEL[opening.kind], control: <Segmented label="Kind" value={opening.kind} onChange={v => { const z = sizeOf(v); set({ kind: v, width: z.width, height: z.height, sill: z.sill, story: v === "window" ? opening.story : 0 }); }} options={KINDS} /> },
-      { id: "owidth", name: "Width", value: `${opening.width} ft`, wide: true, control: <div className="p-2"><Slider label="Width" min={1.5} max={opening.kind === "garage" ? 20 : 12} step={0.25} value={opening.width} onChange={v => set({ width: v }, false)} onDone={commit} format={v => `${v} ft`} /></div> },
-      { id: "oheight", name: "Height", value: `${opening.height} ft`, wide: true, control: <div className="p-2"><Slider label="Height" min={1.5} max={opening.kind === "garage" ? 14 : 10} step={0.25} value={opening.height} onChange={v => set({ height: v }, false)} onDone={commit} format={v => `${v} ft`} /></div> },
-      ...(opening.kind === "window" ? [{ id: "osill", name: "Sill", value: `${opening.sill ?? 3} ft`, wide: true, control: <div className="p-2"><Slider label="Sill height" min={0.5} max={8} step={0.25} value={opening.sill ?? 3} onChange={v => set({ sill: v }, false)} onDone={commit} format={v => `${v} ft off the floor`} /></div> }] : []),
-      { id: "oremove", name: "Remove", value: OPENING_LABEL[opening.kind], icon: <Trash2 size={16} />, run: () => removeOpening(item.id, opening.id), testid: "opening-remove" }
-    ];
-  }
+  if (opening) return openingControls(item, opening).map(r => (r.wide ? r : r.run ? r : { ...r, control: <div className="p-1.5">{r.control}</div> }));
   const w = part.wall;
   return [
     // (one Add, its list: on this wall, a door or window in its widest clear stretch, a porch or
