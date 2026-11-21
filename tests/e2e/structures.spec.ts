@@ -680,3 +680,50 @@ test("a porch as the Security Camera Planner's: steps put on and taken off from 
   await drag(page, h, { x: h.x, y: h.y + 200 }, 14);
   await expect.poll(async () => (await porch()).roof).toBeUndefined();
 });
+
+test("a porch set into the house opens at its sides round the house's corners, as the planner's: the panel's Open sides, the menu's Close this side and Open this side", async ({ page }) => {
+  test.setTimeout(120_000);
+  await blankCourse(page);
+  await page.getByRole("button", { name: "2 Design" }).click();
+  await page.keyboard.press("s");
+  await page.getByTestId("structure-kind-building").click();
+  await page.getByTestId("draw-shape-box").click();
+  await drag(page, await screenOf(page, 400, 400), await screenOf(page, 436, 424), 3);
+  await expect.poll(async () => (await structures(page)).length).toBe(1);
+  const id = (await structures(page))[0].id;
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("3");
+  // (a porch set 8 ft into the 24 ft east wall, 2 ft short of each corner; seen from the east)
+  const east = await page.evaluate(i => { const st = (window as any).__dgCourse().items.find((x: any) => x.id === i); return st.points.findIndex((p: any, k: number) => Math.abs(p.x - 436) < 0.5 && Math.abs(st.points[(k + 1) % st.points.length].x - 436) < 0.5); }, id);
+  expect(east).toBeGreaterThanOrEqual(0);
+  await page.evaluate(([i, w]) => (window as any).__dgStore.getState().change((d: any) => ({ items: d.items.map((x: any) => (x.id === i ? { ...x, addOns: [{ id: "op", kind: "porch", wall: w, at: 12, width: 20, depth: 8, roof: "house" }] } : x)) }), false), [id, east] as const);
+  const ends = () => page.evaluate(i => {
+    const v = (window as any).__dgView, st = (window as any).__dgCourse().items.find((x: any) => x.id === i), a = st.addOns[0];
+    const r = (window as any).__dgParts.buildingFrame(st, v.standGround).recesses[0];
+    return [Math.round((a.at - a.width / 2) * 10) / 10, Math.round((a.at + a.width / 2) * 10) / 10, !!r?.open0, !!r?.open1];
+  }, id);
+  expect(await ends()).toEqual([2, 22, false, false]);
+  // Open sides: Both runs it to both corners, open there
+  await page.evaluate(([i, w]) => { (window as any).__dgActions.select(i); (window as any).__dgEditor().set({ buildingPart: { wall: w, addOn: "op" } }); }, [id, east] as const);
+  await page.getByRole("radiogroup", { name: "Open sides" }).getByRole("radio", { name: "Both" }).click();
+  await expect.poll(ends).toEqual([0, 24, true, true]);
+  // Close this side, from its menu on its floor near one end
+  await page.evaluate(() => { const v = (window as any).__dgView, g = v.groundHeight(436, 412); v.controls.setLookAt(490, g + 30, 418, 432, g + 2, 412, false); v.controls.update(0); });
+  await page.waitForTimeout(1000);
+  const spot = await page.evaluate(i => {
+    const v = (window as any).__dgView, st = (window as any).__dgCourse().items.find((x: any) => x.id === i), a = st.addOns[0];
+    const B = (window as any).__dgParts, F = B.buildingFrame(st, v.standGround), L = B.addOnLevels(F, a, v.standGround), sx = -(L.half - 3);
+    const c = v.camera, r = v.container.getBoundingClientRect(), P = new c.position.constructor(L.mid.x + L.w.dir.x * sx - L.w.out.x * 4, L.top + 0.05, L.mid.y + L.w.dir.y * sx - L.w.out.y * 4).project(c);
+    return { x: r.left + ((P.x + 1) / 2) * r.width, y: r.top + ((1 - P.y) / 2) * r.height };
+  }, id);
+  await page.mouse.click(spot.x, spot.y, { button: "right" });
+  await page.getByTestId("menu-close-side").click();
+  await expect.poll(ends).toEqual([2, 24, false, true]);
+  await page.mouse.click(spot.x, spot.y, { button: "right" });
+  await page.getByTestId("menu-open-side").click();
+  await expect.poll(ends).toEqual([0, 24, true, true]);
+  // None closes both
+  await page.evaluate(([i, w]) => { (window as any).__dgActions.select(i); (window as any).__dgEditor().set({ buildingPart: { wall: w, addOn: "op" } }); }, [id, east] as const);
+  await page.getByRole("radiogroup", { name: "Open sides" }).getByRole("radio", { name: "None" }).click();
+  await expect.poll(ends).toEqual([2, 22, false, false]);
+});

@@ -232,16 +232,31 @@ export const buildingFrame = (st: StructureItem, groundAt: (x: number, y: number
   // (porches and the like set into the house: on which wall, from and to (ft along it), how far in,
   // and the height of the beam's underside over them)
   const head = eave - BEAM;
+  // (one run to the house's corner is open on that side too, as the planner's: the wall round the
+  // corner cut away as deep as it goes in, when that wall turns square in and reaches past it)
   const recesses = (st.addOns ?? []).filter(a => addOnRoof(a) === "house" && walls[a.wall]).map(a => {
-    const len = walls[a.wall].len, s0 = Math.max(0.3, a.at - a.width / 2), s1 = Math.min(len - 0.3, a.at + a.width / 2);
-    return { id: a.id, wall: a.wall, s0, s1, D: Math.min(a.depth, insideDepth(outline, walls, a.wall) - 2) };
+    const len = walls[a.wall].len, D = Math.min(a.depth, insideDepth(outline, walls, a.wall) - 2);
+    const r0 = a.at - a.width / 2, r1 = a.at + a.width / 2;
+    const ends = cornerEnds(walls, a.wall, D);
+    const open0 = r0 <= CORNER && ends[0], open1 = r1 >= len - CORNER && ends[1];
+    const s0 = open0 ? 0 : Math.max(0.3, r0), s1 = open1 ? len : Math.min(len - 0.3, r1);
+    return { id: a.id, wall: a.wall, s0, s1, D, open0, open1 };
   }).filter(r => r.s1 - r.s0 > 1 && r.D > 1);
+  /** Where walls are open from the floor up to `head`, ft along each: a porch set in (on its own
+   * wall, and round a corner it's open at). */
+  const cuts = recesses.flatMap(r => {
+    const n = walls.length, prev = (r.wall + n - 1) % n, next = (r.wall + 1) % n;
+    return [{ wall: r.wall, x0: r.s0, x1: r.s1, id: r.id }, ...(r.open0 ? [{ wall: prev, x0: walls[prev].len - r.D, x1: walls[prev].len, id: r.id }] : []), ...(r.open1 ? [{ wall: next, x0: 0, x1: r.D, id: r.id }] : [])];
+  });
   /** Whether a point (plan, height) is in the open air of a porch set into the house. */
   const inRecess = (p: P, y: number) => y < head && recesses.some(r => {
     const w = walls[r.wall], s = (p.x - w.a.x) * w.dir.x + (p.y - w.a.y) * w.dir.y, d = (p.x - w.a.x) * w.out.x + (p.y - w.a.y) * w.out.y;
-    return s > r.s0 && s < r.s1 && d > -r.D && d < 0.05;
+    return s > (r.open0 ? -0.05 : r.s0) && s < (r.open1 ? r.s1 + 0.05 : r.s1) && d > -r.D && d < 0.05;
   });
-  return { outline, H, gMin, gMax, floor, eave, head, roof, roofY, walls, along, fits, placed, tops, front, recesses, inRecess };
+  // (no door or window where a wall's been cut away round a corner, nor across a porch's edge:
+  // only wholly on its back wall or wholly beside it)
+  const shown = placed.filter(o => o.bottom >= head || !cuts.some(c => c.wall === o.wall && (c.wall !== recesses.find(r => r.id === c.id)?.wall ? o.x1 > c.x0 && o.x0 < c.x1 : (o.x0 < c.x0 + 0.3 && o.x1 > c.x0 - 0.3) || (o.x0 < c.x1 + 0.3 && o.x1 > c.x1 - 0.3))));
+  return { outline, H, gMin, gMax, floor, eave, head, roof, roofY, walls, along, fits, placed: shown, tops, front, recesses, cuts, inRecess };
 };
 export type Frame = ReturnType<typeof buildingFrame>;
 
@@ -311,6 +326,33 @@ const insideDepth = (outline: P[], walls: Wall[], w: number) => {
 };
 /** The deepest a porch can go into the house from a wall, ft (keeping 2 ft of house behind it). */
 export const maxSetIn = (F: Frame, w: number) => Math.max(0, insideDepth(F.outline, F.walls, w) - 2);
+/** How near a corner a porch set in must reach to be open on that side, ft. */
+const CORNER = 0.05;
+/** Whether a porch set `D` ft into the house from wall `w` can be open at each end (toward the
+ * wall's first corner, toward its other): the wall round that corner turns square in from it and
+ * runs on a foot or more past the porch. */
+const cornerEnds = (walls: Wall[], w: number, D: number): [boolean, boolean] => {
+  const n = walls.length, x = walls[w], p = walls[(w + n - 1) % n], q = walls[(w + 1) % n];
+  return [p.dir.x * x.out.x + p.dir.y * x.out.y > 0.94 && p.len > D + 1, -(q.dir.x * x.out.x + q.dir.y * x.out.y) > 0.94 && q.len > D + 1];
+};
+/** A porch set into the house: whether it's open at each end (0: toward its wall's first corner,
+ * 2: the other), whether it can be, and which end is on the left as you face it from outside. */
+export const addOnEnds = (F: Frame, a: AddOn) => {
+  const r = F.recesses.find(x => x.id === a.id), w = F.walls[a.wall];
+  const can = r ? cornerEnds(F.walls, a.wall, r.D) : [false, false];
+  // (facing the wall from outside, your right is the way (out.y, -out.x) on the plan)
+  const left: 0 | 2 = w && w.dir.x * w.out.y - w.dir.y * w.out.x > 0 ? 0 : 2;
+  return { open: [!!r?.open0, !!r?.open1] as [boolean, boolean], can: can as [boolean, boolean], left };
+};
+/** A porch set in, opened at an end (run to the house's corner) or closed there (2 ft back from
+ * it): its new place and width along its wall. */
+export const openAddOnEnd = (F: Frame, a: AddOn, end: 0 | 2, open: boolean): Pick<AddOn, "at" | "width"> => {
+  const len = F.walls[a.wall]?.len ?? 0;
+  let s0 = a.at - a.width / 2, s1 = a.at + a.width / 2;
+  if (end === 0) s0 = open ? 0 : Math.min(2, Math.max(0, s1 - 4));
+  else s1 = open ? len : Math.max(len - 2, Math.min(len, s0 + 4));
+  return { at: (s0 + s1) / 2, width: s1 - s0 };
+};
 
 /** A porch, carport, deck or patio put against a wall, its middle at `near` (ft along it) or the
  * wall's middle, kept on the wall; null where the wall's too short for one. `like`: a copied one,
@@ -363,9 +405,9 @@ export const addOnLevels = (F: Frame, a: AddOn, g: (x: number, y: number) => num
   const over = 1, pitch = own ? Math.min((a.pitch ?? 3) / 12, Math.max(1 / 12, (yWall - top - 7.5) / (D + over))) : 0;
   const yOut = yWall - (D + over) * pitch;
   const roof = own && yOut >= top + 6.5;
-  // (its open sides: set in, only its front, along the wall's line)
+  // (its open sides: set in, its front along the wall's line, and an end run to the corner)
   const sides: AddOnSide[] = setIn
-    ? [{ i: 1, a: [-half, 0], b: [half, 0], out: [0, 1], len: a.width }]
+    ? [...(rec?.open0 ? [{ i: 0, a: [-half, -D], b: [-half, 0], out: [-1, 0], len: D } as AddOnSide] : []), { i: 1, a: [-half, 0], b: [half, 0], out: [0, 1], len: a.width }, ...(rec?.open1 ? [{ i: 2, a: [half, 0], b: [half, -D], out: [1, 0], len: D } as AddOnSide] : [])]
     : [{ i: 0, a: [-half, 0], b: [-half, D], out: [-1, 0], len: D }, { i: 1, a: [-half, D], b: [half, D], out: [0, 1], len: a.width }, { i: 2, a: [half, D], b: [half, 0], out: [1, 0], len: D }];
   const sideAt = (sd: AddOnSide, t: number): [number, number] => [sd.a[0] + (sd.b[0] - sd.a[0]) * t, sd.a[1] + (sd.b[1] - sd.a[1]) * t];
   // (steps down where the floor stands over the ground: as set, or one in its front's middle)
@@ -379,7 +421,7 @@ export const addOnLevels = (F: Frame, a: AddOn, g: (x: number, y: number) => num
   });
   const raised = top - gMin;
   const rail = level && (a.railing ?? ((a.kind === "porch" || a.kind === "deck") && raised >= 1.5));
-  return { w, mid, half, D, d0, d1, setIn, gAt, gMin, gMax, gRef, onGround, level, top, up: top - gRef, roofKind, roof, yWall, pitch, over, yOut, sides, sideAt, steps, STEP, rail, high: roof ? yWall + 0.5 : setIn ? F.head : top + (rail ? 3.2 : 0.6) };
+  return { w, mid, half, D, d0, d1, setIn, open0: !!rec?.open0, open1: !!rec?.open1, gAt, gMin, gMax, gRef, onGround, level, top, up: top - gRef, roofKind, roof, yWall, pitch, over, yOut, sides, sideAt, steps, STEP, rail, high: roof ? yWall + 0.5 : setIn ? F.head : top + (rail ? 3.2 : 0.6) };
 };
 export type AddOnLevels = ReturnType<typeof addOnLevels>;
 

@@ -53,7 +53,7 @@ import { measuredStanding, setMeasuredStanding } from "../lib/standing";
 import { createFieldGround, createFieldProps, createHedge, createPowerLine } from "../three/parkProps";
 import { LEAGUES, cornerFrame, fieldInks, fieldPartAt, fieldPartShape, fieldPlan } from "../lib/fieldPlan";
 import { fieldHome, fieldKeepsTreesOut, fieldKindOf, fieldOutline, isBallField } from "../lib/fields";
-import { ADDON_LABEL, addOnLevels, addOnRoof, buildingFrame, maxSetIn, nearestAddOnSide, OPENING_LABEL, ownWall, wallName, wallsAfter, type Frame } from "../lib/buildingParts";
+import { ADDON_LABEL, addOnEnds, addOnLevels, addOnRoof, buildingFrame, maxSetIn, nearestAddOnSide, OPENING_LABEL, ownWall, wallName, wallsAfter, type Frame } from "../lib/buildingParts";
 import { isLineKind, orientedBox, roofFor, structureBounds, structureHeight, structurePath, structureWidth, turnShape } from "../lib/structures";
 import type { AddOn, AmenityItem, AmenityKind, AreaItem, BasketItem, CourseItem, FlyKey, Hole, LabelItem, LineItem, MandoItem, RockItem, StructureItem, TeeItem, TeeLevel, TreeItem, BrushKind, PathTier, FieldPart } from "../types";
 import { Ground } from "./ground";
@@ -5213,7 +5213,9 @@ export class CourseView {
     hits.sort((p, q) => p.t - q.t);
     const firm = hits.findIndex(h => h.core < 0.72);
     if (firm > 0) hits.unshift(...hits.splice(firm, 1));
-    return hits.slice(0, max).map(h => h.tree);
+    // (none behind a building the ray meets first: only what's seen)
+    const wall = this.builtUnder(ray)?.t ?? Infinity;
+    return hits.filter(h => h.t < wall + 1).slice(0, max).map(h => h.tree);
   }
 
   /** How a tree looks where it stands (its shape variant, turn and leaf color), so a tree made the
@@ -7534,8 +7536,10 @@ export class CourseView {
     const half = a.width / 2, n = Math.max(1, Math.ceil(a.width / 10));
     const posts = Array.from({ length: n + 1 }, (_, k) => -half + 0.35 + ((a.width - 0.7) * k) / n).filter(sx => !L.steps.some(e => e.sd.i === 1 && Math.abs(e.sx - sx) < L.STEP / 2 + 0.2));
     type Box = { s0?: number; s1?: number; d0: number; d1: number; y0: number; y1: number };
+    // (an end open round the corner: its beam along that side)
+    const ends: Box[] = ([[L.open0, -half], [L.open1, half]] as [boolean, number][]).filter(x => x[0]).map(([, sx]) => ({ s0: Math.min(sx, sx - Math.sign(sx) * 0.6), s1: Math.max(sx, sx - Math.sign(sx) * 0.6), d0: L.d0, d1: 0.05, y0: F.head, y1: F.eave }));
     const boxes: Box[] = L.setIn
-      ? [{ d0: L.d0, d1: 0.05, y0: L.gMin - 0.6, y1: L.top + 0.5 }, { d0: -0.6, d1: 0.05, y0: F.head, y1: F.eave }, ...posts.map(sx => ({ s0: sx - 0.4, s1: sx + 0.4, d0: -0.6, d1: 0.05, y0: L.top, y1: F.head }))]
+      ? [{ d0: L.d0, d1: 0.05, y0: L.gMin - 0.6, y1: L.top + 0.5 }, { d0: -0.6, d1: 0.05, y0: F.head, y1: F.eave }, ...ends, ...posts.map(sx => ({ s0: sx - 0.4, s1: sx + 0.4, d0: -0.6, d1: 0.05, y0: L.top, y1: F.head }))]
       : [{ d0: L.d0, d1: L.d1 + (L.roof ? L.over : 0), y0: L.gMin - 0.6, y1: L.high }];
     return { L, w: L.w, mid: L.mid, top: L.top, floorAt, s0: -a.width / 2, s1: a.width / 2, d0: L.d0, d1: L.d1, boxes };
   }
@@ -7587,13 +7591,13 @@ export class CourseView {
     return null;
   }
 
-  private buildingPartAt(st: StructureItem, clientX: number, clientY: number): { wall: number; opening?: string; at?: number; addOn?: string; frame: Frame; plan?: boolean; spot?: P } | null {
+  private buildingPartAt(st: StructureItem, clientX: number, clientY: number): { wall: number; opening?: string; at?: number; addOn?: string; frame: Frame; plan?: boolean; spot?: P; end?: { addOn: string; end: 0 | 2 }; along?: number } | null {
     if (st.kind !== "building") return null;
     const F = buildingFrame(st, this.standGround);
     if (F.outline.length < 3) return null;
     // (the view's models aren't hit-tested: the ray meets each wall facing it, the nearest wins)
     const ray = this.ray(clientX, clientY).clone();
-    let best: { t: number; wall: number; s: number; y: number } | null = null;
+    let best: { t: number; wall: number; s: number; y: number; end?: { addOn: string; end: 0 | 2 } } | null = null;
     F.walls.forEach((w, i) => {
       const n = new THREE.Vector3(w.out.x, 0, w.out.y), den = ray.direction.dot(n);
       if (den >= -1e-6) return;
@@ -7601,16 +7605,32 @@ export class CourseView {
       if (t <= 0 || (best && t >= best.t)) return;
       const q = ray.at(t, new THREE.Vector3()), s = (q.x - w.a.x) * w.dir.x + (q.z - w.a.y) * w.dir.y;
       if (s < 0 || s > w.len || q.y < F.gMin - 0.6 || q.y > F.roofY(F.along(i, s))) return;
-      // (a porch set into the house here: under its beam, the wall's back behind it; its ends are
-      // the same wall)
-      const r = F.recesses.find(x => x.wall === i && s > x.s0 && s < x.s1);
-      if (r && q.y < F.head) {
-        const t2 = t - r.D / den, q2 = ray.at(t2, new THREE.Vector3()), s2 = (q2.x - w.a.x) * w.dir.x + (q2.z - w.a.y) * w.dir.y;
-        best = { t: t2, wall: i, s: clamp(s2, r.s0 + 0.01, r.s1 - 0.01), y: q2.y };
-        return;
-      }
+      // (open under a porch's beam: a porch set in here, or round the corner from here)
+      if (q.y < F.head && F.cuts.some(c => c.wall === i && s > c.x0 && s < c.x1)) return;
       best = { t, wall: i, s, y: q.y };
     });
+    // (a porch set in: the wall at its back (the same wall, set back), and its ends that aren't open,
+    // each facing into it)
+    for (const r of F.recesses) {
+      const w = F.walls[r.wall];
+      const planes: { n: P; c: number; ok: (s: number, d: number) => boolean; s?: number; end?: 0 | 2 }[] = [
+        { n: w.out, c: -r.D, ok: s => s > r.s0 && s < r.s1 },
+        ...(r.open0 ? [] : [{ n: w.dir, c: r.s0, ok: (_: number, d: number) => d > -r.D && d < 0, s: r.s0, end: 0 as const }]),
+        ...(r.open1 ? [] : [{ n: { x: -w.dir.x, y: -w.dir.y }, c: r.s1, ok: (_: number, d: number) => d > -r.D && d < 0, s: r.s1, end: 2 as const }])
+      ];
+      for (const pl of planes) {
+        const den = ray.direction.x * pl.n.x + ray.direction.z * pl.n.y;
+        if (den >= -1e-6) continue;
+        // (the plane: points whose s (along the wall) or d (out from it) is c)
+        const os = (ray.origin.x - w.a.x) * w.dir.x + (ray.origin.z - w.a.y) * w.dir.y, od = (ray.origin.x - w.a.x) * w.out.x + (ray.origin.z - w.a.y) * w.out.y;
+        const rs = ray.direction.x * w.dir.x + ray.direction.z * w.dir.y, rd = ray.direction.x * w.out.x + ray.direction.z * w.out.y;
+        const t = pl.end === undefined ? (pl.c - od) / rd : (pl.c - os) / rs;
+        if (!(t > 0) || (best && t >= best.t)) continue;
+        const y = ray.origin.y + ray.direction.y * t, s = os + rs * t, d = od + rd * t;
+        if (y < F.floor || y > F.head || !pl.ok(s, d)) continue;
+        best = { t, wall: r.wall, s: pl.s ?? s, y, ...(pl.end !== undefined ? { end: { addOn: r.id, end: pl.end } } : {}) };
+      }
+    }
     // (the house itself where the ray first meets it: under its roof inside the walls, or its
     // eaves' overhang above the soffit)
     const roof = this.rayRoof(ray, F);
@@ -7638,9 +7658,9 @@ export class CourseView {
       const p = { x: g.x, y: g.z }, a = this.addOnAtPlan(st, p, F);
       return a ? { wall: a.wall, addOn: a.id, frame: F } : nearestWall(p);
     }
-    const hit = best as { t: number; wall: number; s: number; y: number };
-    const o = F.placed.find(q => q.wall === hit.wall && hit.s >= q.x0 - 0.3 && hit.s <= q.x1 + 0.3 && hit.y >= q.bottom - 0.3 && hit.y <= q.y1 + 0.3);
-    return { wall: hit.wall, opening: o?.id, at: o && o.auto ? o.at : undefined, frame: F };
+    const hit = best as { t: number; wall: number; s: number; y: number; end?: { addOn: string; end: 0 | 2 } };
+    const o = hit.end ? undefined : F.placed.find(q => q.wall === hit.wall && hit.s >= q.x0 - 0.3 && hit.s <= q.x1 + 0.3 && hit.y >= q.bottom - 0.3 && hit.y <= q.y1 + 0.3);
+    return { wall: hit.wall, opening: o?.id, at: o && o.auto ? o.at : undefined, frame: F, end: hit.end, along: hit.s };
   }
 
   /** A building's wall under a point on the screen (for its menu): the wall, ft along it, and the
@@ -7655,22 +7675,24 @@ export class CourseView {
       // (on its floor's level: the open side nearest, and the steps there)
       const a = st.addOns?.find(x => x.id === part.addOn), b = a && this.addOnBox(part.frame, a);
       const h = b ? this.ray(clientX, clientY).intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -b.top), new THREE.Vector3()) : null;
-      if (!a || !b || !h) return { wall: part.wall, along: a?.at ?? w.len / 2, opening: undefined, laidAt: undefined, addOn: part.addOn };
+      if (!a || !b || !h) return { wall: part.wall, along: a?.at ?? w.len / 2, opening: undefined, laidAt: undefined, addOn: part.addOn, end: undefined };
       const sx = (h.x - b.mid.x) * w.dir.x + (h.z - b.mid.y) * w.dir.y, d = (h.x - b.mid.x) * w.out.x + (h.z - b.mid.y) * w.out.y;
       const near = nearestAddOnSide(b.L, sx, d);
       const step = b.L.steps.findIndex(e => Math.hypot(e.sx - sx, e.d - d) < b.L.STEP / 2 + 1);
-      return { wall: part.wall, along: a.at + sx, opening: undefined, laidAt: undefined, addOn: part.addOn, side: b.L.level && near.dist < 5 ? { side: near.side, at: near.at } : undefined, step: step >= 0 ? step : undefined };
+      // (set into the house: its end on that side, to open round the corner or close)
+      const end = b.L.setIn ? { addOn: a.id, end: (sx < 0 ? 0 : 2) as 0 | 2 } : undefined;
+      return { wall: part.wall, along: a.at + sx, opening: undefined, laidAt: undefined, addOn: part.addOn, side: b.L.level && near.dist < 5 ? { side: near.side, at: near.at } : undefined, step: step >= 0 ? step : undefined, end };
     }
     if (part.plan) {
       const g = part.spot ?? (q => q && { x: q.x, y: q.z })(this.groundAt(clientX, clientY));
       const along = g ? clamp((g.x - w.a.x) * w.dir.x + (g.y - w.a.y) * w.dir.y, 0, w.len) : w.len / 2;
-      return { wall: part.wall, along, opening: undefined, laidAt: undefined, addOn: undefined };
+      return { wall: part.wall, along, opening: undefined, laidAt: undefined, addOn: undefined, end: undefined };
     }
     const ray = this.ray(clientX, clientY);
     const n = new THREE.Vector3(w.out.x, 0, w.out.y), den = ray.direction.dot(n);
     const t = den < 0 ? new THREE.Vector3(w.a.x, 0, w.a.y).sub(ray.origin).dot(n) / den : 0;
     const q = ray.at(t, new THREE.Vector3());
-    return { wall: part.wall, along: (q.x - w.a.x) * w.dir.x + (q.z - w.a.y) * w.dir.y, opening: part.opening, laidAt: part.at, addOn: part.addOn };
+    return { wall: part.wall, along: part.along ?? (q.x - w.a.x) * w.dir.x + (q.z - w.a.y) * w.dir.y, opening: part.opening, laidAt: part.at, addOn: part.addOn, end: part.end };
   }
 
   /** A click on the picked building: its wall, door or window there is picked (a laid-out one made
@@ -7821,7 +7843,7 @@ export class CourseView {
       const c = cur();
       if (!c) return null;
       // (clear of its middle, where it's dragged to move it, and of its other handles: a front corner)
-      const L = c.b.L, sx = -Math.max(0, L.half - 1.5), d = (L.setIn ? 0 : L.d1) - Math.min(1.5, L.D / 3);
+      const L = c.b.L, sx = this.floorBarS(L), d = (L.setIn ? 0 : L.d1) - Math.min(1.5, L.D / 3);
       return world(c, sx, d, c.b.floorAt(sx, d) + 0.2);
     }, e => this.addOnDrag(id, aid, "floor", e), { title: "Drag up or down to raise or lower its floor", visible: () => this.controls.polarAngle > 15 * DEG });
     (c0?.b.L.steps ?? []).forEach((_, k) => add("addst", () => {
@@ -7837,6 +7859,14 @@ export class CourseView {
     const front = L.steps.filter(e => e.sd.i === 1).map(e => e.sx);
     const spots = [0, -L.half / 2, L.half / 2].map(sx => ({ sx, gap: Math.min(99, ...front.map(f => Math.abs(f - sx))) }));
     return (spots.find(c => c.gap > L.STEP / 2 + 1.5) ?? [...spots].sort((x, y) => y.gap - x.gap)[0]).sx;
+  }
+
+  /** Where along its front its floor's bar sits: a quarter of the way in from an end (clear of the
+   * end handles, its middle where it's dragged, its front steps and its depth handle), else near an end. */
+  private floorBarS(L: NonNullable<ReturnType<CourseView["addOnBox"]>>["L"]) {
+    const front = L.steps.filter(e => e.sd.i === 1).map(e => e.sx), depth = L.setIn ? null : this.depthHandleS(L);
+    const spots = [-L.half / 2, L.half / 2, -Math.max(0, L.half - 1.5), Math.max(0, L.half - 1.5)];
+    return spots.find(sx => front.every(f => Math.abs(f - sx) > L.STEP / 2 + 1) && (depth === null || Math.abs(depth - sx) > 2.5)) ?? spots[2];
   }
 
   /** Where a porch's side handle sits: on its own roof, else on its floor (one set into the house:
@@ -7916,17 +7946,25 @@ export class CourseView {
               const score = (L0.setIn ? -Math.abs(q.d + cur.depth / 2) : q.d) - Math.max(0, -q.s, q.s - x.len);
               if (score > best) { best = score; wall = i; }
             });
-            const wl = F.walls[wall].len, width = Math.min(cur.width, wl - 2);
+            // (set in, it can run to a corner, open round it: there within a foot)
+            const edgeGap = L0.setIn ? 0 : 1;
+            const wl = F.walls[wall].len, width = Math.min(cur.width, wl - 2 * edgeGap);
             if (width < 4) return;
-            const at = clamp(Math.round((local(p, wall).s - grab) * 4) / 4, width / 2 + 1, wl - width / 2 - 1);
+            let at = clamp(Math.round((local(p, wall).s - grab) * 4) / 4, width / 2 + edgeGap, wl - width / 2 - edgeGap);
+            if (L0.setIn) at = at - width / 2 < 1 ? width / 2 : at + width / 2 > wl - 1 ? wl - width / 2 : at;
             patch = { wall, at, width, ...(L0.setIn && wall !== cur.wall ? { depth: Math.min(cur.depth, maxSetIn(F, wall)) } : {}) };
             this.tip(`${wall !== a0.wall ? `${wallName(st, F, wall)}: ` : ""}${say(at)} along`, ev.clientX, ev.clientY);
           } else if (pos === "w0" || pos === "w2") {
             // (the other end stays)
             const s = Math.round(handleAt(p).s * 2) / 2, lo = cur.at - cur.width / 2, hi = cur.at + cur.width / 2;
-            const [s0, s1] = pos === "w0" ? [clamp(s, 1, hi - 4), hi] : [lo, clamp(s, lo + 4, len - 1)];
+            // (set in, within a foot of the house's corner it runs to it, open round it, where it can)
+            const ends = L0.setIn ? addOnEnds(F, cur) : null, gap = L0.setIn ? 0 : 1;
+            let [s0, s1] = pos === "w0" ? [clamp(s, gap, hi - 4), hi] : [lo, clamp(s, lo + 4, len - gap)];
+            if (ends && pos === "w0" && s0 < 1) s0 = ends.can[0] ? 0 : 1;
+            if (ends && pos === "w2" && s1 > len - 1) s1 = ends.can[1] ? len : len - 1;
             patch = { at: (s0 + s1) / 2, width: s1 - s0 };
-            this.tip(`${say(s1 - s0)} long`, ev.clientX, ev.clientY);
+            const open = ends && ((pos === "w0" && s0 === 0) || (pos === "w2" && s1 === len));
+            this.tip(`${say(s1 - s0)} long${open ? ", open round the corner" : ""}`, ev.clientX, ev.clientY);
           } else if (pos === "d") {
             // (out from the wall; dragged back past the wall into the house, set into it (its roof
             // the house's); set in, dragged out past the wall, out from it again)

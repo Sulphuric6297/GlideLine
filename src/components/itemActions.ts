@@ -1,7 +1,7 @@
 // The map's menu for a hole or a thing on it, and for open ground (a right-click on a computer, a
 // finger held on a phone): one list, so both menus offer the same rows in the same words.
-import { AppWindow, CarFront, ClipboardPaste, Copy, DoorOpen, Eye, Fence, Grid2x2, Home, ListChecks, Lock, Maximize2, MessageSquarePlus, Plane, Plus, Ruler, Trash2, Unlock, Warehouse, type LucideIcon } from "lucide-react";
-import { addAddOnToWall, addToWall, clipped, copyAddOn, laidOutKind, levelsOf, pasteAddOn, putSteps, removeLaidOut, removeSteps, toggleRail } from "./BuildingPanel";
+import { AppWindow, CarFront, ClipboardPaste, Copy, DoorOpen, Eye, Fence, Grid2x2, Home, ListChecks, Lock, Maximize2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Plane, Plus, Ruler, Trash2, Unlock, Warehouse, type LucideIcon } from "lucide-react";
+import { addAddOnToWall, addToWall, clipped, copyAddOn, endsOf, laidOutKind, levelsOf, pasteAddOn, putSteps, removeLaidOut, removeSteps, setAddOnEnd, toggleRail } from "./BuildingPanel";
 import { ADDON_LABEL, OPENING_LABEL } from "../lib/buildingParts";
 import { removeAddOn, removeOpening } from "../state/actions";
 import { SERVER } from "../auth/api";
@@ -92,6 +92,13 @@ export const itemActions = (itemId: string, ground: P | null, named = false, scr
         const st = getDoc().items.find(i => i.id === item.id);
         if (st?.type === "structure" && !addAddOnToWall(st, spot.wall, kind, spot.along)) toast(`No room for a ${ADDON_LABEL[kind].toLowerCase()} on this wall.`, "info");
       };
+      // (a porch set into the house: its end there opened round the corner, or closed again)
+      const endAd = spot.end && item.addOns?.find(x => x.id === spot.end!.addOn);
+      if (spot.end && endAd) {
+        const ends = endsOf(item, endAd), k = spot.end.end === 0 ? 0 : 1;
+        if (ends.open[k]) a.push({ label: "Close this side", icon: PanelLeftClose, run: () => { select(item.id); setAddOnEnd(getDoc().items.find(i => i.id === item.id) as typeof item, endAd.id, spot.end!.end, false); }, testid: "menu-close-side" });
+        else if (ends.can[k]) a.push({ label: "Open this side", icon: PanelLeftOpen, run: () => { select(item.id); setAddOnEnd(getDoc().items.find(i => i.id === item.id) as typeof item, endAd.id, spot.end!.end, true); }, testid: "menu-open-side" });
+      }
       if (spot.addOn) {
         const ad = item.addOns?.find(x => x.id === spot.addOn);
         if (ad) {

@@ -7,7 +7,7 @@
 import * as THREE from "three";
 import type { AddOn, FenceStyle, P, StructureItem } from "../types";
 import { pointInPolygon } from "../lib/geom";
-import { addOnLevels, buildingColors, buildingFrame, outlineOf, roofingOf, sidingOf, stepsUp, windowStyleOf, type Frame } from "../lib/buildingParts";
+import { addOnLevels, BEAM, buildingColors, buildingFrame, outlineOf, roofingOf, sidingOf, stepsUp, windowStyleOf, type Frame } from "../lib/buildingParts";
 import { STRUCTURE_INK } from "../lib/symbols";
 import { glass, onLookLoaded, paint as paintOf, ROOF_SHADE, ROOFING_SCAN, room, SIDING_SCAN, surface } from "./buildingLook";
 import {
@@ -526,10 +526,8 @@ const addOnModel = (a: AddOn, F: Frame, g: Ground, at: (k: string) => Mesher) =>
     }
     const edge = (pts: V[]) => { for (let k = 0; k + 1 < pts.length; k++) { const p = pts[k], q = pts[k + 1]; const n = new V3(q.z - p.z, 0, p.x - q.x).normalize(); slab.quad(p, q, q.clone().setY(q.y - 0.8), p.clone().setY(p.y - 0.8), [[0, 0], [1, 0], [1, 1], [0, 1]], n.dot(P(0, (d0 + d1) / 2, 0).sub(p)) > 0 ? n.negate() : n); } };
     edge(Array.from({ length: ns + 1 }, (_, i) => v(i, setIn ? nd : nd)));
-    if (!setIn) {
-      edge(Array.from({ length: nd + 1 }, (_, j) => v(0, j)));
-      edge(Array.from({ length: nd + 1 }, (_, j) => v(ns, j)));
-    }
+    if (!setIn || L.open0) edge(Array.from({ length: nd + 1 }, (_, j) => v(0, j)));
+    if (!setIn || L.open1) edge(Array.from({ length: nd + 1 }, (_, j) => v(ns, j)));
   } else {
     box(at("pdeck"), -half, half, top - 0.2, top, d0, d1);
     if (a.kind === "deck") {
@@ -613,6 +611,19 @@ const addOnModel = (a: AddOn, F: Frame, g: Ground, at: (k: string) => Mesher) =>
     box(trim, -half, half, y, F.eave - 0.05, -0.55, 0.05);
     at("pceil").quad(P(half, -D, y), P(-half, -D, y), P(-half, 0, y), P(half, 0, y), [[0, 0], [1, 0], [1, 1], [0, 1]], UP.clone().negate());
     posts(-0.3, () => y);
+    // (an end open round the corner: a beam along it under the wall there, posts every 10 ft or so
+    // back from the corner one, clear of steps on that side)
+    for (const [open, sgn, i] of [[L.open0, -1, 0], [L.open1, 1, 2]] as [boolean, number, number][]) {
+      if (!open) continue;
+      const sx = sgn * half, inner = sx - sgn * 0.55;
+      box(trim, Math.min(sx + sgn * 0.05, inner), Math.max(sx + sgn * 0.05, inner), y, y + BEAM - 0.05, -D, 0.05);
+      const n = Math.max(1, Math.ceil(D / 10));
+      for (let k = 1; k < n; k++) {
+        const d = -0.3 - ((D - 0.3) * k) / n, px = sx - sgn * 0.3;
+        if (L.steps.some(e => e.sd.i === i && Math.abs(e.d - d) < L.STEP / 2 + 0.2)) continue;
+        box(trim, px - 0.25, px + 0.25, level ? top : gAt(px, d), y, d - 0.25, d + 0.25);
+      }
+    }
   }
 };
 
@@ -625,9 +636,11 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
   const trim = at("trim"), frames = at("frames"), found = at("found");
   const style = windowStyleOf(st), siding = sidingOf(st);
   // A foundation, a little proud of the walls (round any porch set into the house)
-  const notched = F.recesses.length ? outline.flatMap((p, i) => [p, ...F.recesses.filter(r => r.wall === i).sort((x, y) => x.s0 - y.s0).flatMap(r => {
+  // (a corner a porch is open round taken off: the notch goes round it)
+  const n = outline.length;
+  const notched = F.recesses.length ? outline.flatMap((p, i) => [...(F.recesses.some(r => (r.wall === i && r.open0) || (r.wall === (i + n - 1) % n && r.open1)) ? [] : [p]), ...F.recesses.filter(r => r.wall === i).sort((x, y) => x.s0 - y.s0).flatMap(r => {
     const w = F.walls[i], q = (s: number, d: number) => ({ x: w.a.x + w.dir.x * s + w.out.x * d, y: w.a.y + w.dir.y * s + w.out.y * d });
-    return [q(r.s0, 0), q(r.s0, -r.D), q(r.s1, -r.D), q(r.s1, 0)];
+    return [...(r.open0 ? [] : [q(r.s0, 0)]), q(r.s0, -r.D), q(r.s1, -r.D), ...(r.open1 ? [] : [q(r.s1, 0)])];
   })]) : outline;
   prism(found, offsetPolygon(notched, 0.18), gMin - 0.6, floor + 0.15, p => [p.x, p.y]);
   const edges = F.walls.map(e => ({ ...e, dir: new V3(e.dir.x, 0, e.dir.y), out: new V3(e.out.x, 0, e.out.y) }));
@@ -648,11 +661,21 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
     // The wall: up to the roof (a gable end's triangle too), its doors and windows cut out
     const tops = F.tops(w);
     const contour = [new THREE.Vector2(0, floor), new THREE.Vector2(e.len, floor), ...tops.reverse().map(t => new THREE.Vector2(t.s, t.y))];
-    const doorsAtFloor = [...mine.filter(o => o.y0 <= floor + 0.01), ...recs.map(r => ({ x0: r.s0, x1: r.s1, y1: F.head }))];
-    // (a door opens the wall from the floor: its hole and the wall's foot are one, so the foot runs round it)
-    const foot = [new THREE.Vector2(0, floor)];
-    for (const o of [...doorsAtFloor].sort((x, y) => x.x0 - y.x0)) foot.push(new THREE.Vector2(o.x0, floor), new THREE.Vector2(o.x0, o.y1), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x1, floor));
-    const ring = [...foot, ...contour.slice(1)];
+    const cut = F.cuts.filter(c => c.wall === w);
+    const doorsAtFloor = [...mine.filter(o => o.y0 <= floor + 0.01), ...cut.map(c => ({ x0: c.x0, x1: c.x1, y1: F.head }))];
+    // (a door opens the wall from the floor: its hole and the wall's foot are one, so the foot runs
+    // round it; open at a corner (a porch set in round it), the wall starts or ends at its top)
+    const gaps: { x0: number; x1: number; y1: number }[] = [];
+    for (const o of [...doorsAtFloor].sort((x, y) => x.x0 - y.x0)) {
+      const last = gaps[gaps.length - 1];
+      if (last && o.x0 <= last.x1 + 0.05) { last.x1 = Math.max(last.x1, o.x1); last.y1 = Math.max(last.y1, o.y1); } else gaps.push({ x0: Math.max(0, o.x0), x1: Math.min(e.len, o.x1), y1: o.y1 });
+    }
+    const atStart = gaps[0] && gaps[0].x0 <= 0.01 ? gaps[0] : null;
+    const atEnd = gaps.length && gaps[gaps.length - 1].x1 >= e.len - 0.01 ? gaps[gaps.length - 1] : null;
+    const foot = atStart ? [new THREE.Vector2(0, atStart.y1), ...(atStart === atEnd ? [new THREE.Vector2(e.len, atStart.y1)] : [new THREE.Vector2(atStart.x1, atStart.y1), new THREE.Vector2(atStart.x1, floor)])] : [new THREE.Vector2(0, floor)];
+    for (const o of gaps) if (o !== atStart && o !== atEnd) foot.push(new THREE.Vector2(o.x0, floor), new THREE.Vector2(o.x0, o.y1), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x1, floor));
+    if (atEnd && atEnd !== atStart) foot.push(new THREE.Vector2(atEnd.x0, floor), new THREE.Vector2(atEnd.x0, atEnd.y1), new THREE.Vector2(e.len, atEnd.y1));
+    const ring = [...foot, ...contour.slice(atEnd ? 2 : 1)];
     const holes = mine.filter(o => !doorsAtFloor.includes(o)).map(o => [new THREE.Vector2(o.x0, o.y0), new THREE.Vector2(o.x1, o.y0), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x0, o.y1)]);
     const pts = [...ring, ...holes.flat()];
     const wallM = at(`walls|${st.wallColors?.[w] ?? C.walls ?? ""}`);
@@ -661,8 +684,8 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
     s0 += e.len;
     // Corner boards (wood siding's)
     if (siding === "lap" || siding === "board") {
-      box(trim, 0, 0.45, floor, roofY(e.a) - 0.1, 0, 0.1);
-      box(trim, e.len - 0.45, e.len, floor, roofY(e.b) - 0.1, 0, 0.1);
+      box(trim, 0, 0.45, atStart ? atStart.y1 : floor, roofY(e.a) - 0.1, 0, 0.1);
+      box(trim, e.len - 0.45, e.len, atEnd ? atEnd.y1 : floor, roofY(e.b) - 0.1, 0, 0.1);
     }
     // The walls behind a porch set in: its back wall (doors and windows cut out) and its ends, the
     // foundation under them
@@ -676,7 +699,7 @@ const building = (st: StructureItem, g: Ground, parts: Parts) => {
       const ptsB = [...ringB, ...holesB.flat()];
       for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(ringB, holesB))
         wallM.tri(bp(ptsB[i].x, ptsB[i].y), bp(ptsB[j].x, ptsB[j].y), bp(ptsB[k].x, ptsB[k].y), [[s0 - e.len + ptsB[i].x, ptsB[i].y], [s0 - e.len + ptsB[j].x, ptsB[j].y], [s0 - e.len + ptsB[k].x, ptsB[k].y]], e.out);
-      for (const [sx, n] of [[r.s0, e.dir], [r.s1, e.dir.clone().negate()]] as [number, V][]) {
+      for (const [sx, n] of ([[r.s0, e.dir, r.open0], [r.s1, e.dir.clone().negate(), r.open1]] as [number, V, boolean][]).filter(x => !x[2])) {
         wallM.quad(pt(sx, floor, -r.D), pt(sx, floor, 0), pt(sx, F.head, 0), pt(sx, F.head, -r.D), [[0, floor], [r.D, floor], [r.D, F.head], [0, F.head]], n);
         found.quad(pt(sx, gMin - 0.6, -r.D), pt(sx, gMin - 0.6, 0), pt(sx, floor + 0.15, 0), pt(sx, floor + 0.15, -r.D), [[0, 0], [r.D, 0], [r.D, 1], [0, 1]], n);
       }

@@ -6,7 +6,7 @@ import { useCourse, useEditor, updateItem } from "../state/course";
 import { getView } from "../state/view";
 import { removeAddOn, removeOpening } from "../state/actions";
 import type { AddOn, Opening, BuildingType, CourseItem, FoundationKind, RoofingKind, RoofKind, SidingKind, StructureItem, WindowAmount, WindowStyle } from "../types";
-import { ADDON_LABEL, ADDON_ROOF_LABEL, ADDON_SIZE, addAddOn, addOnLevels, addOnRoof, maxSetIn, frontWall, NATURAL, addOpening, buildingFrame, OPENING_LABEL, ownWall, wallName, buildingColors, colorName, DEFAULT_COLORS, heightForStories, HOUSE_COLORS, ROOF_COLORS, roofingOf, SCHEMES, schemeOf, schemePatch, sidingOf, storiesOf, windowAmountOf, windowStyleOf, type Scheme } from "../lib/buildingParts";
+import { ADDON_LABEL, ADDON_ROOF_LABEL, ADDON_SIZE, addAddOn, addOnEnds, addOnLevels, addOnRoof, maxSetIn, openAddOnEnd, frontWall, NATURAL, addOpening, buildingFrame, OPENING_LABEL, ownWall, wallName, buildingColors, colorName, DEFAULT_COLORS, heightForStories, HOUSE_COLORS, ROOF_COLORS, roofingOf, SCHEMES, schemeOf, schemePatch, sidingOf, storiesOf, windowAmountOf, windowStyleOf, type Scheme } from "../lib/buildingParts";
 import { structureHeight, structureRoof } from "../lib/structures";
 import { ROOF_SHADE_CSS, ROOFING_SCAN, SIDING_SCAN } from "../three/buildingLook";
 import { ColorInput } from "./ColorSwatches";
@@ -230,6 +230,7 @@ const ADDON_KINDS: { value: AddOn["kind"]; label: string }[] = [{ value: "porch"
 export const levelsOf = (st: StructureItem, a: AddOn) => addOnLevels(frameOf(st), a, (x, y) => getView()?.standGround(x, y) ?? 0);
 const PLACES: { value: "out" | "in"; label: string }[] = [{ value: "out", label: "Out from the wall" }, { value: "in", label: "Set into the house" }];
 const ROOFS: { value: "own" | "none"; label: string }[] = [{ value: "own", label: "Own roof" }, { value: "none", label: "No roof" }];
+const OPENS: { value: "none" | "left" | "right" | "both"; label: string }[] = [{ value: "none", label: "None" }, { value: "left", label: "Left" }, { value: "right", label: "Right" }, { value: "both", label: "Both" }];
 const STEP_COUNTS: { value: number; label: string }[] = [{ value: 0, label: "None" }, { value: 1, label: "1" }, { value: 2, label: "2" }, { value: 3, label: "3" }];
 
 /** Its steps, as they stand (each side and where along it). */
@@ -264,6 +265,22 @@ export const toggleRail = (st: StructureItem, aid: string, side: number) => {
   if (off.has(side)) off.delete(side); else off.add(side);
   setAddOn(st, aid, { noRail: off.size ? [...off].sort() : undefined, ...(a.railing === false ? { railing: true } : {}) });
 };
+/** A porch set into the house: its ends open or not, and which can be (see addOnEnds). */
+export const endsOf = (st: StructureItem, a: AddOn) => addOnEnds(frameOf(st), a);
+/** A porch set into the house opened at an end, round the house's corner (run to it), or closed. */
+export const setAddOnEnd = (st: StructureItem, aid: string, end: 0 | 2, open: boolean) => {
+  const a = st.addOns?.find(x => x.id === aid);
+  if (a) setAddOn(st, aid, openAddOnEnd(frameOf(st), a, end, open));
+};
+type Opens = "none" | "left" | "right" | "both";
+/** Its open sides, as you face it from outside, set (each end run to its corner or closed). */
+const setOpens = (st: StructureItem, a: AddOn, v: Opens) => {
+  const F = frameOf(st), { left } = addOnEnds(F, a), right = left === 0 ? 2 : 0;
+  const want = { [left]: v === "left" || v === "both", [right]: v === "right" || v === "both" } as Record<0 | 2, boolean>;
+  let b = { ...a, ...openAddOnEnd(F, a, 0, want[0]) };
+  b = { ...b, ...openAddOnEnd(F, b, 2, want[2]) };
+  setAddOn(st, a.id, { at: b.at, width: b.width });
+};
 const setAddOn = (st: StructureItem, aid: string, patch: Partial<AddOn>, history = true) =>
   updateItem(st.id, { addOns: (st.addOns ?? []).map(a => (a.id === aid ? { ...a, ...patch } : a)) } as Partial<CourseItem>, history);
 
@@ -282,11 +299,17 @@ function addOnControls(item: StructureItem, addOn: AddOn, units: Parameters<type
   const F = frameOf(item), len = F.walls[addOn.wall]?.len ?? 40, L = levelsOf(item, addOn);
   const roofKind = L.roofKind, deepest = maxSetIn(F, addOn.wall);
   const ft = (v: number) => fmtSize(v, units);
+  const ends = addOnEnds(F, addOn), oL = ends.open[ends.left === 0 ? 0 : 1], oR = ends.open[ends.left === 0 ? 1 : 0];
+  const opens: Opens = oL && oR ? "both" : oL ? "left" : oR ? "right" : "none";
+  // (set in, it can run the wall's whole length)
+  const edgeGap = roofKind === "house" ? 0 : 1;
   const maxUp = Math.max(1, Math.floor((roofKind === "none" ? F.eave - L.gRef : F.eave - 8 - L.gRef) * 2) / 2);
   const rows: { id: string; name: string; value: ReactNode; control?: ReactNode; wide?: boolean; run?: () => void; icon?: ReactNode; testid?: string }[] = [
     { id: "akind", name: "Kind", value: ADDON_LABEL[addOn.kind], control: <Segmented label="Kind" value={addOn.kind} onChange={v => set({ kind: v, depth: roofKind === "house" ? Math.min(ADDON_SIZE[v].depth, deepest) : ADDON_SIZE[v].depth, floor: undefined, steps: undefined, roof: undefined })} options={ADDON_KINDS} /> },
     // (out from the wall, or set into the house under its roof, the wall set back behind it)
     ...(deepest >= 4 || roofKind === "house" ? [{ id: "aplace", name: "Placement", value: roofKind === "house" ? "Set in" : "Out", control: <Segmented label="Placement" value={roofKind === "house" ? "in" : "out"} onChange={v => set(v === "in" ? { roof: "house", depth: Math.max(4, Math.min(addOn.depth, deepest)), steps: undefined, noRail: undefined } : { roof: undefined, steps: undefined, noRail: undefined })} options={PLACES} /> }] : []),
+    // (set in: open round the house's corner at either end, as you face it, where it can be)
+    ...(roofKind === "house" && (ends.can[0] || ends.can[1]) ? [{ id: "aopen", name: "Open sides", value: OPENS.find(o => o.value === opens)!.label, control: <Segmented label="Open sides" value={opens} onChange={v => setOpens(item, addOn, v)} options={OPENS.filter(o => (o.value !== "left" && o.value !== "both") || ends.can[ends.left === 0 ? 0 : 1]).filter(o => (o.value !== "right" && o.value !== "both") || ends.can[ends.left === 0 ? 1 : 0])} /> }] : []),
     ...(roofKind !== "house" ? [{ id: "aroof", name: "Roof", value: ADDON_ROOF_LABEL[roofKind], control: <Segmented label="Roof" value={roofKind as "own" | "none"} onChange={v => set({ roof: v === addOnRoof({ ...addOn, roof: undefined }) ? undefined : v })} options={ROOFS} /> }] : []),
     ...(roofKind === "own" ? [{ id: "aslope", name: "Roof slope", value: `${addOn.pitch ?? 3} in 12`, wide: true, control: <div className="p-2"><Slider label="Roof slope" min={1} max={6} step={0.5} value={addOn.pitch ?? 3} onChange={v => set({ pitch: v === 3 ? undefined : v }, false)} onDone={commit} format={v => `${v} in 12`} /></div> }] : []),
     { id: "afloor", name: "Floor", value: L.level ? `${ft(Math.max(0, Math.round(L.up * 2) / 2))} up` : "On the ground", wide: true, control: <div className="p-2"><Slider label="Floor height" min={0} max={maxUp} step={0.5} value={L.level ? Math.max(0, Math.min(maxUp, Math.round(L.up * 2) / 2)) : 0} onChange={v => set({ floor: L.onGround && v < 0.5 ? undefined : v }, false)} onDone={commit} format={v => (L.onGround && v < 0.5 ? "On the ground" : `${ft(v)} up`)} /></div> },
@@ -294,7 +317,7 @@ function addOnControls(item: StructureItem, addOn: AddOn, units: Parameters<type
       { id: "arail", name: "Railing", value: L.rail ? (addOn.noRail?.length ? "Some sides" : "On") : "Off", control: <Segmented label="Railing" value={L.rail ? "on" : "off"} onChange={v => set({ railing: v === "on", noRail: undefined })} options={[{ value: "on", label: "On" }, { value: "off", label: "Off" }]} /> },
       { id: "asteps", name: "Steps", value: L.steps.length ? String(L.steps.length) : "None", control: <Segmented label="Steps" value={Math.min(3, L.steps.length)} onChange={v => countSteps(item, addOn, v)} options={STEP_COUNTS} /> }
     ] : []),
-    { id: "awidth", name: "Width", value: ft(addOn.width), wide: true, control: <div className="p-2"><Slider label="Width" min={4} max={Math.max(4, len - 2)} step={0.5} value={addOn.width} onChange={v => set({ width: v, at: Math.min(len - v / 2 - 1, Math.max(v / 2 + 1, addOn.at)) }, false)} onDone={commit} format={v => `${ft(v)} along the wall`} /></div> },
+    { id: "awidth", name: "Width", value: ft(addOn.width), wide: true, control: <div className="p-2"><Slider label="Width" min={4} max={Math.max(4, len - 2 * edgeGap)} step={0.5} value={addOn.width} onChange={v => set({ width: v, at: Math.min(len - v / 2 - edgeGap, Math.max(v / 2 + edgeGap, addOn.at)) }, false)} onDone={commit} format={v => `${ft(v)} along the wall`} /></div> },
     { id: "adepth", name: "Depth", value: ft(L.D), wide: true, control: <div className="p-2"><Slider label="Depth" min={4} max={roofKind === "house" ? Math.max(4, deepest) : 40} step={0.5} value={L.D} onChange={v => set({ depth: v }, false)} onDone={commit} format={v => (roofKind === "house" ? `${ft(v)} in` : `${ft(v)} out`)} /></div> },
     { id: "acopy", name: "Copy", value: "To another wall", icon: <Copy size={16} />, run: () => copyAddOn(addOn), testid: "addon-copy" },
     { id: "aremove", name: "Remove", value: ADDON_LABEL[addOn.kind], icon: <Trash2 size={16} />, run: () => removeAddOn(item.id, addOn.id), testid: "addon-remove" }
