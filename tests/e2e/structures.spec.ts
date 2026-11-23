@@ -753,3 +753,31 @@ test("a window looks its own way: its Style and Frame color over the building's,
   await page.getByRole("radiogroup", { name: "Style", exact: true }).getByRole("radio", { name: "As the house" }).click();
   await expect.poll(async () => (await win("w1")).style).toBeUndefined();
 });
+
+test("a window dragged past a door goes past it (the clear spot nearest the pointer), never on top of it", async ({ page }) => {
+  test.setTimeout(90_000);
+  await blankCourse(page);
+  await page.getByRole("button", { name: "2 Design" }).click();
+  await page.keyboard.press("s");
+  await page.getByTestId("structure-kind-building").click();
+  await page.getByTestId("draw-shape-box").click();
+  await drag(page, await screenOf(page, 400, 400), await screenOf(page, 436, 424), 3);
+  await expect.poll(async () => (await structures(page)).length).toBe(1);
+  const id = (await structures(page))[0].id;
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("3");
+  const south = await page.evaluate(i => { const st = (window as any).__dgCourse().items.find((x: any) => x.id === i); return st.points.findIndex((p: any, k: number) => Math.abs(p.y - 424) < 0.5 && Math.abs(st.points[(k + 1) % st.points.length].y - 424) < 0.5); }, id);
+  await page.evaluate(([i, w]) => (window as any).__dgStore.getState().change((d: any) => ({ items: d.items.map((x: any) => (x.id === i ? { ...x, openings: [{ id: "d", kind: "door", wall: w, at: 18, width: 3.1, height: 6.9 }, { id: "w1", kind: "window", wall: w, at: 11, width: 3, height: 4.75, sill: 2.75 }, { id: "w2", kind: "window", wall: w, at: 25, width: 3, height: 4.75, sill: 2.75 }] } : x)) }), false), [id, south] as const);
+  await page.evaluate(i => { const v = (window as any).__dgView, g = v.groundHeight(418, 424); (window as any).__dgActions.select(i); v.controls.setLookAt(418, g + 9, 484, 418, g + 5, 424, false); v.controls.update(0); }, id);
+  await page.waitForTimeout(1200);
+  const onWall = (s: number, up: number) => page.evaluate(([i, w, s, up]) => {
+    const v = (window as any).__dgView, st = (window as any).__dgCourse().items.find((x: any) => x.id === i), F = (window as any).__dgParts.buildingFrame(st, v.standGround), e = F.walls[w];
+    const c = v.camera, r = v.container.getBoundingClientRect(), P = new c.position.constructor(e.a.x + e.dir.x * s, F.floor + up, e.a.y + e.dir.y * s).project(c);
+    return { x: r.left + ((P.x + 1) / 2) * r.width, y: r.top + ((1 - P.y) / 2) * r.height };
+  }, [id, south, s, up] as const);
+  const at = (k: string) => page.evaluate(([i, k]) => (window as any).__dgCourse().items.find((x: any) => x.id === i).openings.find((o: any) => o.id === k).at, [id, k] as const);
+  await drag(page, await onWall(11, 5), await onWall(21, 5), 16);
+  await expect.poll(() => at("w1")).toBe(21.5);
+  await drag(page, await onWall(21.5, 5), await onWall(17, 5), 16);
+  await expect.poll(() => at("w1")).toBe(14.5);
+});

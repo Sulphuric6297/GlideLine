@@ -8063,13 +8063,26 @@ export class CourseView {
         }
         // (its top over the floor: it fits under the roof there)
         const top = o0.y0 + (op0.kind === "window" ? patch.sill ?? op0.sill ?? 3 : 0) + (patch.height ?? op0.height);
-        if (!F.fits(wall, patch.at ?? op0.at, top + 0.3)) return;
-        // (never over another door or window on that wall and story: it stops at it)
+        // (never over another door or window on that wall and story: moved, it goes to the clear
+        // spot nearest where it's dragged, so past one once the pointer's past its middle; made
+        // wider, it stops at it)
         {
-          const sAt = patch.at ?? op0.at, half = (patch.width ?? op0.width) / 2;
+          const half = (patch.width ?? op0.width) / 2, len = F.walls[wall].len;
           const others = (wall === cw || hand.includes(wall) || ops.some(q => q.wall === wall) ? ops : ownWall({ ...it, openings: ops, handWalls: hand }, F, wall))
             .filter(q => q.id !== oid && q.wall === wall && (q.story ?? 0) === (op0.story ?? 0));
-          if (others.some(q => sAt + half + 0.4 > q.at - q.width / 2 && sAt - half - 0.4 < q.at + q.width / 2)) return;
+          const clear = (s: number) => s >= half + 0.5 - 1e-6 && s <= len - half - 0.5 + 1e-6 && !others.some(q => s + half + 0.4 > q.at - q.width / 2 + 1e-6 && s - half - 0.4 < q.at + q.width / 2 - 1e-6) && F.fits(wall, s, top + 0.3);
+          const want = patch.at ?? op0.at;
+          if (pos === "move") {
+            // (beside each one, either side, on the quarter foot clear of it)
+            const spots = [want, ...others.flatMap(q => [Math.floor((q.at - q.width / 2 - half - 0.4) * 4) / 4, Math.ceil((q.at + q.width / 2 + half + 0.4) * 4) / 4])];
+            const best = spots.filter(clear).sort((a, b) => Math.abs(a - want) - Math.abs(b - want))[0];
+            if (best === undefined) return;
+            patch.at = best;
+            if (best !== want) {
+              const side = wall !== o0.wall ? `${wallName(it, F, wall)}: ` : "";
+              this.tip(op0.kind === "window" ? `${side}${say(best)} along, ${say(patch.sill!)} up` : `${side}${say(best)} along`, ev.clientX, ev.clientY);
+            }
+          } else if (!clear(want)) return;
         }
         if (wall !== cw) {
           // (onto another wall: that wall's own doors and windows kept as they stand, it and the
