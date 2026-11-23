@@ -39,10 +39,13 @@ export type FilePoint = HoleSays & {
 };
 
 /** A line in the file: a hole's throw line, tee to basket (a route, a track, a hole way). `tag`:
- * the color of the tee it starts from, when it says. */
-export type FileLine = HoleSays & { name: string; hole?: number; tag?: string; points: LatLon[] };
+ * the color of the tee it starts from, when it says; `teeId`: the tee point it starts from, when
+ * the file says which tee by its name ("Short -> Main"); `exact`: its bends placed one by one,
+ * kept as they are. */
+export type FileLine = HoleSays & { name: string; hole?: number; tag?: string; teeId?: string; points: LatLon[]; exact?: boolean };
 
-export type CourseFile = { format: "GPX" | "KML" | "KMZ" | "GeoJSON" | "CSV"; name?: string; points: FilePoint[]; lines: FileLine[]; layouts?: FileLayout[] };
+/** `teeLayouts`: its layouts are its tees' names (so the tees go by those names). */
+export type CourseFile = { format: "GPX" | "KML" | "KMZ" | "GeoJSON" | "CSV"; name?: string; points: FilePoint[]; lines: FileLine[]; layouts?: FileLayout[]; teeLayouts?: boolean };
 
 // ---------------------------------------------------------------- names
 
@@ -51,9 +54,12 @@ const BASKET_WORDS = /\b(basket|baskets|target|targets|pin|pins|pin position|cup
 /** Things on a course that aren't tees or baskets. */
 const OTHER_WORDS = /\b(mando|mandatory|drop zone|dropzone|drop|ob|bench|parking|restroom|toilet|trash|kiosk|sign|shelter|practice|water|fountain|start|entrance|gate|bridge|hazard|tree|first ?aid|picnic|here|grill|fitness|flagpole|light|pole|bike ?rack|bikerack)\b/;
 const COLORS = ["gold", "blue", "white", "red", "green", "purple"];
-const LENGTH_WORDS = /\b(long|short|middle|mid|medium|pro|am|amateur|rec|recreational|back|front|championship|novice)\b/;
+const LENGTH_WORDS = /\b(long|short|middle|mid|medium|pro|am|amateur|rec|recreational|back|front|championship|novice|jr|junior|kids|youth|beginner)\b/;
 const holeNum = (s?: string) => { const n = parseInt(s ?? "", 10); return n > 0 && n < 100 ? n : undefined; };
 const colorIn = (s: string) => COLORS.find(c => new RegExp(`\\b${c}\\b`, "i").test(s));
+/** A name to match by: its letters and numbers only ("Jr." and "jr" are one). */
+const nameKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const sameName = (a: string, b: string) => !!nameKey(a) && nameKey(a) === nameKey(b);
 
 /** A tee pad's surface, in the words people use for it (OpenStreetMap's surface values too). */
 const SURFACE_WORDS: [RegExp, TeeSurface][] = [
@@ -100,9 +106,12 @@ export const readName = (text: string): { role?: PointRole; hole?: number; tag?:
 
 /** What a feature's tags or a row's columns say (keys in any case), over what its name says.
  * `line`: a hole's throw line; `bend`: a point the line turns at (a spreadsheet's row);
- * `layout`: a layout's row, named `layoutName`. */
+ * `layout`: a layout's row, named `layoutName`. A bend's `from` and `to`: the names of the tee and
+ * pin its line runs between ("Short -> Main"), `order` its place along it. `gone`: marked removed,
+ * retired or temporary. */
 export const readTags = (props: Record<string, unknown>): ReturnType<typeof readName> & HoleSays & {
-  line?: boolean; bend?: boolean; layout?: boolean; layoutName?: string; name?: string; surface?: TeeSurface; model?: string
+  line?: boolean; bend?: boolean; layout?: boolean; layoutName?: string; name?: string; surface?: TeeSurface; model?: string;
+  from?: string; to?: string; order?: number; gone?: boolean
 } => {
   const p: Record<string, string> = {};
   for (const [k, v] of Object.entries(props)) if (v !== null && v !== undefined && typeof v !== "object") p[k.toLowerCase().replace(/[\s#.]+/g, "_").replace(/_+$/, "")] = String(v).trim();
@@ -131,7 +140,7 @@ export const readTags = (props: Record<string, unknown>): ReturnType<typeof read
   if (kind && !dg) {
     const k = kind.toLowerCase().replace(/[_-]+/g, " ").trim();
     const said = readName(kind);
-    if (/^(bend|bends|turn|turning point)$/.test(k)) out.bend = true;
+    if (/^(bend|bends|turn|turns|turning point|dogleg|doglegs|dog leg|dog legs|waypoint|line point)$/.test(k)) out.bend = true;
     else if (k === "layout") out.layout = true;
     else if (said.role) out.role = said.role;
     else if (/\b(hole|line|throw line|play line|hole line|fairway)\b/.test(k)) out.line = true;
@@ -155,12 +164,25 @@ export const readTags = (props: Record<string, unknown>): ReturnType<typeof read
   if (holeName) out.holeName = holeName;
   const holeNotes = first("hole_notes", "hole_rules", "rules");
   if (holeNotes) out.holeNotes = holeNotes;
-  const surface = readSurface(first("surface", "tee_surface", "pad_surface", "tee_pad"));
+  // (a pad's surface by its own name, else any column of its type or material that says one)
+  const surface = readSurface(first("surface", "tee_surface", "pad_surface", "tee_pad", "pad", "material"))
+    ?? Object.entries(p).filter(([k]) => /(surface|pad|type|material)$/.test(k) && !/^(kind|type|feature_type|point_type|target_type)$/.test(k)).map(([, v]) => readSurface(v)).find(Boolean);
   if (surface) out.surface = surface;
   const layoutName = first("layout", "layout_name");
   if (layoutName) out.layoutName = layoutName;
-  const model = first("model", "make_and_model");
+  const model = first("model", "make_and_model", "basket_model", "target_model", "basket_make", "basket_type");
   if (model) out.model = model;
+  // (a bend's line: from which tee to which pin, by their names, and its place along it)
+  if (out.bend) {
+    const route = (name ?? "").match(/^(.+?)\s*(?:->|→|=>|➔|>)\s*(.+)$/);
+    const from = first("from", "from_tee", "tee_name") ?? route?.[1], to = first("to", "to_pin", "to_target", "pin_name", "target_name") ?? route?.[2];
+    if (from) out.from = from.trim();
+    if (to) out.to = to.trim();
+  }
+  const order = parseFloat(Object.entries(p).find(([k, v]) => /(^|_)(index|order|seq|sequence|step)$/.test(k) && v !== "")?.[1] ?? "");
+  if (Number.isFinite(order)) out.order = order;
+  // (a row marked removed or temporary: kept out)
+  if (Object.entries(p).some(([k, v]) => (/status$/.test(k) && /^(removed|deleted|inactive|retired|archived|closed|hidden)$/i.test(v)) || (/(^|_)(temporary|temp)$/.test(k) && /^(true|yes|1|y)$/i.test(v)))) out.gone = true;
   if (out.role) delete out.other;
   return out;
 };
@@ -185,7 +207,7 @@ const pointOf = (at: LatLon, name: string, said: ReturnType<typeof readTags>): F
   ...(said.role ? { role: said.role } : {}), ...(said.hole !== undefined ? { hole: said.hole } : {}), ...(said.tag ? { tag: said.tag } : {}),
   ...(said.surface && said.role !== "basket" ? { surface: said.surface } : {}), ...(said.model && said.role !== "tee" ? { model: said.model } : {}), ...holeSays(said),
   // (something else, or nothing it says: left out, to bring in by hand if it's wanted)
-  ...(said.other || (!said.role && said.hole === undefined) ? { skip: true } : {})
+  ...(said.other || said.gone || (!said.role && said.hole === undefined) ? { skip: true } : {})
 });
 const okLatLon = (lat: number, lon: number) => Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && !(lat === 0 && lon === 0);
 /** A line's name read for its hole number and the tee color it starts from (a route named
@@ -366,12 +388,15 @@ export const readCsv = (text: string): CourseFile => {
   });
   if (!pairs.length) throw new Error("This CSV has no latitude and longitude columns.");
   const points: FilePoint[] = [], lines: FileLine[] = [], layouts: FileLayout[] = [];
-  const bends = new Map<string, { hole: number; tag?: string; at: LatLon[] }>();
+  const bends = new Map<string, { hole: number; tag?: string; from?: string; to?: string; at: { at: LatLon; order: number }[] }>();
+  let courseName: string | undefined;
   for (const r of rows.slice(1)) {
     const props: Record<string, string> = {};
     head.forEach((h, i) => { if (!pairs.some(p => p.lat === i || p.lon === i)) props[rows[0][i]] = r[i] ?? ""; });
+    courseName ??= propOf(props, "course_name") ?? propOf(props, "course name") ?? propOf(props, "course");
     const said = readTags(props);
-    if (said.layout) { const l = layoutOf(said); if (l) layouts.push(l); continue; }
+    if (said.layout) { const l = layoutOf(said); if (l && !said.gone) layouts.push(l); continue; }
+    if (said.bend && said.gone) continue;
     // (a row a hole names the hole and holds its notes, as GlideLine Studio's hole list has them)
     if (pairs.length > 1) { said.holeName ??= holeNameIn(propOf(props, "name")); said.holeNotes ??= propOf(props, "notes"); }
     for (const p of pairs) {
@@ -379,9 +404,9 @@ export const readCsv = (text: string): CourseFile => {
       if (!okLatLon(lat, lon)) continue;
       if (said.bend) {
         if (said.hole === undefined) continue;
-        const key = `${said.hole}:${said.color ?? ""}`;
-        const b = bends.get(key) ?? { hole: said.hole, ...(said.color ? { tag: said.color } : {}), at: [] };
-        b.at.push({ lat, lon });
+        const key = `${said.hole}:${said.color ?? ""}:${nameKey(said.from ?? "")}:${nameKey(said.to ?? "")}`;
+        const b = bends.get(key) ?? { hole: said.hole, ...(said.color ? { tag: said.color } : {}), ...(said.from ? { from: said.from } : {}), ...(said.to ? { to: said.to } : {}), at: [] };
+        b.at.push({ at: { lat, lon }, order: said.order ?? b.at.length });
         bends.set(key, b);
         continue;
       }
@@ -394,16 +419,20 @@ export const readCsv = (text: string): CourseFile => {
       points.push(pointOf({ lat, lon }, name, s));
     }
   }
-  // Each hole's bends as its line: from its tee (the one of that color), through them, to its
-  // first pin
+  // Each hole's bends as its line, in their order: from its tee (the one of that color, or of the
+  // name it says it's from), through them, to its pin (of the name it says, else its first)
   for (const b of bends.values()) {
     const tees = points.filter(p => p.role === "tee" && p.hole === b.hole && !p.skip);
-    const tee = (b.tag ? tees.find(p => p.tag === b.tag) : undefined) ?? tees[0];
+    const named = b.from ? tees.find(p => sameName(p.name, b.from!)) : undefined;
+    // (a line from a tee the file doesn't have: left out)
+    const tee = named ?? (b.tag ? tees.find(p => p.tag === b.tag) : undefined) ?? (b.from ? undefined : tees[0]);
     const pins = points.filter(p => p.role === "basket" && p.hole === b.hole && !p.skip);
-    const pin = pins.find(p => p.tag === "A") ?? pins[0];
-    if (tee && pin) lines.push({ name: `Hole ${b.hole}${b.tag ? ` ${b.tag}` : ""}`, hole: b.hole, ...(b.tag ? { tag: b.tag } : {}), points: [tee.at, ...b.at, pin.at] });
+    const pin = (b.to ? pins.find(p => sameName(p.name, b.to!)) : undefined) ?? pins.find(p => p.tag === "A") ?? pins[0];
+    const at = [...b.at].sort((x, y) => x.order - y.order).map(x => x.at);
+    const tag = b.tag ?? tee?.tag;
+    if (tee && pin) lines.push({ name: `Hole ${b.hole}${b.from ? ` ${b.from}` : b.tag ? ` ${b.tag}` : ""}`, hole: b.hole, ...(tag ? { tag } : {}), ...(named ? { teeId: named.id } : {}), points: [tee.at, ...at, pin.at], exact: true });
   }
-  return { format: "CSV", points, lines, ...(layouts.length ? { layouts } : {}) };
+  return { format: "CSV", ...(courseName ? { name: courseName } : {}), points, lines, ...(layouts.length ? { layouts } : {}) };
 };
 
 /** Any of the four, by its name and what's in it. */
@@ -421,7 +450,67 @@ export const readCourseFile = async (file: { name: string; text: () => Promise<s
     else throw new Error("GlideLine Studio reads GPX, KML, KMZ, GeoJSON and CSV files.");
   }
   if (!out.points.length && !out.lines.length) throw new Error("No points or lines in this file.");
-  return settle(out);
+  return teeNameLayouts(settle(out));
+};
+
+/** A tee's own name, its hole's number and tee words taken out ("Hole 3 Long Tee": "Long"). */
+const teeNameOf = (name: string) => name
+  .replace(/\b(?:hole|h|no|number|num)\s*#?\s*\d{1,2}\b/gi, " ").replace(/\b\d{1,2}\s*t\b|\bt\s*\d{1,2}\b/gi, " ")
+  .replace(/\b(?:tee|tees|teepad|tee pad|tee box|teebox|pad)\b/gi, " ").replace(/\b\d{1,2}\b/g, " ")
+  .replace(/\s+/g, " ").replace(/^[\s\-–—:,;#·|/]+|[\s\-–—:,;#·|/]+$/g, "").trim();
+/** How long a tee's word says it plays: 0 a junior's, 1 short, 2 in between or unsaid, 3 long. */
+const lengthOrder = (word?: string) =>
+  !word ? 2 : /^(jr|junior|kids|youth|beginner)$/.test(word) ? 0 : /^(short|front|am|amateur|rec|recreational|novice)$/.test(word) ? 1 : /^(long|back|pro|championship)$/.test(word) ? 3 : 2;
+
+/**
+ * A file that names its tees the same way on every hole ("Long", "Short", "Jr.") and has no
+ * layouts of its own: a layout for each name, longest first, each tee of a name in that layout's
+ * color (a name that's a color keeps it; the rest take the colors usually used, from the back).
+ * Tees named only by color stay as they are.
+ */
+export const teeNameLayouts = (file: CourseFile): CourseFile => {
+  if (file.layouts?.length) return file;
+  const tees = file.points.filter(p => !p.skip && p.role === "tee" && p.hole !== undefined);
+  const named = tees.map(p => ({ p, name: teeNameOf(p.name) })).filter(t => t.name && t.name.length <= 24 && !/^(start|end) of\b/i.test(t.name));
+  const holesOf = new Map<string, Set<number>>(), shown = new Map<string, string>();
+  for (const t of named) {
+    const k = nameKey(t.name);
+    if (!k) continue;
+    const set = holesOf.get(k) ?? new Set<number>();
+    // (one name twice on a hole: not a layout's name)
+    if (set.has(t.p.hole!)) return file;
+    set.add(t.p.hole!);
+    holesOf.set(k, set);
+    if (!shown.has(k)) shown.set(k, t.name);
+  }
+  const holeCount = new Set(tees.map(p => p.hole)).size;
+  const keys = [...holesOf.keys()].filter(k => holesOf.get(k)!.size >= 2 && holesOf.get(k)!.size * 2 >= holeCount);
+  if (keys.length < 2 || keys.every(k => colorIn(k))) return file;
+  // (how far each name's tees are from their holes' baskets, on average)
+  const far = (k: string) => {
+    const ds = named.filter(t => nameKey(t.name) === k).map(t => {
+      const b = file.points.find(q => !q.skip && q.role === "basket" && q.hole === t.p.hole);
+      return b ? metersApart(t.p.at, b.at) : 0;
+    });
+    return ds.reduce((a, b) => a + b, 0) / Math.max(1, ds.length);
+  };
+  const color = new Map<string, TeeLevel>();
+  for (const k of keys) { const c = colorIn(k) as TeeLevel | undefined; if (c && ![...color.values()].includes(c)) color.set(k, c); }
+  const rest = keys.filter(k => !color.has(k)).sort((a, b) => lengthOrder(readName(b).tag) - lengthOrder(readName(a).tag) || far(b) - far(a));
+  const free = TEE_ORDER.filter(l => ![...color.values()].includes(l));
+  const usual = (rest.length === 1 ? ["blue"] : rest.length === 2 ? ["blue", "red"] : rest.length === 3 ? ["gold", "blue", "red"] : ["gold", "blue", "white", "red", "green", "purple"]) as TeeLevel[];
+  const picks = [...usual.filter(l => free.includes(l)), ...free.filter(l => !usual.includes(l))].slice(0, rest.length).sort((a, b) => TEE_ORDER.indexOf(a) - TEE_ORDER.indexOf(b));
+  rest.forEach((k, i) => { if (picks[i]) color.set(k, picks[i]); });
+  const points = file.points.map(p => {
+    const k = p.role === "tee" && !p.skip ? nameKey(teeNameOf(p.name)) : "";
+    return color.has(k) ? { ...p, tag: color.get(k)! } : p;
+  });
+  const lines = file.lines.map(l => { const t = l.teeId ? points.find(p => p.id === l.teeId) : undefined; return t?.tag ? { ...l, tag: t.tag } : l; });
+  const layouts: FileLayout[] = [...color.entries()].sort((a, b) => TEE_ORDER.indexOf(a[1]) - TEE_ORDER.indexOf(b[1])).map(([k, tee]) => {
+    const name = shown.get(k)!;
+    return { name: name === name.toLowerCase() ? name[0].toUpperCase() + name.slice(1) : name, tee, pin: "A" };
+  });
+  return { ...file, points, lines, layouts, teeLayouts: true };
 };
 
 // ---------------------------------------------------------------- working out what's what
@@ -504,6 +593,9 @@ const simplifyM = (pts: LatLon[], tol: number): LatLon[] => {
 /** How far off a straight line a bend must be to stay one, m (a track walked with a phone wanders). */
 const BEND_M = 4;
 
+/** A line's turns: each bend a file places, or a walked track's real ones. */
+const turnsOf = (l: FileLine) => (l.exact ? l.points : simplifyM(l.points, l.points.length > 8 ? BEND_M : 0.5)).slice(1, -1);
+
 /** Back tees first (gold, blue...), then ones with no color. */
 const teeRank = (tag?: string) => { const i = (TEE_ORDER as string[]).indexOf(tag ?? ""); return i < 0 ? TEE_ORDER.length : i; };
 
@@ -532,21 +624,23 @@ export const fileCourse = (file: CourseFile): MappedCourse & { left: FilePoint[]
     if (!tees.length || !baskets.length) { left.push(...list); continue; }
     const ownLines = file.lines.filter(l => l.hole === number);
     const line = [...ownLines].sort((a, b) => teeRank(a.tag) - teeRank(b.tag))[0];
-    const doglegs = line ? simplifyM(line.points, line.points.length > 8 ? BEND_M : 0.5).slice(1, -1) : [];
+    const doglegs = line ? turnsOf(line) : [];
     const backTees = [...tees].sort((a, b) => teeRank(a.tag) - teeRank(b.tag));
     const says: HoleSays[] = [line, ...ownLines, ...backTees, ...baskets].filter(s => !!s);
     const par = line?.par ?? says.find(s => s.par)?.par;
     const name = says.find(s => s.holeName)?.holeName, notes = says.find(s => s.holeNotes)?.holeNotes;
     // (each other tee's own line: its turns, where they aren't the hole's still ahead of it, and its
     // par, its line's or its own row's, where it isn't the hole's)
-    const lineFrom = (t: FilePoint) => (t.tag ? ownLines.find(l => l.tag === t.tag) : undefined) ?? ownLines.find(l => metersApart(l.points[0], t.at) < SNAP_M);
+    const lineFrom = (t: FilePoint) => ownLines.find(l => l.teeId === t.id) ?? (t.tag ? ownLines.find(l => !l.teeId && l.tag === t.tag) : undefined) ?? ownLines.find(l => !l.teeId && metersApart(l.points[0], t.at) < SNAP_M);
+    // (a file that gives each tee its line by name: a tee with none plays straight)
+    const byTee = ownLines.some(l => l.teeId);
     const own = (t: FilePoint) => {
       const l = lineFrom(t);
-      if (l ? l === line : t === backTees[0]) return {};
+      if (l ? l === line : t === backTees[0] && !byTee) return {};
       const tp = l?.par ?? t.par;
       const ownPar = tp && tp !== par ? { par: tp } : {};
-      if (!l) return ownPar;
-      const turns = simplifyM(l.points, l.points.length > 8 ? BEND_M : 0.5).slice(1, -1);
+      if (!l) return byTee && line ? { doglegs: [], ...ownPar } : ownPar;
+      const turns = turnsOf(l);
       // (a tee with none of its own plays through the hole's turns still ahead of it)
       const end = l.points[l.points.length - 1];
       let ahead = doglegs;

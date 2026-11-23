@@ -4,7 +4,7 @@
 import { fitAttr, capAttr } from "./fitText";
 import { AREA_KINDS, CIRCLE_ONE_FT, FIELD_KINDS, FT_PER_M, LINE_KINDS, TEE_LEVELS } from "../constants";
 import { fieldKindOf } from "./fields";
-import type { AreaItem, BasketItem, CourseDoc, CourseItem, LineItem, MapStyle, P, SignLook, SignPart, SignSpot, Units } from "../types";
+import type { AreaItem, BasketItem, CourseDoc, CourseItem, LineItem, MapStyle, P, SignLook, SignPart, SignSpot, TeeLevel, Units } from "../types";
 import { renderFieldGuide, renderOpenView, renderTrailhead } from "./signLooks";
 import { activeLayout, belongsTo, fairwayOutline, holeBaskets, holeTees, linePath, obFor, obPieces, throwLine, taglineOf, titleFontOf } from "./course";
 import { boundsOf, dist, distanceToPath, pathLength, pointAlong, pointInPolygon, rotatePoint, smoothPath } from "./geom";
@@ -52,6 +52,13 @@ export const courseNameAs = (sty: Pick<MapStyle, "titleFont">, own: string) => {
 };
 
 /** "350 FT" / "107 M". */
+/** A tee's name on the signs and pages: the layout played from it, where the course names tees by
+ * layout and one layout plays that color, else its color. */
+export const teeName = (doc: Pick<CourseDoc, "layouts" | "style">, level: TeeLevel) => {
+  const by = doc.style.teeNames === "layouts" ? doc.layouts.filter(l => l.tee === level) : [];
+  return by.length === 1 && by[0].name.trim() ? by[0].name.trim() : TEE_LEVELS[level].label;
+};
+
 export const bigLength = (ft: number, units: Units) => `${Math.round(units === "m" ? ft / FT_PER_M : ft).toLocaleString()} ${units === "m" ? "M" : "FT"}`;
 
 /** The OB square in a key: red, or (PDGA colors) white with a dark edge. */
@@ -273,7 +280,7 @@ export const renderTeeSign = (doc: CourseDoc, holeId: string, size: SignSize, op
     const y = header.h * 0.4 + i * 17 * ts * (tees.length > 3 ? 0.75 : 1);
     const L = TEE_LEVELS[t.level];
     parts.push(`<rect x="${n(rowsX - 150 * ts)}" y="${n(y - 7 * ts)}" width="${n(150 * ts)}" height="${n(14 * ts)}" rx="${n(7 * ts)}" fill="${L.color}"/>`);
-    parts.push(`<text${fitAttr(75 * ts)} x="${n(rowsX - 142 * ts)}" y="${n(y)}" dominant-baseline="central" font-family="${F}" font-weight="700" font-size="${n(10 * ts)}" fill="${L.ink}">${L.label.toUpperCase()}</text>`);
+    parts.push(`<text${fitAttr(75 * ts)} x="${n(rowsX - 142 * ts)}" y="${n(y)}" dominant-baseline="central" font-family="${F}" font-weight="700" font-size="${n(10 * ts)}" fill="${L.ink}">${esc(teeName(doc, t.level).toUpperCase())}</text>`);
     parts.push(`<text${fitAttr(70 * ts)} x="${n(rowsX - 8 * ts)}" y="${n(y)}" text-anchor="end" dominant-baseline="central" font-family="${F}" font-weight="700" font-size="${n(10.5 * ts)}" fill="${L.ink}">${len ? bigLength(len, doc.units) : "–"}</text>`);
   });
   P.group(parts, at, "lengths");
@@ -679,7 +686,7 @@ const renderWideSign = (doc: CourseDoc, holeId: string, size: SignSize, opts: Si
   for (const { t, len } of lens) {
     const L = TEE_LEVELS[t.level], main = t.id === mainTee?.id, rowH = main ? 30 * u : 24 * u;
     parts.push(`<circle cx="${n(mx + 8 * u)}" cy="${n(y + rowH / 2 - 4 * u)}" r="${n((main ? 8 : 6.5) * u)}" fill="${L.color}" stroke="${card.ink}" stroke-opacity="0.5" stroke-width="${n(1 * u)}"/>`);
-    parts.push(`<text${fitAttr(cw * 0.45)} x="${n(mx + 24 * u)}" y="${n(y + rowH / 2 - 4 * u)}" dominant-baseline="central" font-family="${card.head}" font-weight="${main ? 700 : 600}" font-size="${n((main ? 15 : 12.5) * u)}" letter-spacing="${n(1 * u)}" fill="${card.ink}">${esc(L.label.toUpperCase())}</text>`);
+    parts.push(`<text${fitAttr(cw * 0.45)} x="${n(mx + 24 * u)}" y="${n(y + rowH / 2 - 4 * u)}" dominant-baseline="central" font-family="${card.head}" font-weight="${main ? 700 : 600}" font-size="${n((main ? 15 : 12.5) * u)}" letter-spacing="${n(1 * u)}" fill="${card.ink}">${esc(teeName(doc, t.level).toUpperCase())}</text>`);
     parts.push(`<text${fitAttr(cw * 0.5)} x="${n(col.w - mx)}" y="${n(y + rowH / 2 - 4 * u)}" text-anchor="end" dominant-baseline="central" font-family="${card.head}" font-weight="700" font-size="${n((main ? 22 : 15) * u)}" fill="${card.ink}">${len ? big(len) : "–"}</text>`);
     y += rowH;
   }

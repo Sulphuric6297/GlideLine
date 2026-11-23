@@ -93,8 +93,10 @@ function PointRow({ p, onChange }: { p: FilePoint; onChange: (patch: Partial<Fil
 export function CourseFileDialog() {
   const { file, fileName, waiting } = useCourseFile();
   const bounds = useCourse(s => s.doc.site.bounds);
-  // (a site brought in for the file: the file again, to bring its holes onto it)
-  useEffect(() => { if (waiting && bounds && file) useCourseFile.setState({ waiting: false }); }, [waiting, bounds, file]);
+  // (a site brought in for the file: the file again, to bring its holes onto it; not while the site
+  // is only looked over, as what's added then goes when it comes in)
+  const reviewing = useEditor(e => e.reviewing);
+  useEffect(() => { if (waiting && bounds && file && !reviewing) useCourseFile.setState({ waiting: false }); }, [waiting, bounds, file, reviewing]);
   if (!file || waiting) return null;
   return <Review key={`${fileName}:${file.points.length}`} file={file} fileName={fileName} />;
 }
@@ -129,7 +131,9 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
       const base = replace ? withoutHoles(d) : { holes: d.holes.map(h => ({ ...h, number: nums.get(h.id) ?? h.number })), items: d.items };
       // (the file's layouts, and its course name on a course that has none of its own yet)
       const named = file.name && d.name === "New Disc Golf Course" ? { name: file.name } : {};
-      return { holes: [...base.holes, ...out.holes], items: [...base.items, ...out.items], ...withFileLayouts(d.layouts, d.activeLayout, file.layouts), ...named };
+      // (tees named by their layouts in the file: named so on the signs too)
+      const teeNames = file.teeLayouts ? { style: { ...d.style, teeNames: "layouts" as const } } : {};
+      return { holes: [...base.holes, ...out.holes], items: [...base.items, ...out.items], ...withFileLayouts(d.layouts, d.activeLayout, file.layouts), ...named, ...teeNames };
     });
     close();
     if (useEditor.getState().step === "site") useEditor.getState().set({ step: "design", tool: "select" });
@@ -143,7 +147,7 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
       <p className="text-[13px] text-zinc-300 mb-3" data-testid="course-file-summary">
         {`${fileName}: ${holes.length} ${holes.length === 1 ? "hole" : "holes"}`}
         {multiPin ? `, ${multiPin} with more than one pin` : ""}{multiTee ? `${multiPin ? " and" : ","} ${multiTee} with more than one tee` : ""}.
-        {file.layouts?.length ? ` ${file.layouts.length === 1 ? "Layout" : "Layouts"}: ${file.layouts.map(l => l.name).join(", ")}.` : ""}
+        {file.layouts?.length ? ` ${file.layouts.length === 1 ? "Layout" : "Layouts"}: ${file.layouts.map(l => l.name).join(", ").replace(/\.$/, "")}.` : ""}
         {" "}<HelpLink topic="gps-holes" label="Holes from a GPS file" over />
       </p>
       {!ref && (

@@ -78,6 +78,17 @@ and one with a different par keeps its own par (a tee's Bends and Par from this 
 A course that only has the layout every course starts with (Main) takes the file's layouts in its
 place. Otherwise a layout of the same name gets the file's tee and pin, and the rest are added.
 
+A file with no layouts whose tees have the same names on every hole (`Long`, `Short`, `Jr.`, or
+`Hole 3 Long tee` and so on) brings in a layout for each name, longest first: a name that's a tee
+color keeps it, and the rest take the colors usually used from the back (gold, blue, red for
+three). The course's tees are then named by layout on the signs and hole pages (Map, General, Tees
+named by). Tees named only by color make no layouts.
+
+### Left out
+
+A point whose `status` (or any column ending in `status`) is `removed`, `retired`, `inactive`,
+`deleted`, `archived`, `closed` or `hidden`, or whose `temporary` is `true`, stays out.
+
 ## GeoJSON
 
 A FeatureCollection. Tees and baskets are Points and a hole's lines are LineStrings, from the tee
@@ -117,8 +128,14 @@ the hole number in `ref`, such as `3` or `3A`), so an Overpass Turbo export open
 One row a point, with `lat` and `lon` columns (`latitude` and `longitude` work too). Commas,
 semicolons or tabs between the columns all work.
 
-- A `bend` row is a point a hole's line turns at. Put them in order from the tee. With a `tee`
-  color, they're that tee's line; without one, the hole's first tee's.
+- A `bend` row (`dogleg` and `turn` work too) is a point a hole's line turns at. Put them in order
+  from the tee, or number them in an `order` or `index` column. With a `tee` color, they're that
+  tee's line; without one, the hole's first tee's. A bend whose name (or `from` and `to` columns)
+  says which tee and pin it runs between, as `Short -> Main`, is the line from the tee of that
+  name to the pin of that name; on a hole with such lines, a tee that has none plays straight.
+  Bends a file places are kept exactly where they are.
+- A tee's `surface` can also be in any column ending in `type`, `pad` or `material`, and a
+  basket's model in `basket_model`. A `course_name` column names the course.
 - A `layout` row has no `lat` and `lon`: just `layout`, `tee` and `pin`.
 
 ```csv

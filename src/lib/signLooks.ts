@@ -11,7 +11,7 @@ import { holeStats, type HoleStats } from "./holeStats";
 import { northArrow, palette, scaleBar, wrapSvg } from "./mapSvg";
 import { fmtElev } from "./units";
 import { piecer } from "./pieces";
-import { autoRules, bigLength, cardStyle, courseNameAs, designedBy, elevationProfile, esc, greenView, holeMap, holeOfText, miniCourseMap, signExtras, signOf, SIGN_SIZES, statTiles, wrap, type SignArt, type SignSize } from "./teeSign";
+import { autoRules, bigLength, teeName, cardStyle, courseNameAs, designedBy, elevationProfile, esc, greenView, holeMap, holeOfText, miniCourseMap, signExtras, signOf, SIGN_SIZES, statTiles, wrap, type SignArt, type SignSize } from "./teeSign";
 
 const n = (v: number) => (Math.round(v * 100) / 100).toString();
 type Box = { x: number; y: number; w: number; h: number };
@@ -107,7 +107,7 @@ export const renderTrailhead = (doc: CourseDoc, holeId: string, size: SignSize, 
   }
 
   // Each tee's length on a chip (wide: and what it plays like, when that differs)
-  const chips = show("lengths") ? lens.map(l => ({ label: TEE_LEVELS[l.t.level].label.toUpperCase(), value: l.len ? big(l.len) : "–", color: TEE_LEVELS[l.t.level].color })) : [];
+  const chips = show("lengths") ? lens.map(l => ({ label: teeName(doc, l.t.level).toUpperCase(), value: l.len ? big(l.len) : "–", color: TEE_LEVELS[l.t.level].color })) : [];
   const playsWord = P.word("lengths", "plays", "PLAYS LIKE").trim();
   if (st.complete && show("elevation") && Math.abs(st.playsLike - st.length) >= 10 && chips.length < 4 && !(wide && sign.spot === "stats")) chips.push({ label: playsWord, value: big(st.playsLike), color: sty.fairway });
   const chipY = wide ? col.y + T + 24 * u : mapBox.y + mapBox.h + 18 * u;
@@ -257,7 +257,7 @@ export const renderFieldGuide = (doc: CourseDoc, holeId: string, size: SignSize,
     for (const l of lens) {
       const L = TEE_LEVELS[l.t.level];
       parts.push(`<g data-part="tee-row"><circle cx="${n(col.x + 7 * u)}" cy="${n(y - 6 * u)}" r="${n(6 * u)}" fill="${L.color}" stroke="${ink}" stroke-opacity="0.4" stroke-width="${n(1 * u)}"/>`
-        + `<text${fitAttr(56 * u)} x="${n(col.x + 20 * u)}" y="${n(y)}" font-family="${card.body}" font-weight="500" font-size="${n(15 * u)}" fill="${ink}">${esc(L.label)}</text>`
+        + `<text${fitAttr(56 * u)} x="${n(col.x + 20 * u)}" y="${n(y)}" font-family="${card.body}" font-weight="500" font-size="${n(15 * u)}" fill="${ink}">${esc(teeName(doc, l.t.level))}</text>`
         + `<line x1="${n(col.x + 80 * u)}" x2="${n(col.x + col.w - 90 * u)}" y1="${n(y - 2 * u)}" y2="${n(y - 2 * u)}" stroke="${ink}" stroke-opacity="0.45" stroke-width="${n(1.4 * u)}" stroke-dasharray="${n(1.5 * u)} ${n(4 * u)}"/>`
         + `<text${fitAttr(84 * u)} x="${n(col.x + col.w)}" y="${n(y)}" text-anchor="end" font-family="${card.body}" font-weight="700" font-size="${n(16 * u)}" fill="${ink}">${l.len ? esc(big(l.len)) : "–"}</text></g>`);
       y += 28 * u;

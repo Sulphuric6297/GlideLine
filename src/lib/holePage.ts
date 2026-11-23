@@ -10,7 +10,7 @@ import { activeLayout, holeBaskets, holeTees, taglineOf, throwLine } from "./cou
 import { dist, rotatePoint } from "./geom";
 import { holeStats } from "./holeStats";
 import { markingsInView, northArrow, palette, scaleBar, wrapSvg } from "./mapSvg";
-import { autoRules, cardStyle, courseNameAs, elevationProfile as profile, holeFacts, holeMap, holeOfText, obKey, type SignArt } from "./teeSign";
+import { autoRules, cardStyle, teeName, courseNameAs, elevationProfile as profile, holeFacts, holeMap, holeOfText, obKey, type SignArt } from "./teeSign";
 import { fmtDist, fmtElev } from "./units";
 import { extrasSvg, followName, piecer } from "./pieces";
 
@@ -153,7 +153,7 @@ export const renderHolePage = (doc: CourseDoc, holeId: string, size: HolePageSiz
     const h = 18 * u, fs = 10 * u;
     for (const t of lengths.tees) {
       const L = TEE_LEVELS[t.level];
-      const text = `${L.label.toUpperCase()} ${big(t.length, units)}`;
+      const text = `${teeName(doc, t.level).toUpperCase()} ${big(t.length, units)}`;
       const w = text.length * fs * 0.52 + 18 * u;
       if (x + w > W - m) break;
       parts.push(`<g data-part="tee-length"><rect x="${n(x)}" y="${n(y - h / 2)}" width="${n(w)}" height="${n(h)}" rx="${n(h / 2)}" fill="${L.color}" stroke="#151a14" stroke-width="${n(0.8 * u)}" stroke-opacity="${L.color === "#f8fafc" ? 1 : 0.35}"/><text${fitAttr(w - 10 * u)} x="${n(x + w / 2)}" y="${n(y + 0.5 * u)}" text-anchor="middle" dominant-baseline="central" font-family="${HEAD}" font-weight="600" font-size="${n(fs)}" fill="${L.ink}">${esc(text)}</text></g>`);

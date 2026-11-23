@@ -5,7 +5,7 @@ import { BASKET_MARKS, basketMark, bestRotation } from "../lib/mapSvg";
 import { CARD_DEFAULTS, SIGN_LOOKS, SIGN_PARTS, SIGN_SPOTS, isSheet, signOf } from "../lib/teeSign";
 import { changeDoc, useCourse, useEditor } from "../state/course";
 import { toast } from "../state/toast";
-import { AREA_KINDS } from "../constants";
+import { AREA_KINDS, TEE_LEVELS } from "../constants";
 import { RESTRICTED } from "../lib/symbols";
 import { MapLookPanel } from "./MapLookPanel";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
@@ -340,6 +340,12 @@ export function DesignPanel() {
         <Field label="Headings font">
           <FontPicker label="Headings font" value={s.card?.font ?? CARD_DEFAULTS.font} onPick={f => setStyle({ card: { ...s.card, font: f ?? CARD_DEFAULTS.font } })} used={fontsIn(doc)} testid="card-font" />
         </Field>
+        {doc.layouts.length > 1 && (
+          <Field label="Tees named by">
+            <div data-testid="tee-names"><Segmented label="Tees named by" value={s.teeNames ?? "colors"} onChange={v => setStyle({ teeNames: v === "layouts" ? "layouts" : undefined })}
+              options={[{ value: "colors", label: "Color", title: [...new Set(doc.layouts.map(l => TEE_LEVELS[l.tee].label.toUpperCase()))].join(", ") }, { value: "layouts", label: "Layout", title: doc.layouts.map(l => l.name.toUpperCase()).join(", ") }]} /></div>
+          </Field>
+        )}
       </Section>
       <Section title="Marks" testid="markings" help="marks">
         {/* (which colors mark the areas first: PDGA colors set OB's own, so its swatch goes) */}

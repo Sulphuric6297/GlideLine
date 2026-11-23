@@ -493,9 +493,9 @@ const osmSummary = (counts: OsmCounts, traced: number, parks: ParkCounts = {}) =
     .filter(Boolean)
     .join(", ");
 
-/** How long a tee or pin word says it plays: 0 short, 1 in between or unsaid, 2 long. */
+/** How long a tee or pin word says it plays: -1 a junior's, 0 short, 1 in between or unsaid, 2 long. */
 const lengthRank = (tag?: string) =>
-  !tag ? 1 : /^(short|front|am|amateur|rec|recreational|novice)$/.test(tag) ? 0 : /^(long|back|pro|championship)$/.test(tag) ? 2 : 1;
+  !tag ? 1 : /^(jr|junior|kids|youth|beginner)$/.test(tag) ? -1 : /^(short|front|am|amateur|rec|recreational|novice)$/.test(tag) ? 0 : /^(long|back|pro|championship)$/.test(tag) ? 2 : 1;
 
 /** A hole's pin positions: a letter said keeps it, the rest take the letters left, short before
  * long, else in their order (null: past D, the last there is). */

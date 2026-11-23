@@ -13,8 +13,11 @@ type Picks = {
   /** "all", or one hole's id. */
   signHoles: string;
   signFormat: SheetFormat;
+  /** A sign for each layout (else the layout worked on). */
+  signEach: boolean;
   pageHoles: string;
   pageFormat: SheetFormat;
+  pageEach: boolean;
   cardFormat: "pdf" | "svg";
   videoHoles: string;
   dataFormat: DataFormat | null;
@@ -26,8 +29,10 @@ export const useExportPick = create<Picks>(set => ({
   mapFormat: "pdf",
   signHoles: "all",
   signFormat: "pdf",
+  signEach: false,
   pageHoles: "all",
   pageFormat: "pdf",
+  pageEach: false,
   cardFormat: "pdf",
   videoHoles: "all",
   dataFormat: null,

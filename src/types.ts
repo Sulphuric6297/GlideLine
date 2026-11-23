@@ -775,6 +775,9 @@ export interface MapStyle {
   subtitle: string;
   /** The line under the course's name on the map and the signs (unset: "Disc golf course"; "": none). */
   tagline?: string;
+  /** Tees named on the signs and hole pages by the layout played from them ("layouts": a tee color
+   * one layout plays takes its name), or (unset) by their color. */
+  teeNames?: "layouts";
   footer: string;
   /** Colors. */
   fairway: string;

@@ -23,9 +23,10 @@ import { runExport, useExportJob, type JobControl } from "../state/exportJob";
 import { recordVideo, useVideoSettings } from "../state/video";
 import { IN_3D, useExportPick, type DataFormat, type ExportThing, type MapFormat, type SheetFormat } from "../state/exportPick";
 import { toast } from "../state/toast";
-import type { CourseDoc, PaperSize } from "../types";
+import type { CourseDoc, Layout, PaperSize } from "../types";
 import { getView } from "../state/view";
-import { select } from "../state/actions";
+import { pickLayout, select } from "../state/actions";
+import { TEE_LEVELS } from "../constants";
 import { reliefOf } from "./useRelief";
 import { canopyFor } from "../lib/forest";
 import { setStyle } from "./DesignPanel";
@@ -35,6 +36,11 @@ import { ActRow, GlassBar, type BarSetting } from "./mobile/GlassBar";
 
 const svgBlob = (svg: string) => new Blob([svg], { type: "image/svg+xml" });
 const two = (i: number) => String(i).padStart(2, "0");
+/** The course as each layout plays it (`each`), or as it is: what a sign or page is made from. */
+const played = (d: CourseDoc, each: boolean): { d: CourseDoc; layout: Layout | null }[] =>
+  each && d.layouts.length > 1 ? d.layouts.map(l => ({ d: { ...d, activeLayout: l.id }, layout: l })) : [{ d, layout: null }];
+/** A layout's folder in a ZIP. */
+const folderOf = (l: Layout | null) => (l ? `${l.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "layout"}/` : "");
 
 /** Hands the file to the browser, and says so (a download can go by unnoticed). */
 const save = (blob: Blob, name: string) => {
@@ -97,6 +103,15 @@ function HolePick({ value, onChange, label, testid }: { value: string; onChange:
   const menu = useContext(MenuRows);
   const options = [{ value: "all", label: menu ? `All ${holes.length} holes` : `All ${holes.length}` }, ...holes.map(h => ({ value: h.id, label: menu ? `Hole ${holeLabel(doc, h.id)}` : holeLabel(doc, h.id), title: h.name || undefined }))];
   return <ChipPick label={label} testid={testid} value={holes.some(h => h.id === value) ? value : "all"} options={options} onChange={onChange} />;
+}
+
+/** The layouts a sign or page is made for: all of them, or one (the one worked on, as the holes'
+ * column picks it); as Holes has it, All first. */
+function LayoutPick({ each, onEach, label, testid }: { each: boolean; onEach: (each: boolean) => void; label: string; testid: string }) {
+  const doc = useCourse(s => s.doc);
+  const menu = useContext(MenuRows);
+  const options = [{ value: "each", label: menu ? `All ${doc.layouts.length} layouts` : `All ${doc.layouts.length}` }, ...doc.layouts.map(l => ({ value: l.id, label: l.name, color: TEE_LEVELS[l.tee].color }))];
+  return <ChipPick label={label} testid={testid} value={each ? "each" : doc.activeLayout} options={options} onChange={v => { onEach(v === "each"); if (v !== "each") pickLayout(v); }} />;
 }
 
 /** The parts and what they cost, and the prices to change. */
@@ -166,6 +181,10 @@ function useThings(): Thing[] {
   const pageSize: HolePageSize = doc.style.holePageSize ?? "letter";
   const one = (id: string) => complete.find(h => h.id === id) ?? null;
   const signHole = one(pick.signHoles), pageHole = one(pick.pageHoles);
+  const multi = doc.layouts.length > 1, signEach = multi && pick.signEach, pageEach = multi && pick.pageEach;
+  const layoutName = doc.layouts.find(l => l.id === doc.activeLayout)?.name ?? "";
+  const layoutChoice = (each: boolean, key: "signEach" | "pageEach", label: string, testid: string): Choice[] =>
+    multi ? [{ id: "layout", name: "Layout", value: each ? `All ${doc.layouts.length}` : layoutName, control: <LayoutPick label={label} testid={testid} each={each} onEach={v => pick.set({ [key]: v })} /> }] : [];
   const videoHoles = one(pick.videoHoles) ? [pick.videoHoles] : complete.map(h => h.id);
   const holesShown = (h: { id: string } | null) => (h ? `Hole ${holeLabel(doc, h.id)}` : `All ${n}`);
   // (a sheet's formats: every hole in a PDF or a ZIP of pictures; one hole's page as a picture or drawing too)
@@ -217,17 +236,19 @@ function useThings(): Thing[] {
     if (!holes.length) throw new Error("No hole to export yet.");
     const relief = await art(d);
     const pages = [];
-    for (const [i, h] of holes.entries()) {
+    const each = played(d, signEach), total = holes.length * each.length;
+    for (const [k, { d: dl }] of each.entries()) for (const [i, h] of holes.entries()) {
       stopIfCancelled(job);
-      job.progress(i / holes.length, `Tee sign ${i + 1} of ${holes.length}`);
-      const s = await paintedForPrint(page => (page ? printDpi(page.width, page.height) : 72), () => renderTeeSign(d, h.id, signSize, relief));
+      const at = k * holes.length + i;
+      job.progress(at / total, `Tee sign ${at + 1} of ${total}`);
+      const s = await paintedForPrint(page => (page ? printDpi(page.width, page.height) : 72), () => renderTeeSign(dl, h.id, signSize, relief));
       if (!s) continue;
       const dpi = printDpi(s.width, s.height);
       pages.push(await pdfPage(await svgToCanvas(s.svg, s.width, s.height, dpi), s.width, s.height));
     }
     stopIfCancelled(job);
     job.progress(null, "Making the PDF");
-    save(await pdfFromPages(pages), fileName(d, holes.length === 1 ? `-tee-sign-${holeNumber(d, holes[0].id)}.pdf` : "-tee-signs.pdf"));
+    save(await pdfFromPages(pages), fileName(d, holes.length === 1 ? `-tee-sign${each.length > 1 ? "s" : ""}-${holeNumber(d, holes[0].id)}.pdf` : "-tee-signs.pdf"));
   });
   // (one hole's sign: a picture under UDisc's 5 MB, or the drawing)
   const oneSign = async (d: CourseDoc) => {
@@ -243,15 +264,18 @@ function useThings(): Thing[] {
       const d = getDoc();
       const relief = await art(d);
       const zip = new JSZip();
-      for (let i = 0; i < d.holes.length; i++) {
+      const holes = signHole ? d.holes.filter(h => h.id === signHole.id) : d.holes;
+      const each = played(d, signEach), total = holes.length * each.length;
+      for (const [k, { d: dl, layout }] of each.entries()) for (const [i, h] of holes.entries()) {
         stopIfCancelled(job);
-        job.progress(i / d.holes.length, `Tee sign ${i + 1} of ${d.holes.length}`);
-        const s = await paintedForPrint(150, () => renderTeeSign(d, d.holes[i].id, signSize, relief));
+        const at = k * holes.length + i;
+        job.progress(at / total, `Tee sign ${at + 1} of ${total}`);
+        const s = await paintedForPrint(150, () => renderTeeSign(dl, h.id, signSize, relief));
         if (!s) continue;
         // UDisc takes tee sign pictures up to 5 MB
-        const no = two(holeNumber(d, d.holes[i].id));
-        zip.file(`hole-${no}.png`, await pngUnder(s.svg, s.width, s.height, 4.8 * 1024 * 1024, 150));
-        zip.file(`hole-${no}.svg`, s.svg);
+        const no = two(holeNumber(d, h.id));
+        zip.file(`${folderOf(layout)}hole-${no}.png`, await pngUnder(s.svg, s.width, s.height, 4.8 * 1024 * 1024, 150));
+        zip.file(`${folderOf(layout)}hole-${no}.svg`, s.svg);
       }
       stopIfCancelled(job);
       job.progress(null, "Making the ZIP");
@@ -271,6 +295,7 @@ function useThings(): Thing[] {
 
   // --- Hole pages
   const pickedPages = (d: CourseDoc) => (pageHole ? playable(d).filter(h => h.id === pageHole.id) : playable(d));
+  const pageTotal = (d: CourseDoc) => pickedPages(d).length * played(d, pageEach).length;
   const holeSuffix = (d: CourseDoc, id: string) => `-hole-${holeNumber(d, id)}`;
   const onePage = async (d: CourseDoc) => {
     if (!pageHole) throw new Error("Pick a hole first.");
@@ -284,11 +309,13 @@ function useThings(): Thing[] {
       if (!holes.length) throw new Error("No hole to export yet.");
       const relief = await art(d);
       const out = [];
-      for (const [i, h] of holes.entries()) {
+      const each = played(d, pageEach), total = pageTotal(d);
+      for (const [k, { d: dl }] of each.entries()) for (const [i, h] of holes.entries()) {
         stopIfCancelled(job);
-        job.progress(i / holes.length, `Hole page ${i + 1} of ${holes.length}`);
+        const at = k * holes.length + i;
+        job.progress(at / total, `Hole page ${at + 1} of ${total}`);
         const dpi = HOLE_PAGES[pageSize].dpi;
-        const p = (await paintedForPrint(dpi, () => renderHolePage(d, h.id, pageSize, relief)))!;
+        const p = (await paintedForPrint(dpi, () => renderHolePage(dl, h.id, pageSize, relief)))!;
         out.push(await pdfPage(await svgToCanvas(p.svg, p.width, p.height, dpi), p.width, p.height));
       }
       stopIfCancelled(job);
@@ -301,11 +328,13 @@ function useThings(): Thing[] {
       if (!holes.length) throw new Error("No hole to export yet.");
       const relief = await art(d);
       const zip = new JSZip();
-      for (const [i, h] of holes.entries()) {
+      const each = played(d, pageEach), total = pageTotal(d);
+      for (const [k, { d: dl, layout }] of each.entries()) for (const [i, h] of holes.entries()) {
         stopIfCancelled(job);
-        job.progress(i / holes.length, `Hole picture ${i + 1} of ${holes.length}`);
-        const p = (await paintedForPrint(HOLE_PAGES[pageSize].dpi, () => renderHolePage(d, h.id, pageSize, relief)))!;
-        zip.file(`hole-${two(holeNumber(d, h.id))}.png`, await canvasBlob(await svgToCanvas(p.svg, p.width, p.height, HOLE_PAGES[pageSize].dpi)));
+        const at = k * holes.length + i;
+        job.progress(at / total, `Hole picture ${at + 1} of ${total}`);
+        const p = (await paintedForPrint(HOLE_PAGES[pageSize].dpi, () => renderHolePage(dl, h.id, pageSize, relief)))!;
+        zip.file(`${folderOf(layout)}hole-${two(holeNumber(d, h.id))}.png`, await canvasBlob(await svgToCanvas(p.svg, p.width, p.height, HOLE_PAGES[pageSize].dpi)));
       }
       stopIfCancelled(job);
       job.progress(null, "Making the ZIP");
@@ -360,8 +389,11 @@ function useThings(): Thing[] {
   const off = (needsHole = true) => (busy ? "Another export is under way." : needsHole && nothing ? "No hole has a tee and a basket yet." : undefined);
   const parts = partsList(doc);
 
-  const signFormats = sheetFormats(!!signHole), signFmt = formatOf(pick.signFormat, signFormats);
-  const pageFormats = sheetFormats(!!pageHole, true), pageFmt = formatOf(pick.pageFormat, pageFormats);
+  // (each layout's sign for one hole: still a PDF or a ZIP of them)
+  const signFormats = sheetFormats(!!signHole && !signEach), signFmt = formatOf(pick.signFormat, signFormats);
+  const pageFormats = sheetFormats(!!pageHole && !pageEach, true), pageFmt = formatOf(pick.pageFormat, pageFormats);
+  const signCount = (signHole ? 1 : n) * (signEach ? doc.layouts.length : 1), pageCount = (pageHole ? 1 : n) * (pageEach ? doc.layouts.length : 1);
+  const forLayout = (each: boolean) => (multi ? ` · ${each ? `all ${doc.layouts.length} layouts` : layoutName}` : "");
   const fmtName = (f: string) => (f === "zip" ? "pictures" : f.toUpperCase());
   // (a hole picked: the preview shows its sign or page)
   const holeTo = (key: "signHoles" | "pageHoles", tab: "sign" | "page") => (id: string) => {
@@ -382,31 +414,33 @@ function useThings(): Thing[] {
     },
     {
       id: "signs", name: "Tee signs", icon: Signpost, help: "print",
-      summary: `${SIGN_SHORT[signSize]} · ${signHole ? `hole ${holeLabel(doc, signHole.id)}` : `all ${n}`}`,
+      summary: `${SIGN_SHORT[signSize]} · ${signHole ? `hole ${holeLabel(doc, signHole.id)}` : `all ${n}`}${forLayout(signEach)}`,
       choices: [
         { id: "holes", name: "Holes", value: holesShown(signHole), control: <HolePick label="Tee signs to export" testid="sign-pick" value={pick.signHoles} onChange={holeTo("signHoles", "sign")} /> },
+        ...layoutChoice(signEach, "signEach", "Tee signs for", "sign-layout"),
         { id: "size", name: "Size", value: SIGN_SHORT[signSize], control: <ChipPick label="Tee sign size" testid="sign-size" value={signSize} options={sizes(SIGN_SIZES, SIGN_SHORT)} onChange={v => setStyle({ signSize: v })} /> },
         { id: "format", name: "Format", value: signFmt === "zip" ? "ZIP" : signFmt.toUpperCase(), control: <Segmented label="Tee sign format" value={signFmt} onChange={v => pick.set({ signFormat: v })} options={signFormats} /> }
       ],
       go: {
-        label: signHole ? `Download sign ${holeLabel(doc, signHole.id)} (${signFmt.toUpperCase()})` : `Download ${n} ${signFmt === "zip" ? "sign pictures" : "signs"}`,
+        label: signHole && !signEach ? `Download sign ${holeLabel(doc, signHole.id)} (${signFmt.toUpperCase()})` : `Download ${signCount} ${signFmt === "zip" ? "sign pictures" : "signs"}`,
         short: "Download", run: signs[signFmt],
-        testid: signHole && signFmt !== "pdf" ? `export-sign-${signFmt}` : `export-signs-${signFmt}`, off: off()
+        testid: signHole && signFmt !== "pdf" && signFmt !== "zip" ? `export-sign-${signFmt}` : `export-signs-${signFmt}`, off: off()
       },
-      note: signHole ? undefined : signFmt === "zip" ? "A PNG under 5 MB and an SVG a sign, for UDisc." : "One page a sign."
+      note: signHole && !signEach ? undefined : signFmt === "zip" ? `A PNG under 5 MB and an SVG a sign, for UDisc${signEach ? "; a folder for each layout" : ""}.` : "One page a sign."
     },
     {
       id: "pages", name: "Hole pages", icon: BookOpen, help: "hole-by-hole",
-      summary: `${PAGE_SHORT[pageSize]} · ${pageHole ? `hole ${holeLabel(doc, pageHole.id)}` : `all ${n}`}`,
+      summary: `${PAGE_SHORT[pageSize]} · ${pageHole ? `hole ${holeLabel(doc, pageHole.id)}` : `all ${n}`}${forLayout(pageEach)}`,
       choices: [
         { id: "holes", name: "Holes", value: holesShown(pageHole), control: <HolePick label="Hole to export" testid="hole-pick" value={pick.pageHoles} onChange={holeTo("pageHoles", "page")} /> },
+        ...layoutChoice(pageEach, "pageEach", "Hole pages for", "page-layout"),
         { id: "size", name: "Size", value: PAGE_SHORT[pageSize], control: <div data-testid="hole-page-size"><ChipPick label="Hole page size" value={pageSize} options={sizes(HOLE_PAGES, PAGE_SHORT)} onChange={v => setStyle({ holePageSize: v })} /></div> },
         { id: "format", name: "Format", value: pageFmt === "zip" ? "ZIP" : pageFmt === "geojson" ? "GeoJSON" : pageFmt.toUpperCase(), control: <Segmented label="Hole page format" value={pageFmt} onChange={v => pick.set({ pageFormat: v })} options={pageFormats} /> }
       ],
       go: {
-        label: pageHole ? `Download hole ${holeLabel(doc, pageHole.id)} (${pageFmt === "geojson" ? "GeoJSON" : pageFmt.toUpperCase()})` : `Download ${n} ${fmtName(pageFmt) === "pictures" ? "hole pictures" : "hole pages"}`,
+        label: pageHole && !pageEach ? `Download hole ${holeLabel(doc, pageHole.id)} (${pageFmt === "geojson" ? "GeoJSON" : pageFmt.toUpperCase()})` : `Download ${pageCount} ${fmtName(pageFmt) === "pictures" ? "hole pictures" : "hole pages"}`,
         short: "Download", run: pages[pageFmt],
-        testid: pageHole && pageFmt !== "pdf" ? `export-hole-${pageFmt}` : `export-holes-${pageFmt}`,
+        testid: pageHole && pageFmt !== "pdf" && pageFmt !== "zip" ? `export-hole-${pageFmt}` : `export-holes-${pageFmt}`,
         off: pageFmt === "geojson" && !geo ? "GeoJSON needs the site brought in." : off()
       },
       note: pageFmt === "geojson" && !geo ? "Needs the site brought in." : undefined
