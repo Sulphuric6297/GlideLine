@@ -1,4 +1,4 @@
-import { test, expect, addHole, blankCourse, course, editorState } from "./fixtures";
+import { test, expect, addHole, blankCourse, course, editorState, mapPoint, settled } from "./fixtures";
 import { createEmptyCourse } from "../../src/lib/course";
 
 test("loads with the welcome card and the six steps", async ({ page }) => {
@@ -102,6 +102,64 @@ test("the ground under the pointer on hills: the terrain's own triangles, lookin
   expect(edge.tried).toBeGreaterThan(500);
   expect(edge.differ).toBe(0);
   expect(edge.nan).toBeNull();
+});
+
+test("the wheel zooms to the ground under the pointer: right after a turn about the pointer, notch on notch, and close in", async ({ page }) => {
+  await blankCourse(page);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("3");
+  const info = () => page.evaluate(() => (window as any).__dgView.viewInfo() as { heading: number; tiltDeg: number; pxPerUnit: number });
+  await expect.poll(async () => (await info()).tiltDeg, { timeout: 30_000 }).toBeGreaterThan(30);
+  // (at rest: two frames drawn since, so the view knows it's moving, then until it's still)
+  const rest = async () => {
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done(null)))));
+    await settled(page);
+  };
+  await rest();
+  // (whole pixels: a wheel event's place is in whole pixels, and half a pixel off at the start is
+  // a dozen pixels off four notches in)
+  const spot = async (fx: number, fy: number) => { const p = await mapPoint(page, fx, fy); return { x: Math.round(p.x), y: Math.round(p.y) }; };
+  const onMap = (p: { x: number; y: number }) => page.evaluate(([x, y]) => (window as any).__dgView.container.contains(document.elementFromPoint(x, y)), [p.x, p.y] as const);
+  // The ground under the pointer as the wheel first turns (whatever the view is doing then), and
+  // how far from the pointer it is now
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__zoomed = null;
+    window.addEventListener("wheel", e => { if (!w.__zoomed) w.__zoomed = { x: e.clientX, y: e.clientY, ground: w.__dgView.groundAt(e.clientX, e.clientY) }; }, true);
+  });
+  const off = () => page.evaluate(() => {
+    const w = window as any, v = w.__dgView, z = w.__zoomed;
+    const s = z?.ground ? v.project(z.ground.clone()) : null, r = v.container.getBoundingClientRect();
+    return s ? Math.hypot(r.left + s.x - z.x, r.top + s.y - z.y) : null;
+  });
+  // Ctrl + drag off to one side turns the view about the spot pressed on; the wheel at once, off to
+  // the other side, while the turn is still easing out, three notches one on the next
+  const h0 = (await info()).heading;
+  const from = await spot(0.3, 0.35), at = await spot(0.68, 0.62);
+  expect(await onMap(from)).toBe(true);
+  expect(await onMap(at)).toBe(true);
+  const s0 = (await info()).pxPerUnit;
+  await page.keyboard.down("Control");
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 140, from.y, { steps: 8 });
+  await page.mouse.up();
+  await page.keyboard.up("Control");
+  await page.mouse.move(at.x, at.y);
+  for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -400);
+  await rest();
+  expect(Math.abs(((((await info()).heading - h0) % 360 + 540) % 360) - 180)).toBeGreaterThan(10);
+  expect(await off(), "after the turn, three notches at once").not.toBeNull();
+  expect(await off(), "after the turn, three notches at once").toBeLessThan(3);
+  // Notch after notch, down to as close as the view goes: the same ground stays under the pointer
+  // (the turn's pivot left on took the zoom off beside the pointer, farther the closer it got)
+  for (let i = 0; i < 6; i++) {
+    await page.mouse.wheel(0, -400);
+    await rest();
+    expect(await off(), `notch ${i + 4}`).not.toBeNull();
+    expect(await off(), `notch ${i + 4}`).toBeLessThan(3);
+  }
+  expect((await info()).pxPerUnit).toBeGreaterThan(s0 * 15);
 });
 
 test("tool shortcuts pick tools; Esc goes back to Select; ? shows the shortcuts", async ({ page }) => {

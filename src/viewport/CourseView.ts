@@ -572,7 +572,7 @@ export class CourseView {
     c.azimuthRotateSpeed = 0.7;
     c.polarRotateSpeed = 0.7;
     c.dollyToCursor = true;
-    c.addEventListener("controlend", () => this.snapNorth());
+    c.addEventListener("controlend", () => { this.dropPivot(); this.snapNorth(); });
     c.addEventListener("controlstart", () => { if (c.smoothTime !== SMOOTH) { window.clearTimeout(this.easeTimer); c.smoothTime = SMOOTH; } this.posePinned = false; this.autoFit = null; this.onUserMove?.(); });
     c.addEventListener("rest", () => { this.posePinned = false; });
 
@@ -3304,11 +3304,12 @@ export class CourseView {
   }
 
   private groundAt(clientX: number, clientY: number): THREE.Vector3 | null {
-    const ray = this.ray(clientX, clientY);
-    const hit = this.ground.rayHit(ray);
-    if (hit) return hit;
-    const out = new THREE.Vector3();
-    return ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), out) ? out : null;
+    return this.groundOn(this.ray(clientX, clientY));
+  }
+
+  /** Where a ray meets the ground (past the site's own, the flat land round it). */
+  private groundOn(ray: THREE.Ray): THREE.Vector3 | null {
+    return this.ground.rayHit(ray) ?? ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
   }
 
   private planeAt(clientX: number, clientY: number, y: number): THREE.Vector3 | null {
@@ -9125,18 +9126,75 @@ export class CourseView {
     if (Math.hypot(g.yaw, g.pitch) / radPerPx < 20) this.lookGlide = null;
   }
 
+  /** Where the camera is and how it's turned, as the controls have it: now, or (`end`) once it has
+   * eased to where it's going. */
+  private camPose(end: boolean) {
+    const c = this.controls;
+    const t = c.getTarget(new THREE.Vector3(), end), s = c.getSpherical(new THREE.Spherical(), end).makeSafe(), o = c.getFocalOffset(new THREE.Vector3(), end);
+    const pos = new THREE.Vector3().setFromSpherical(s);
+    const m = new THREE.Matrix4().lookAt(pos, new THREE.Vector3(), this.camera.up);
+    const x = new THREE.Vector3(), y = new THREE.Vector3(), z = new THREE.Vector3();
+    m.extractBasis(x, y, z);
+    pos.add(t).addScaledVector(x, o.x).addScaledVector(y, -o.y).addScaledVector(z, o.z);
+    return { pos, target: t, quat: new THREE.Quaternion().setFromRotationMatrix(m), ahead: z.negate(), radius: s.radius };
+  }
+
+  /** After a turn or tilt about the pointer: the camera's target back in the middle of the view,
+   * the camera where it is and ending where it was going. (The turn makes the spot pressed on the
+   * target, the camera held off to one side of it; left so, a zoom closes in beside the pointer,
+   * farther off the closer it gets, and a fit or a move lands off to that side.) */
+  private dropPivot() {
+    const c = this.controls;
+    const off = new THREE.Vector3();
+    if (c.getFocalOffset(off, true).lengthSq() < 1e-8 && c.getFocalOffset(off, false).lengthSq() < 1e-8) return;
+    const now = this.camPose(false), end = this.camPose(true);
+    // (the new target: the ground in the middle of what it sees, as far off at the turn's end)
+    const hit = this.groundOn(new THREE.Ray(now.pos, now.ahead));
+    const d = clamp(hit ? now.pos.distanceTo(hit) : c.distance, c.minDistance, c.maxDistance);
+    const a = now.pos.clone().addScaledVector(now.ahead, d), b = end.pos.clone().addScaledVector(end.ahead, d);
+    void c.setFocalOffset(0, 0, 0, false);
+    void c.setLookAt(now.pos.x, now.pos.y, now.pos.z, a.x, a.y, a.z, false);
+    void c.setLookAt(end.pos.x, end.pos.y, end.pos.z, b.x, b.y, b.z, true);
+    c.normalizeRotations();
+    this.invalidate();
+  }
+
+  /** The ground a run of zoom steps closes in on (the wheel turned notch after notch, the pointer
+   * still), and where the last step left the view going. */
+  private zoomHold: { x: number; y: number; p: THREE.Vector3; pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
+
   /** Zoom keeping the ground point under the cursor fixed. */
   private zoomAt(clientX: number, clientY: number, factor: number, smooth = true) {
-    const pos = this.controls.getPosition(new THREE.Vector3(), true);
-    const target = this.controls.getTarget(new THREE.Vector3(), true);
-    const d = pos.distanceTo(target);
-    const f = clamp(d * factor, this.controls.minDistance, this.controls.maxDistance) / d;
+    const c = this.controls;
+    // (a turn about the pointer still under way, or one that never ended: its pivot let go first)
+    this.dropPivot();
+    // (the view may still be easing, from the last notch, a turn or a fit: the zoom goes on from
+    // where the view is going, and the ground under the pointer as it's seen now ends under the
+    // pointer there. Taken from where the view is going alone, with the ground as seen now, a
+    // zoom in the middle of a turn closed in beside the pointer)
+    const now = this.camPose(false), to = this.camPose(true);
+    const f = clamp(to.radius * factor, c.minDistance, c.maxDistance) / to.radius;
     if (Math.abs(f - 1) < 1e-4) return;
-    const p = this.groundAt(clientX, clientY) ?? target.clone();
-    const np = p.clone().add(pos.sub(p).multiplyScalar(f));
-    const nt = p.clone().add(target.sub(p).multiplyScalar(f));
-    void this.controls.setLookAt(np.x, np.y, np.z, nt.x, nt.y, nt.z, smooth);
-    this.controls.normalizeRotations();
+    // (the next notch of a run, the pointer still and nothing else having moved the view: the same
+    // ground as the notch before, not what has slid under the pointer part-way there)
+    const run = this.zoomHold;
+    const held = run && run.x === clientX && run.y === clientY && run.pos.distanceTo(to.pos) < 1e-4 && run.target.distanceTo(to.target) < 1e-4 ? run.p : null;
+    let p = held, np: THREE.Vector3;
+    if (held) np = held.clone().add(to.pos.clone().sub(held).multiplyScalar(f));
+    else {
+      const r = this.container.getBoundingClientRect();
+      // (the way the pointer looks out of the camera, whichever way the camera's turned)
+      const out = new THREE.Vector3(((clientX - r.left) / this.size.width) * 2 - 1, -((clientY - r.top) / this.size.height) * 2 + 1, 0.5).applyMatrix4(this.camera.projectionMatrixInverse).normalize();
+      p = this.groundOn(new THREE.Ray(now.pos, out.clone().applyQuaternion(now.quat)));
+      // (no ground under the pointer: straight in or out)
+      np = p ? p.clone().addScaledVector(out.applyQuaternion(to.quat), -now.pos.distanceTo(p) * ((to.radius * f) / now.radius)) : to.pos.clone().addScaledVector(to.ahead, to.radius * (1 - f));
+    }
+    const nt = np.clone().addScaledVector(to.ahead, to.radius * f);
+    void c.setLookAt(np.x, np.y, np.z, nt.x, nt.y, nt.z, smooth);
+    c.normalizeRotations();
+    // (where the controls have it going now, to know the next notch by)
+    const going = this.camPose(true);
+    this.zoomHold = p ? { x: clientX, y: clientY, p, pos: going.pos, target: going.target } : null;
     this.invalidate();
   }
 

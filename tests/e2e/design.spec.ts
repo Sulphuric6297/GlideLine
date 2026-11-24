@@ -4,7 +4,7 @@ import { areaPath, autoWalks, createAmenity, createArea, createBasket, createDro
 import { contourInterval, meander, paintedFrom, paintedLine } from "../../src/lib/forest";
 import { contoursOf, reliefExaggeration } from "../../src/lib/relief";
 import { dist, distanceToPath } from "../../src/lib/geom";
-import { BASKET_MARKS, EARTH, LINE_CREAM, PRINT_EARTH, basketMark, bestRotation, renderPoster } from "../../src/lib/mapSvg";
+import { BASKET_MARKS, EARTH, LINE_CREAM, PRINT_EARTH, basketMark, bestRotation, lineStyleOf, renderPoster } from "../../src/lib/mapSvg";
 import { renderScorecard, renderTeeSign } from "../../src/lib/teeSign";
 import { renderHolePage } from "../../src/lib/holePage";
 import { tallGrassOf } from "../../src/lib/landscapes";
@@ -265,8 +265,10 @@ plain("course map: another tee's line in its color where it plays apart from the
 
 plain("line looks: Classic as maps had them, Painted and Trail; each tee color's own line; a new course Painted, an older one Classic", () => {
   const doc = sample();
+  // (one layout: its main line white or cream)
+  doc.layouts.length = 1;
   const h1 = doc.holes[0];
-  doc.items.push(createTee(h1.id, { x: 160, y: 620 }, "red"));
+  doc.items.push(createTee(h1.id, { x: 160, y: 530 }, "red"));
   doc.style.throwLines = true;
   const map = (patch: Partial<typeof doc.style>) => renderPoster({ ...doc, style: { ...doc.style, ...patch } }, { contours: null, hillshade: null }).svg;
   // (a new course starts Painted; one saved before the looks stays Classic)
@@ -304,6 +306,51 @@ plain("line looks: Classic as maps had them, Painted and Trail; each tee color's
   const end = lastOf(beside), basket = doc.items.find(i => i.type === "basket" && i.holeId === h1.id)! as { x: number; y: number };
   plainExpect(Math.hypot(end.x - basket.x, end.y - basket.y)).toBeLessThan(60);
   plainExpect(Math.hypot(lastOf(joined).x - basket.x, lastOf(joined).y - basket.y)).toBeGreaterThan(Math.hypot(end.x - basket.x, end.y - basket.y));
+});
+
+plain("another tee's line joins the hole's where it runs into it, keeps its own way to the basket where it doesn't, and each layout's line is its own color", () => {
+  const doc = sample();
+  const h1 = doc.holes[0];
+  doc.style.throwLines = true;
+  doc.style.lineLook = undefined;
+  doc.style.circle = true;
+  const basket = doc.items.find(i => i.type === "basket" && i.holeId === h1.id)! as { x: number; y: number };
+  const withRed = (x: number, y: number, patch: Partial<typeof doc.style> = {}) => renderPoster({ ...doc, items: [...doc.items, createTee(h1.id, { x, y }, "red")], style: { ...doc.style, ...patch } }, { contours: null, hillshade: null }).svg;
+  const redPaths = (svg: string, color = "#dc2626") => [...svg.matchAll(new RegExp(`<path d="([^"]+)" fill="none" stroke="${color}" stroke-width`, "g"))].map(m => m[1].split(/[ML]/).filter(Boolean).map(q => { const [x, y] = q.split(" ").map(Number); return { x, y }; }));
+  // Its line runs into the hole's (tee to basket along y = 500): it ends on that line, heading its
+  // way, outside the putting circle; the same in every line look
+  for (const [look, color] of [[undefined, "#dc2626"], ["painted", EARTH.red], ["trail", EARTH.red]] as const) {
+    const [red] = redPaths(withRed(160, 512, { lineLook: look }), color);
+    const end = red[red.length - 1], before = red[red.length - 4];
+    plainExpect(Math.abs(end.y - 500), String(look)).toBeLessThan(0.6);
+    plainExpect(Math.abs(end.y - before.y), String(look)).toBeLessThan(0.3);
+    plainExpect(basket.x - end.x, String(look)).toBeGreaterThan(33);
+    // (and it starts as the line the tee plays: straight at the basket)
+    plainExpect(Math.abs((red[3].y - red[0].y) / (red[3].x - red[0].x) - (500 - 512) / (450 - 160))).toBeLessThan(0.01);
+  }
+  // A tee with its own way to the basket (off to one side, by it): its line straight there, never
+  // bent out to the hole's, with its own arrowhead
+  const own = withRed(430, 380);
+  const [straight] = redPaths(own);
+  for (const q of straight) plainExpect(Math.abs((q.x - 430) * (500 - 380) - (q.y - 380) * (450 - 430)) / Math.hypot(20, 120)).toBeLessThan(0.5);
+  // (red shapes: its pad, and the arrowhead of a line of its own)
+  const redShapes = (svg: string) => (svg.match(/<polygon points="[^"]*" fill="#dc2626"/g) ?? []).length;
+  plainExpect(redShapes(own)).toBe(2);
+  plainExpect(redShapes(withRed(160, 512))).toBe(1);
+  // A tee on the hole's line, or nearly: no line of its own
+  plainExpect(redPaths(withRed(250, 504))).toHaveLength(0);
+  // More than one layout (the sample's two): the main line its tee's color, none of them white;
+  // one layout: white, as maps had it
+  const mainLevel = (doc.items.find(i => i.type === "tee" && i.holeId === h1.id)! as { level: keyof typeof EARTH }).level;
+  const lineIn = (svg: string, color: string) => new RegExp(`<path d="[^"]+" fill="none" stroke="${color}" stroke-width`).test(svg);
+  const two = renderPoster(doc, { contours: null, hillshade: null }).svg;
+  const one = renderPoster({ ...doc, layouts: doc.layouts.slice(0, 1) }, { contours: null, hillshade: null }).svg;
+  plainExpect(lineStyleOf(doc.style, "gold", true, true).color).toBe("#e3b505");
+  plainExpect(lineStyleOf(doc.style, "gold", true).color).not.toBe("#e3b505");
+  plainExpect(lineStyleOf({ ...doc.style, lineLook: "painted" }, "gold", true, true).color).toBe(EARTH.gold);
+  plainExpect(lineStyleOf({ ...doc.style, lineLook: "painted" }, "gold", true).color).toBe(LINE_CREAM);
+  plainExpect(lineIn(two, lineStyleOf(doc.style, mainLevel, true, true).color)).toBe(true);
+  plainExpect(lineIn(one, lineStyleOf(doc.style, mainLevel, true, true).color)).toBe(false);
 });
 
 test("the Lines tool: Line look, each tee's line set its own way, and where lines meet, on the course map", async ({ page }) => {

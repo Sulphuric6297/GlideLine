@@ -16,9 +16,9 @@ import { Thumbs } from "./MapLookPanel";
 import { ChipPick, Field, Segmented, Slider, Toggle, useKeepInPlace } from "./ui";
 
 const LOOKS = [
-  { id: "painted", label: "Painted", hint: "Cream, earthy colors, soft shadows" },
+  { id: "painted", label: "Painted", hint: "Earthy colors, soft shadows" },
   { id: "trail", label: "Trail", hint: "Painted, other tees' lines in dashes" },
-  { id: "classic", label: "Classic", hint: "White, pure colors, dark outlines" }
+  { id: "classic", label: "Classic", hint: "Pure colors, dark outlines" }
 ] as const;
 const DASH_LABEL = { solid: "Solid", dashed: "Dashed", dotted: "Dotted" } as const;
 const commit = () => useCourse.getState().commit();
@@ -33,8 +33,8 @@ const setLine = (level: TeeLevel, patch: Partial<LineStyle>, history = true) =>
   }, history);
 
 /** The line drawn small, as the map draws it, on a patch of woods. */
-function LineSample({ s, level, main }: { s: MapStyle; level: TeeLevel; main: boolean }) {
-  const ls = lineStyleOf(s, level, main), d = "M5 22 C11 9 19 20 24 6";
+function LineSample({ s, level, main, multi }: { s: MapStyle; level: TeeLevel; main: boolean; multi: boolean }) {
+  const ls = lineStyleOf(s, level, main, multi), d = "M5 22 C11 9 19 20 24 6";
   const dash = ls.dash === "dashed" ? "4.2 2.6" : ls.dash === "dotted" ? "0 4" : undefined;
   const w = 2.6 * ls.width;
   return (
@@ -61,6 +61,8 @@ export function MapLines() {
   // (the main line's color: the map layout's, else the nearest there is, as each hole picks it)
   const mapLayout = mapLayoutOf(doc), mainLevel = mainLevelOf(levels, mapLayout.tee);
   const look = lineLookOf(s), base = import.meta.env.BASE_URL;
+  // (more than one layout: each one's line in its own tee color, the main one too)
+  const multi = doc.layouts.length > 1;
   const nameOf = (l: TeeLevel) => doc.layouts.find(x => x.tee === l)?.name ?? `${TEE_LEVELS[l].label} tees`;
   // (the colors a line can take: the look's cream and white, the tee colors, earthy and pure)
   const palette = [{ title: "Line colors", list: [{ name: "Cream", color: LINE_CREAM }, { name: "White", color: "#ffffff" }, ...TEE_ORDER.map(l => ({ name: TEE_LEVELS[l].label, color: EARTH[l] })), ...TEE_ORDER.filter(l => l !== "white").map(l => ({ name: `${TEE_LEVELS[l].label}, bright`, color: TEE_LEVELS[l].color }))] }];
@@ -69,7 +71,7 @@ export function MapLines() {
       <div className="text-xs touch:text-[13px] text-zinc-400 mb-1.5">Line look</div>
       <Thumbs label="Line look" testid="line-look" cols={3} items={LOOKS.map(l => ({ id: l.id, label: l.label, img: `${base}parts/lines-${l.id}.jpg`, on: look === l.id, pick: () => setStyle({ lineLook: l.id === "classic" ? undefined : l.id }) }))} />
       {doc.layouts.length > 1 && (
-        <Field label="Main layout" hint="Drawn on top, with the arrowhead and distances.">
+        <Field label="Main layout" hint="Drawn on top, with the distances. The other tees' lines join it.">
           <ChipPick label="Main layout" testid="map-layout" value={mapLayout.id} onChange={v => setStyle({ mapLayout: v })}
             options={doc.layouts.map(l => ({ value: l.id, label: l.name, color: teeColorOf(s, l.tee) }))} />
         </Field>
@@ -83,15 +85,15 @@ export function MapLines() {
       <div className="text-xs touch:text-[13px] text-zinc-400 mb-1.5">Each tee's line</div>
       <div className="rounded-[16px] bg-white/[0.06] overflow-hidden mb-3">
         {levels.map(l => {
-          const main = l === mainLevel, ls = lineStyleOf(s, l, main), own = s.lineStyles?.[l];
+          const main = l === mainLevel, ls = lineStyleOf(s, l, main, multi), own = s.lineStyles?.[l];
           const isOpen = open === l, changed = !!own && Object.keys(own).length > 0;
-          const look0 = lineStyleOf({ ...s, lineStyles: undefined }, l, main);
+          const look0 = lineStyleOf({ ...s, lineStyles: undefined }, l, main, multi);
           const set = (patch: Partial<LineStyle>, history = true) => setLine(l, Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, v === look0[k as keyof LineStyle] ? undefined : v])), history);
           return (
             <div key={l} className="relative before:absolute before:left-[52px] before:right-0 before:top-0 before:h-px before:bg-white/[0.07] first:before:hidden" data-testid={`line-${l}`}>
               <div className="flex items-center hover:bg-white/[0.04]">
                 <button className="flex-1 min-w-0 flex items-center gap-2.5 pl-3 py-2.5 text-left" aria-expanded={isOpen} onClick={e => { keep(e.currentTarget); setOpen(isOpen ? null : l); }} data-testid={`line-open-${l}`}>
-                  <LineSample s={s} level={l} main={main} />
+                  <LineSample s={s} level={l} main={main} multi={multi} />
                   <span className="text-[13.5px] font-medium text-zinc-100 truncate">{nameOf(l)}</span>
                   {changed && <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" role="img" aria-label="Changed" title="Changed" />}
                   <span className="ml-auto text-[12.5px] text-zinc-400 shrink-0">{main ? "Main" : ls.hidden ? "Hidden" : DASH_LABEL[ls.dash]}</span>
