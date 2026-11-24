@@ -8,6 +8,7 @@ import { toast } from "../state/toast";
 import { AREA_KINDS, TEE_LEVELS } from "../constants";
 import { RESTRICTED } from "../lib/symbols";
 import { MapLookPanel } from "./MapLookPanel";
+import { MapLines } from "./MapLines";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { MapStyle, ReliefLook, SignLook, SignSettings, SignSpot } from "../types";
 import { Button, ChipPick, chipCls, Field, Fold, HelpLink, OnlyGroup, Section, Segmented, Slider, TextInput, Toggle, WholePanelOnly } from "./ui";
@@ -290,6 +291,7 @@ export function DesignPanel() {
         <Toggle label="Throw lines" checked={s.throwLines} onChange={v => setStyle({ throwLines: v })} />
         <Toggle label="Distances" checked={s.distances} onChange={v => setStyle({ distances: v })} />
         <Toggle label="Putting circle" checked={s.circle} onChange={v => setStyle({ circle: v })} />
+        <MapLines />
       </Section>
       <Section title="Amenity marks" help="amenities" testid="amenity-marks">
         <Segmented label="Amenity marks" value={s.amenityMarks ?? "comforts"} onChange={v => setStyle({ amenityMarks: v === "comforts" ? undefined : v })}

@@ -420,7 +420,8 @@ function LayoutEditor({ open, setOpen, picker = true }: { open: boolean; setOpen
             const id = `layout-${generateId()}`;
             const used = new Set(doc.layouts.map(l => l.tee));
             const tee = TEE_ORDER.find(t => !used.has(t)) ?? "white";
-            changeDoc(d => ({ layouts: [...d.layouts, { id, name: TEE_LEVELS[tee].label, tee, pin: "A" }] }));
+            // (the course map keeps showing the layout it had)
+            changeDoc(d => ({ layouts: [...d.layouts, { id, name: TEE_LEVELS[tee].label, tee, pin: "A" }], ...(d.style.mapLayout ? {} : { style: { ...d.style, mapLayout: d.activeLayout } }) }));
             pickLayout(id);
           }}><Plus size={14} /> Add a layout</Button>
         </div>

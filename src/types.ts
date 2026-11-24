@@ -738,6 +738,21 @@ export interface PageImage {
   hidden?: boolean;
 }
 
+/** A tee color's throw line on the course map, as set by hand (unset: the line look's own). */
+export interface LineStyle {
+  color?: string;
+  dash?: "solid" | "dashed" | "dotted";
+  /** Times the look's own width. */
+  width?: number;
+  opacity?: number;
+  outline?: "soft" | "dark" | "none";
+  shadow?: boolean;
+  arrow?: boolean;
+  /** Its own length along it, in its color. */
+  distance?: boolean;
+  hidden?: boolean;
+}
+
 export interface MapStyle {
   theme: MapTheme;
   /** The course map's page: the parts moved, sized, colored or hidden by hand. */
@@ -746,6 +761,17 @@ export interface MapStyle {
    * go by themselves keep the course clear of them. Set by the first such move; unset (maps made
    * before 2026-11-24 and not touched since), the course keeps clear of every piece. */
   mapStays?: boolean;
+  /** How the throw lines are drawn: painted (cream, warm edges, soft shadows), the same with the
+   * other tees' lines in dashes (trail), or as maps first had them (unset: Classic). New courses
+   * start Painted. */
+  lineLook?: "painted" | "trail";
+  /** The layout the course map draws as its main line (on top, with the arrow and distances), apart
+   * from the layout Design is on. */
+  mapLayout?: string;
+  /** Each tee color's line as set by hand, over the line look's own. */
+  lineStyles?: Partial<Record<TeeLevel, LineStyle>>;
+  /** Where another tee's line meets the main one: it joins it (unset) or runs alongside it. */
+  linesMeet?: "alongside";
   texts?: PageText[];
   images?: PageImage[];
   /** Hills: how strongly the ground's relief shows on the map, times the automatic (0: flat). */

@@ -99,10 +99,10 @@ const pickRow = (row: boolean, grid: string) => (row ? "flex gap-2 overflow-x-au
 const pickItem = (row: boolean) => (row ? "shrink-0 w-[118px] snap-start" : "");
 
 /** Choices as pictures (each a small painting of the map with it), two to a row. */
-function Thumbs({ label, items, testid }: { label: string; items: Thumb[]; testid?: string }) {
+export function Thumbs({ label, items, testid, cols = 2 }: { label: string; items: Thumb[]; testid?: string; cols?: 2 | 3 }) {
   const row = useContext(InToolSheet);
   return (
-    <div className={`${pickRow(row, "grid grid-cols-2 gap-x-2 gap-y-2.5")} mb-2.5`} role="radiogroup" aria-label={label} data-testid={testid}>
+    <div className={`${pickRow(row, `grid ${cols === 3 ? "grid-cols-3" : "grid-cols-2"} gap-x-2 gap-y-2.5`)} mb-2.5`} role="radiogroup" aria-label={label} data-testid={testid}>
       {items.map(c => (
         <button key={c.id} role="radio" aria-checked={c.on} onClick={c.pick} data-testid={testid && `${testid}-${c.id}`} className={`group text-center rounded-[12px] ${pickItem(row)}`}>
           <img src={c.img} alt="" loading="lazy" className={`block w-full aspect-[3/2] object-cover rounded-[12px] transition ${c.on ? "ring-[2.5px] ring-orange-400" : "ring-1 ring-white/15 group-hover:ring-white/35"}`} draggable={false} />

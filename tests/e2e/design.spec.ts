@@ -4,7 +4,7 @@ import { areaPath, autoWalks, createAmenity, createArea, createBasket, createDro
 import { contourInterval, meander, paintedFrom, paintedLine } from "../../src/lib/forest";
 import { contoursOf, reliefExaggeration } from "../../src/lib/relief";
 import { dist, distanceToPath } from "../../src/lib/geom";
-import { BASKET_MARKS, basketMark, bestRotation, renderPoster } from "../../src/lib/mapSvg";
+import { BASKET_MARKS, EARTH, LINE_CREAM, PRINT_EARTH, basketMark, bestRotation, renderPoster } from "../../src/lib/mapSvg";
 import { renderScorecard, renderTeeSign } from "../../src/lib/teeSign";
 import { renderHolePage } from "../../src/lib/holePage";
 import { tallGrassOf } from "../../src/lib/landscapes";
@@ -253,12 +253,130 @@ plain("course map: another tee's line in its color where it plays apart from the
   // (the hole plays from its blue tee; a red one off to the side, a white one right on its line)
   doc.items.push(createTee(h1.id, { x: 160, y: 620 }, "red"), createTee(h1.id, { x: 250, y: 500 }, "white"));
   doc.style.throwLines = true;
+  // (Classic, as maps first had their lines)
+  doc.style.lineLook = undefined;
   const svg = renderPoster(doc, { contours: null, hillshade: null }).svg;
   const red = [...svg.matchAll(/<path d="([^"]+)" fill="none" stroke="#dc2626" stroke-width="[\d.]+" stroke-linecap="round"/g)];
   plainExpect(red).toHaveLength(1);
   // (outlined, as the hole's is: the same path under it, darker and wider)
   plainExpect(svg.split(`<path d="${red[0][1]}"`).length - 1).toBe(2);
   plainExpect(svg).not.toContain('stroke="#eef0f2"');
+});
+
+plain("line looks: Classic as maps had them, Painted and Trail; each tee color's own line; a new course Painted, an older one Classic", () => {
+  const doc = sample();
+  const h1 = doc.holes[0];
+  doc.items.push(createTee(h1.id, { x: 160, y: 620 }, "red"));
+  doc.style.throwLines = true;
+  const map = (patch: Partial<typeof doc.style>) => renderPoster({ ...doc, style: { ...doc.style, ...patch } }, { contours: null, hillshade: null }).svg;
+  // (a new course starts Painted; one saved before the looks stays Classic)
+  plainExpect(createEmptyCourse().style.lineLook).toBe("painted");
+  plainExpect(normalizeCourse({ ...JSON.parse(JSON.stringify(doc)), style: { ...doc.style, lineLook: undefined } }).style.lineLook).toBeUndefined();
+  // Classic: white and pure red, dark outlines, no soft shadows
+  const classic = map({ lineLook: undefined });
+  plainExpect(classic).toContain('stroke="#dc2626"');
+  plainExpect(classic).not.toContain("-lsh");
+  // Painted: the main line cream, the red tee's line earthy, soft shadows; the red pad edged in cream
+  const painted = map({ lineLook: "painted" });
+  plainExpect(painted).toContain(`fill="${LINE_CREAM}"`);
+  plainExpect(painted).toContain(`stroke="${EARTH.red}"`);
+  plainExpect(painted).toContain("-lsh");
+  plainExpect(painted).not.toContain('stroke="#dc2626"');
+  // Trail: the other tees' lines in dashes
+  plainExpect(map({ lineLook: "trail" })).toMatch(new RegExp(`stroke="${EARTH.red}" stroke-width="[\\d.]+" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray`));
+  // Each line's own: hidden, dotted, see-through, its own length in its color, another color
+  plainExpect(map({ lineLook: "painted", lineStyles: { red: { hidden: true } } })).not.toContain(`stroke="${EARTH.red}" stroke-width`);
+  plainExpect(map({ lineLook: "painted", lineStyles: { red: { dash: "dotted" } } })).toMatch(/stroke-dasharray="0 [\d.]+"/);
+  plainExpect(map({ lineLook: "painted", lineStyles: { red: { opacity: 0.5 } } })).toContain('<g opacity="0.5">');
+  // (its own length: one more length on the map, where the map shows lengths)
+  const lengths = (svg: string) => (svg.match(/>\d+'<\/text>/g) ?? []).length;
+  plainExpect(lengths(map({ lineLook: "painted", distances: true, lineStyles: { red: { distance: true } } }))).toBe(lengths(map({ lineLook: "painted", distances: true })) + 1);
+  plainExpect(lengths(map({ lineLook: "painted", distances: false, lineStyles: { red: { distance: true } } }))).toBe(0);
+  plainExpect(map({ lineLook: "painted", lineStyles: { red: { color: "#8844cc" } } })).toContain('stroke="#8844cc"');
+  // (Classic with one line set by hand: that line dashed, Classic's own outline round it)
+  const classicSet = map({ lineLook: undefined, lineStyles: { red: { dash: "dashed" } } });
+  plainExpect(classicSet).toMatch(/stroke="#dc2626" stroke-width="[\d.]+" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray/);
+  // Other tees' lines: run beside the main one, the red line is another line, ending by the basket
+  const redLine = (svg: string) => [...svg.matchAll(new RegExp(`<path d="([^"]+)" fill="none" stroke="${EARTH.red}" stroke-width`, "g"))].map(m => m[1])[0];
+  const joined = redLine(map({ lineLook: "painted" })), beside = redLine(map({ lineLook: "painted", linesMeet: "alongside" }));
+  plainExpect(beside).not.toBe(joined);
+  const lastOf = (d: string) => { const xy = d.split(/[ML]/).filter(Boolean).pop()!.split(" ").map(Number); return { x: xy[0], y: xy[1] }; };
+  const end = lastOf(beside), basket = doc.items.find(i => i.type === "basket" && i.holeId === h1.id)! as { x: number; y: number };
+  plainExpect(Math.hypot(end.x - basket.x, end.y - basket.y)).toBeLessThan(60);
+  plainExpect(Math.hypot(lastOf(joined).x - basket.x, lastOf(joined).y - basket.y)).toBeGreaterThan(Math.hypot(end.x - basket.x, end.y - basket.y));
+});
+
+test("the Lines tool: Line look, each tee's line set its own way, and where lines meet, on the course map", async ({ page }) => {
+  await blankCourse(page);
+  const hole = await addHole(page, { x: 300, y: 600 }, { x: 800, y: 600 });
+  await page.keyboard.press("Escape");
+  // (a red tee beside the blue one, its line apart from the hole's)
+  await page.evaluate(id => {
+    const w = window as any;
+    const tee = w.__dgCourse().items.find((i: any) => i.type === "tee" && i.holeId === id);
+    w.__dgEditor().set({ activeHoleId: id, teeLevel: "red" });
+    w.__dgActions.placeAt("add-tee", { x: tee.x + 60, y: tee.y + 120 });
+    w.__dgActions.select(null);
+  }, hole.id);
+  await expect.poll(async () => (await course(page)).items.filter((i: any) => i.type === "tee").length).toBe(2);
+  await page.getByRole("button", { name: "3 Map" }).click();
+  const panel = page.getByTestId("drawn-on-map");
+  await page.getByRole("button", { name: "Lines", exact: true }).first().click();
+  // (its settings with the throw lines on)
+  if (!(await course(page)).style.throwLines) await panel.getByText("Throw lines").click();
+  const lines = panel.getByTestId("map-lines");
+  await expect(lines).toBeVisible();
+  // (a new course: Painted)
+  await expect(lines.getByTestId("line-look-painted")).toHaveAttribute("aria-checked", "true");
+  await lines.getByTestId("line-look-trail").click();
+  await expect.poll(async () => (await course(page)).style.lineLook).toBe("trail");
+  await lines.getByTestId("line-look-classic").click();
+  await expect.poll(async () => (await course(page)).style.lineLook ?? null).toBeNull();
+  await lines.getByTestId("line-look-painted").click();
+  // The red tee's line: dotted, half see-through, its own length, then hidden, shown and put back
+  await lines.getByTestId("line-open-red").click();
+  const red = lines.getByTestId("line-settings-red");
+  await red.getByRole("radio", { name: "Dotted" }).click();
+  await red.getByLabel("Opacity").fill("0.5");
+  await red.getByText("Distance", { exact: true }).click();
+  await expect.poll(async () => (await course(page)).style.lineStyles?.red).toEqual({ dash: "dotted", opacity: 0.5, distance: true });
+  await expect(lines.getByTestId("line-red")).toContainText("Dotted");
+  await lines.getByTestId("line-eye-red").click();
+  await expect.poll(async () => (await course(page)).style.lineStyles?.red?.hidden).toBe(true);
+  await expect(lines.getByTestId("line-red")).toContainText("Hidden");
+  await lines.getByTestId("line-eye-red").click();
+  await expect.poll(async () => (await course(page)).style.lineStyles?.red?.hidden).toBeUndefined();
+  // (Distance on and off again: nothing kept)
+  await red.getByText("Distance", { exact: true }).click();
+  await expect.poll(async () => (await course(page)).style.lineStyles?.red).toEqual({ dash: "dotted", opacity: 0.5 });
+  await red.getByTestId("line-reset").click();
+  await expect.poll(async () => (await course(page)).style.lineStyles ?? null).toBeNull();
+  // (the main line, blue: no eye to hide it)
+  await expect(lines.getByTestId("line-eye-blue")).toHaveCount(0);
+  await expect(lines.getByTestId("line-blue")).toContainText("Main");
+  // Other tees' lines
+  await lines.getByRole("radio", { name: "Run beside it" }).click();
+  await expect.poll(async () => (await course(page)).style.linesMeet).toBe("alongside");
+});
+
+plain("the course map plays its own layout, kept from Design's when saved before; signs and pages match the painted tee colors", () => {
+  const doc = sample();
+  doc.style.lineLook = "painted";
+  // (two layouts, Design on the second: a course saved before the map had its own keeps that one)
+  const raw = JSON.parse(JSON.stringify({ ...doc, activeLayout: "gold" }));
+  delete raw.style.mapLayout;
+  const kept = normalizeCourse(raw);
+  plainExpect(kept.style.mapLayout).toBe("gold");
+  // (Design picking another layout doesn't change the map's: the page says the map's own)
+  const other = { ...kept, activeLayout: kept.layouts[0].id, style: { ...kept.style, theme: "illustrated" as const } };
+  plainExpect(renderPoster(other, { contours: null, hillshade: null }).svg).toContain("· GOLD LAYOUT");
+  plainExpect(renderPoster({ ...other, style: { ...other.style, mapLayout: kept.layouts[0].id } }, { contours: null, hillshade: null }).svg).toContain(`· ${kept.layouts[0].name.toUpperCase()} LAYOUT`);
+  // (a tee sign's blue tee in the painted blue, deep enough for white lettering; Classic's own blue on one without)
+  const h1 = doc.holes[0];
+  plainExpect(renderTeeSign(doc, h1.id, "18x12", { contours: null, hillshade: null })!.svg).toContain(`fill="${PRINT_EARTH.blue}"`);
+  const classicSign = renderTeeSign({ ...doc, style: { ...doc.style, lineLook: undefined } }, h1.id, "18x12", { contours: null, hillshade: null })!.svg;
+  plainExpect(classicSign).not.toContain(PRINT_EARTH.blue);
+  plainExpect(classicSign).toContain('fill="#2563eb"');
 });
 
 plain("course map: a piece moved or sized by hand doesn't move the map; an older map keeps its fit until one is", () => {
@@ -1312,6 +1430,8 @@ plain("tee signs: other holes faded, left out or shown; each part shown or left 
   const [h1, h2] = doc.holes;
   const art = { contours: null, hillshade: null };
   const sign = (id: string, size: "18x12" | "12x18" = "18x12") => renderTeeSign(doc, id, size, art)!.svg;
+  // (Classic's pure blue pads, to count them by)
+  doc.style.lineLook = undefined;
   // Other holes faded by default (as much as asked), shown as clear, or left out (their tees gone)
   const blue = (svg: string) => (svg.match(/<polygon points="[^"]*" fill="#2563eb"/g) ?? []).length;
   const allTees = blue(sign(h1.id));

@@ -131,9 +131,11 @@ function Review({ file, fileName }: { file: CourseFile; fileName: string }) {
       const base = replace ? withoutHoles(d) : { holes: d.holes.map(h => ({ ...h, number: nums.get(h.id) ?? h.number })), items: d.items };
       // (the file's layouts, and its course name on a course that has none of its own yet)
       const named = file.name && d.name === "New Disc Golf Course" ? { name: file.name } : {};
-      // (tees named by their layouts in the file: named so on the signs too)
-      const teeNames = file.teeLayouts ? { style: { ...d.style, teeNames: "layouts" as const } } : {};
-      return { holes: [...base.holes, ...out.holes], items: [...base.items, ...out.items], ...withFileLayouts(d.layouts, d.activeLayout, file.layouts), ...named, ...teeNames };
+      const layouts = withFileLayouts(d.layouts, d.activeLayout, file.layouts);
+      // (tees named by their layouts in the file: named so on the signs too; the course map shows
+      // the layout Design starts on)
+      const style = { ...d.style, ...(file.teeLayouts ? { teeNames: "layouts" as const } : {}), ...(layouts.layouts.length > 1 && !layouts.layouts.some(l => l.id === d.style.mapLayout) ? { mapLayout: layouts.activeLayout } : {}) };
+      return { holes: [...base.holes, ...out.holes], items: [...base.items, ...out.items], ...layouts, ...named, style };
     });
     close();
     if (useEditor.getState().step === "site") useEditor.getState().set({ step: "design", tool: "select" });
