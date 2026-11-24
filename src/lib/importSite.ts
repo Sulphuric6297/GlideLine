@@ -647,10 +647,16 @@ export const reframeDesign = (design: { holes: Hole[]; items: CourseItem[] }, fr
     const at = f({ x: i.x, y: i.y });
     const moved = { ...i, x: at.x, y: at.y } as CourseItem;
     if (moved.type === "area" || moved.type === "line" || moved.type === "structure") moved.points = moved.points.map(f);
+    // (a tee's own bends, too)
+    if (moved.type === "tee" && moved.doglegs) moved.doglegs = moved.doglegs.map(f);
     // (one as it came still is: only the frame moved under it)
     return i.importSig && asItCame(i) ? signed(moved) : moved;
   });
-  const holes = design.holes.map(h => ({ ...h, doglegs: h.doglegs.map(f) }));
+  // (and a hole's camera path: where it stands and what it looks at)
+  const holes = design.holes.map(h => ({
+    ...h, doglegs: h.doglegs.map(f),
+    ...(h.flyKeys ? { flyKeys: h.flyKeys.map(k => { const at = f({ x: k.x, y: k.y }), look = f({ x: k.lookX, y: k.lookY }); return { ...k, x: at.x, y: at.y, lookX: look.x, lookY: look.y }; }) } : {})
+  }));
   const outside = items.filter(i => i.x < 0 || i.y < 0 || i.x > to.width || i.y > to.height).length;
   return { holes, items, outside };
 };

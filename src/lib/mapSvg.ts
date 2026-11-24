@@ -1338,7 +1338,9 @@ const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
       // (kept at least partly on the page)
       const X = o.x !== undefined ? Math.max(10 - box.w * k, Math.min(W - 10, o.x * W)) : box.x;
       const Y = o.y !== undefined ? Math.max(10 - box.h * k, Math.min(H - 10, o.y * H)) : box.y;
-      pieces.push({ x: X, y: Y, w: box.w * k, h: box.h * k });
+      // (one put or sized by hand: where it's wanted, the map doesn't move for it)
+      const byHand = o.x !== undefined || o.y !== undefined || (!keepsItsSize(id) && o.scale !== undefined && o.scale !== 1);
+      if (!(s.mapStays && byHand)) pieces.push({ x: X, y: Y, w: box.w * k, h: box.h * k });
       // (with a box to pick it by on the Design page, never drawn)
       parts.push(`<g data-el="${id}" data-box="${n(X)} ${n(Y)} ${n(box.w * k)} ${n(box.h * k)}" transform="translate(${n(X)} ${n(Y)}) scale(${n(k)}) translate(${n(-box.x)} ${n(-box.y)})"><rect x="${n(box.x)}" y="${n(box.y)}" width="${n(box.w)}" height="${n(box.h)}" fill="none" pointer-events="all"/>${turned(content, keepsItsTurn(id) ? undefined : o.rot, o.opacity)}</g>`);
     };

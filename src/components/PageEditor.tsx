@@ -20,7 +20,8 @@ const style = (patch: (s: MapStyle) => Partial<MapStyle>, history = true) => cha
 
 /** A built-in element's settings, changed. */
 export const patchPage = (id: PageElementId, patch: Partial<PageElementStyle>, history = true) =>
-  style(s => ({ page: { ...s.page, [id]: { ...s.page?.[id], ...patch } } }), history);
+  // (moved or sized by hand: from now on the course map stays where it is for it)
+  style(s => ({ page: { ...s.page, [id]: { ...s.page?.[id], ...patch } }, ...("x" in patch || "y" in patch || "scale" in patch ? { mapStays: true } : {}) }), history);
 export const patchText = (id: string, patch: Partial<PageText>, history = true) =>
   style(s => ({ texts: (s.texts ?? []).map(t => (t.id === id ? { ...t, ...patch } : t)) }), history);
 export const patchImage = (id: string, patch: Partial<PageImage>, history = true) =>

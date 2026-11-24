@@ -742,6 +742,10 @@ export interface MapStyle {
   theme: MapTheme;
   /** The course map's page: the parts moved, sized, colored or hidden by hand. */
   page?: Partial<Record<PageElementId, PageElementStyle>>;
+  /** The course map stays where it is when a piece is moved or sized by hand: only pieces where they
+   * go by themselves keep the course clear of them. Set by the first such move; unset (maps made
+   * before 2026-11-24 and not touched since), the course keeps clear of every piece. */
+  mapStays?: boolean;
   texts?: PageText[];
   images?: PageImage[];
   /** Hills: how strongly the ground's relief shows on the map, times the automatic (0: flat). */

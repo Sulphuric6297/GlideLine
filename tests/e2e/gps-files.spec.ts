@@ -413,6 +413,12 @@ test("named tees from a file: the park found and brought in first, then a layout
   plainExpect(c.layouts.map((l: any) => [l.name, l.tee])).toEqual([["Long", "gold"], ["Short", "blue"], ["Jr.", "red"]]);
   plainExpect(c.style.teeNames).toBe("layouts");
   plainExpect(c.items.filter((i: any) => i.type === "tee").length).toBe(6);
+  // (the Short tee's own bend on its hole, between it and the basket: on the ground with the rest, in the site's frame)
+  const shortTee = c.items.find((i: any) => i.type === "tee" && i.level === "blue" && i.doglegs?.length);
+  const pin = c.items.find((i: any) => i.type === "basket" && i.holeId === shortTee.holeId);
+  const apart = (p: any, q: any) => Math.hypot(p.x - q.x, p.y - q.y);
+  plainExpect(apart(shortTee.doglegs[0], pin)).toBeLessThan(apart(shortTee, pin));
+  plainExpect(apart(shortTee.doglegs[0], shortTee)).toBeLessThan(apart(shortTee, pin));
   // Export: hole 1's sign for each layout, a folder each, the tees named by their layouts
   await page.getByRole("button", { name: "4 Export" }).click();
   const signs = page.getByTestId("export-thing-signs");

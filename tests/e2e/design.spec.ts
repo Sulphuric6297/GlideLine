@@ -247,6 +247,25 @@ const sample = () => {
   return doc;
 };
 
+plain("course map: a piece moved or sized by hand doesn't move the map; an older map keeps its fit until one is", () => {
+  const doc = sample();
+  doc.style.theme = "forest";
+  // (the map as drawn: everything up to the next piece on the page)
+  const mapPart = (svg: string) => { const at = svg.indexOf('<g data-el="map"'); return svg.slice(at, svg.indexOf('<g data-el="', at + 10)); };
+  const mapOf = (x: number, y: number, scale: number, stays?: boolean) => {
+    doc.style.page = { title: { x, y, scale } };
+    doc.style.mapStays = stays;
+    return mapPart(renderPoster(doc, { contours: null, hillshade: null }).svg);
+  };
+  // (moved and sized by hand, over hole 1's tee: the map the same wherever it is, and as with the title hidden)
+  const here = mapOf(0.12, 0.85, 1.4, true);
+  plainExpect(mapOf(0.02, 0.02, 0.8, true)).toBe(here);
+  doc.style.page = { title: { hidden: true } };
+  plainExpect(mapPart(renderPoster(doc, { contours: null, hillshade: null }).svg)).toBe(here);
+  // (a map from before: the course still kept clear of the title where it was put)
+  plainExpect(mapOf(0.12, 0.85, 1.4)).not.toBe(here);
+});
+
 plain("course map page: title, layout chips, holes and credits", () => {
   const doc = sample();
   doc.style.theme = "illustrated";
