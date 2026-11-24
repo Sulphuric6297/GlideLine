@@ -145,6 +145,9 @@ export type MapLayers = {
   canopy?: CanopyGrid | null;
   /** Labels moved or hidden by hand (the course map's page): each one marked to be picked. */
   labelAt?: MapStyle["labelAt"];
+  /** What lies over the map (the page's title, panels and the like, in the map's own pixels): the
+   * hole numbers and lengths keep clear of them. */
+  avoid?: { x: number; y: number; w: number; h: number }[];
 };
 
 const OWN_FONTS = new Set(["", "Oswald", "Inter", "Bitter", "Script"]);
@@ -614,6 +617,9 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
   const multi = doc.layouts.length > 1;
   /** Where each line's own distance goes (with the labels). */
   const ownDistances: { id: string; path: P[]; text: string; color: string; o: number }[] = [];
+  /** Every throw line as it's drawn (`own`: its length's label; `half`: half its width, ft;
+   * `arrow`: with an arrowhead at its end). */
+  const drawnLines: { own: string; path: P[]; half: number; arrow?: boolean }[] = [];
   if (s.throwLines) {
     // (where the lines' parts are written: a hole's lines in two passes, every line's shadow and
     // outline, then every line's color, so no outline cuts across where two lines join)
@@ -789,6 +795,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const mainLs = lineStyleOf(s, mainTee?.level ?? "blue", true, multi);
       unders = []; fills = [];
       const mainW = px((look === "classic" ? 2.4 : 3.2) * mainLs.width);
+      drawnLines.push({ own: `dist:${st.holeId}`, path: line, half: mainW / 2, arrow: mainLs.arrow });
       // Other tees of the hole: each its own line; where it runs into the hole's line, or another
       // tee's, it joins it (from there it plays that line, drawn already), or runs alongside the
       // hole's line to the basket. The longest first: a shorter one may join it.
@@ -826,6 +833,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
           along = alone ? aimed(j.path, basket) : j.path;
           trunks.push(j.rest ? [...along, ...j.rest] : along);
         }
+        drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path: along, half: px((look === "classic" ? 2 : 2.2) * ls.width) / 2 });
         // (its own way to the basket: its own arrowhead)
         if (alone) drawLine(along, { ...ls, arrow: s.lineStyles?.[tee.level]?.arrow ?? true }, false, o, basket, true);
         else if (look === "classic" && !s.lineStyles?.[tee.level] && s.linesMeet !== "alongside") {
@@ -901,9 +909,130 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     label(`name:${l.id}`, toScreen(mid.point), q => textLabel(q, l.label!, 9 * ts, { weight: 600, angle: ang }));
   }
 
+  // Where the hole numbers and the lines' lengths go: clear of the throw lines, the tee pads, the
+  // baskets, the page's own pieces and each other. Each stays where it always went when that's
+  // clear; else it takes the nearest clear place of its own (a number round its tee, a length
+  // along its line, on either side), with room round it where there is some. What's in the way, as
+  // circles in the map's pixels (`thin`: a ring or a path, which a label that has to move keeps off;
+  // one lying on it where it always went stays, as on maps made before):
+  const obs: { x: number; y: number; r: number; of?: string; thin?: boolean }[] = [];
+  for (const d of drawnLines) {
+    // (wider at its arrowhead)
+    const dense = densify(d.path, 3 / k), head = 4.5 * Math.max(1, ts * 0.8);
+    let left = pathLength(dense);
+    dense.forEach((q, i) => {
+      if (i) left -= dist(dense[i - 1], q);
+      const p = toScreen(q);
+      obs.push({ x: p.x, y: p.y, r: d.arrow && left < 24 / k ? Math.max(d.half * k, head) : d.half * k, of: d.own });
+    });
+  }
+  for (const tee of items.filter(i => i.type === "tee") as TeeItem[]) {
+    const len = Math.max(tee.padLength * k, 9 * ts), wid = Math.max(tee.padWidth * k, 4.5 * ts), c = toScreen(tee);
+    const a = ((teeAim(doc, tee) - view.rotation) * Math.PI) / 180, run = Math.max(0, (len - wid) / 2), steps = Math.max(1, Math.ceil((run * 4) / wid));
+    for (let i = 0; i <= steps; i++) { const t = -run + (2 * run * i) / steps; obs.push({ x: c.x + Math.cos(a) * t, y: c.y + Math.sin(a) * t, r: wid / 2, of: tee.id }); }
+  }
+  for (const b of items) if (b.type === "basket") { const p = toScreen(b); obs.push({ x: p.x, y: p.y, r: 6 * ts }); }
+  // (the putting circles' rings, and the narrow lines drawn on the map: paths, walks, OB lines, fences...)
+  if (s.circle) for (const st of layers.stats) if (st.complete) for (const b of holeBaskets(doc, st.holeId)) {
+    const c = toScreen(b), R = CIRCLE_ONE_FT * k, steps = Math.max(12, Math.ceil((R * 2 * Math.PI) / 3));
+    for (let i = 0; i < steps; i++) obs.push({ x: c.x + Math.cos((i / steps) * 2 * Math.PI) * R, y: c.y + Math.sin((i / steps) * 2 * Math.PI) * R, r: 0.6 * ts, thin: true });
+  }
+  for (const l of lines) {
+    const w = (l.width ?? LINE_KINDS[l.kind].width) * k;
+    if (l.points.length < 2 || w > 8 * ts) continue;
+    for (const q of densify(linePath(l), 3 / k)) { const p = toScreen(q); obs.push({ x: p.x, y: p.y, r: Math.max(w / 2, 0.8 * ts), thin: true }); }
+  }
+  const GAP = 1.2 * ts, ROOM = 4 * ts;
+  /** How far a label lies over things (`on`; 0: clear), and how crowded it is by the nearest (`by`; 0:
+   * room all round). The label: a bar `half` long each way from `c`, turned `ang` degrees, `rad`
+   * thick. `own`: what it may lie right beside; `skip`: what it's set by. */
+  const over = (c: P, ang: number, half: number, rad: number, own?: string, skip?: string[]) => {
+    const a = (ang * Math.PI) / 180, A = { x: c.x - Math.cos(a) * half, y: c.y - Math.sin(a) * half }, B = { x: c.x + Math.cos(a) * half, y: c.y + Math.sin(a) * half };
+    let on = 0, by = 0;
+    for (const o of obs) {
+      if (o.of && skip?.includes(o.of)) continue;
+      const mine = !!o.of && o.of === own, need = o.r + rad + (mine || o.thin ? 0 : GAP), reach = need + half + ROOM;
+      if (Math.abs(o.x - c.x) > reach || Math.abs(o.y - c.y) > reach) continue;
+      const d = nearestOnSegment(o, A, B).distance;
+      if (o.thin) { if (d < need) by = Math.max(by, ROOM + need - d); }
+      else if (d < need) on += need - d;
+      else if (!mine && d < need + ROOM) by = Math.max(by, need + ROOM - d);
+    }
+    for (const b of layers.avoid ?? []) for (const q of [A, c, B]) {
+      const d = Math.hypot(Math.max(b.x - q.x, 0, q.x - b.x - b.w), Math.max(b.y - q.y, 0, q.y - b.y - b.h));
+      if (d < rad + GAP) on += (rad + GAP - d) * 4;
+    }
+    return { on, by };
+  };
+  /** Where a label goes, of the places tried: `was`, where it always went, while nothing lies under
+   * it there (a map made before stays as it was); else the first with room all round; none, the
+   * clear one least crowded (`more`: what else crowds it); none clear, the one least in the way. */
+  const clearest = <T extends { at: P; ang: number }>(tries: T[], half: number, rad: number, was?: T, own?: string, skip?: string[], more?: (t: T) => number): T | undefined => {
+    let best: T | undefined, least = Infinity;
+    for (const t of tries) {
+      const v = over(t.at, t.ang, half, rad, own, skip);
+      if (v.on === 0 && t === was) return t;
+      const score = v.on * 1000 + v.by + (more?.(t) ?? 0);
+      if (score === 0) return t;
+      if (score < least) { least = score; best = t; }
+    }
+    return best;
+  };
+  const taken = (at: P, ang: number, half: number, rad: number) => {
+    const a = (ang * Math.PI) / 180;
+    for (const t of [-1, 0, 1]) obs.push({ x: at.x + Math.cos(a) * half * t, y: at.y + Math.sin(a) * half * t, r: rad });
+  };
+  // (a label dragged before labels kept clear by themselves: still measured from where it went then)
+  const fromOld = (id: string) => { const o = moved?.[id]; return !!o && !o.placed && !!(o.dx || o.dy); };
+
+  // The hole numbers first: a number is worth more than a length
+  const numAt = new Map<string, P>();
+  const teesOn = (items.filter(i => i.type === "tee") as TeeItem[]).map(t => ({ hole: t.holeId, p: toScreen(t) }));
+  for (const st of layers.stats) {
+    const tee = items.find(i => i.id === st.teeId) as TeeItem | undefined;
+    if (!tee) continue;
+    const aim = teeAim(doc, tee), c = toScreen(tee);
+    const back = toScreen({ x: tee.x - Math.cos((aim * Math.PI) / 180) * (tee.padLength / 2 + 2), y: tee.y - Math.sin((aim * Math.PI) / 180) * (tee.padLength / 2 + 2) });
+    const dir = { x: back.x - c.x, y: back.y - c.y };
+    const dl = Math.hypot(dir.x, dir.y) || 1;
+    const r = 9.5 * ts;
+    // (round the tee: `a` to a side of it, `b` back from it)
+    const spot = (side: number, a: number, b: number) => ({ at: { x: c.x + (-dir.y / dl) * side * a + (dir.x / dl) * b, y: c.y + (dir.x / dl) * side * a + (dir.y / dl) * b }, ang: 0 });
+    const padL = Math.max(tee.padLength * k, 9 * ts) / 2, padW = Math.max(tee.padWidth * k, 4.5 * ts) / 2;
+    // (the painted map's bare number beside the tee; the other maps' badge behind it)
+    const side = { x: -dir.y / dl, y: dir.x / dl };
+    const was = forest
+      ? { at: { x: c.x + side.x * 14 * ts + (dir.x / dl) * 4 * ts, y: c.y + side.y * 14 * ts + (dir.y / dl) * 4 * ts }, ang: 0 }
+      : { at: { x: back.x + (dir.x / dl) * (r + 3 * ts), y: back.y + (dir.y / dl) * (r + 3 * ts) }, ang: 0 };
+    const half = forest ? Math.max(0, st.label.length - 1) * 3.4 * ts : 0, rad = forest ? 6 * ts : r + 0.8 * ts;
+    const tries = forest
+      ? [was, spot(-1, 14 * ts, 4 * ts), spot(1, 14 * ts, 13 * ts), spot(-1, 14 * ts, 13 * ts), spot(0, 0, padL + 11 * ts), spot(1, 21 * ts, 4 * ts), spot(-1, 21 * ts, 4 * ts), spot(1, 15 * ts, 22 * ts), spot(-1, 15 * ts, 22 * ts), spot(0, 0, padL + 20 * ts)]
+      : [was, spot(1, padW + r + 3 * ts, 0), spot(-1, padW + r + 3 * ts, 0), spot(1, r + 2 * ts, padL + r), spot(-1, r + 2 * ts, padL + r), spot(0, 0, padL + 2 * k + 3 * r + 6 * ts)];
+    const id = `num:${st.holeId}`;
+    // (set by its own pad and line, as it always was; plainly its own tee's: no other hole's tee nearly as near it)
+    const others = teesOn.filter(t => t.hole !== tee.holeId);
+    const nearer = (t: { at: P }, by: number) => others.every(o => Math.hypot(o.p.x - t.at.x, o.p.y - t.at.y) >= Math.hypot(c.x - t.at.x, c.y - t.at.y) * by);
+    const fair = tries.filter(t => nearer(t, 1.4));
+    const pick = fromOld(id) ? was : clearest(fair.length ? fair : tries, half, rad, was, undefined, [`dist:${st.holeId}`, tee.id], t => (nearer(t, 1.7) ? 0 : 6 * ts)) ?? was;
+    numAt.set(st.holeId, pick.at);
+    taken(pick.at, 0, half, rad);
+  }
+
   // Distance labels along each throw line
   const placedDist: P[] = [];
   {
+    // (a length's room: its letters' width, by the font)
+    const narrow = font.startsWith("Oswald");
+    // (how much lower than its middle a length's figures sit, in the font's size: on the line's
+    // other side it's set that much nearer, so it's as close to the line there as on its own side)
+    const sag = narrow ? 0.09 : font.startsWith("Bitter") ? -0.09 : 0;
+    const bar = (text: string, size: number) => { const rad = size * 0.46, w = text.length * size * (narrow ? 0.45 : 0.58); return { half: Math.max(0, w / 2 - rad * 0.6), rad }; };
+    const upright = (angle: number) => {
+      let ang = (angle * 180) / Math.PI - view.rotation;
+      while (ang > 90) ang -= 180;
+      while (ang < -90) ang += 180;
+      return ang;
+    };
     for (const st of layers.stats) {
       if (!st.complete || (focus && st.holeId !== focus)) continue;
       if (!s.distances) continue;
@@ -912,32 +1041,40 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       // Along the line, clear of mandos, drop zones and the like
       const busy = items.filter(i => i.type === "mando" || i.type === "dropzone" || i.type === "amenity").map(i => toScreen(i));
       const clear = (q: P) => busy.every(b => Math.hypot(b.x - q.x, b.y - q.y) > 26 * ts);
+      const spot = (m: { point: P; angle: number }, side: number, out = 0) => {
+        const ang = upright(m.angle);
+        const off = side > 0 ? (9 + out) * ts : -(9 + out - sag * 10) * ts;
+        const sp = toScreen(m.point);
+        const nrm = { x: -Math.sin((ang * Math.PI) / 180), y: Math.cos((ang * Math.PI) / 180) };
+        return { at: { x: sp.x - nrm.x * off, y: sp.y - nrm.y * off }, ang, on: sp };
+      };
       const mid = [0.55, 0.4, 0.7, 0.3, 0.8].map(f => pointAlong(line, len * f)).find(m => clear(toScreen(m.point))) ?? pointAlong(line, len * 0.55);
-      let ang = (mid.angle * 180) / Math.PI - view.rotation;
-      while (ang > 90) ang -= 180;
-      while (ang < -90) ang += 180;
-      const off = 9 * ts;
-      const sp = toScreen(mid.point);
-      const nrm = { x: -Math.sin((ang * Math.PI) / 180), y: Math.cos((ang * Math.PI) / 180) };
-      label(`dist:${st.holeId}`, { x: sp.x - nrm.x * off, y: sp.y - nrm.y * off }, q => textLabel(q, `${fmtDist(st.length, doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, 10 * ts, { angle: ang, weight: 700 }));
-      placedDist.push({ x: sp.x - nrm.x * off, y: sp.y - nrm.y * off });
+      const was = spot(mid, 1);
+      // (else the other side of the line there, then along it, by its middle first; no room by the
+      // line anywhere, as where other tees' lines run beside it: a little off it, past them)
+      const id = `dist:${st.holeId}`, text = `${fmtDist(st.length, doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, { half, rad } = bar(text, 10 * ts);
+      const tries = [was, spot(mid, -1), ...[0.55, 0.5, 0.6, 0.45, 0.65, 0.4, 0.7, 0.35, 0.75, 0.3, 0.8, 0.25, 0.85].flatMap(f => { const m = pointAlong(line, len * f); return [spot(m, 1), spot(m, -1)]; }).filter(t => clear(t.on)),
+        ...[5, 10].flatMap(out => [0.55, 0.45, 0.65, 0.35, 0.75].flatMap(f => { const m = pointAlong(line, len * f); return [spot(m, 1, out), spot(m, -1, out)]; })).filter(t => clear(t.on))];
+      const t = fromOld(id) ? was : clearest(tries, half, rad, was, id) ?? was;
+      label(id, t.at, q => textLabel(q, text, 10 * ts, { angle: t.ang, weight: 700 }));
+      placedDist.push(t.at);
+      taken(t.at, t.ang, half, rad);
     }
-    // (another tee's own length, along its line on its outer side, in its color: where it's clear of
-    // the other lengths)
+    // (another tee's own length, along its line, in its color: where it's clear of the other lengths)
     for (const d of ownDistances) {
       const len = pathLength(d.path);
       const spot = (f: number, side: number) => {
         const m = pointAlong(d.path, len * f), sp = toScreen(m.point);
-        let ang = (m.angle * 180) / Math.PI - view.rotation;
-        while (ang > 90) ang -= 180;
-        while (ang < -90) ang += 180;
+        const ang = upright(m.angle);
         const r = (ang * Math.PI) / 180, off = 8 * ts * side;
         return { at: { x: sp.x + Math.sin(r) * off, y: sp.y - Math.cos(r) * off }, ang };
       };
-      const tries = [0.5, 0.35, 0.65, 0.25, 0.75].flatMap(f => [spot(f, 1), spot(f, -1)]);
-      const t = tries.find(c => placedDist.every(q => Math.hypot(q.x - c.at.x, q.y - c.at.y) > 24 * ts));
-      if (!t) continue;
+      const tries = [0.5, 0.35, 0.65, 0.25, 0.75, 0.42, 0.58, 0.3, 0.7, 0.2, 0.8].flatMap(f => [spot(f, 1), spot(f, -1)]).filter(c => placedDist.every(q => Math.hypot(q.x - c.at.x, q.y - c.at.y) > 24 * ts));
+      if (!tries.length) continue;
+      const { half, rad } = bar(d.text, 9 * ts);
+      const t = fromOld(d.id) ? tries[0] : clearest(tries, half, rad, tries[0], d.id) ?? tries[0];
       placedDist.push(t.at);
+      taken(t.at, t.ang, half, rad);
       label(d.id, t.at, q => `<g opacity="${n(d.o)}">${textLabel(q, d.text, 9 * ts, { angle: t.ang, weight: 700, color: "#ffffff", halo: shade(d.color, -0.35) })}</g>`);
     }
   }
@@ -1043,23 +1180,17 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     if (multi) sym.push(textLabel({ x: p.x + r * 1.6, y: p.y - r * 1.1 }, b.position, 7 * ts, { color: pal.label, weight: 800 }));
     sym.push(`</g>`);
   }
-  // Hole number badges at the tees used (the main tee), offset back from the pad
+  // Hole number badges at the tees used (the main tee): beside or behind the pad, where they were placed
   for (const st of layers.stats) {
     const tee = items.find(i => i.id === st.teeId) as TeeItem | undefined;
     if (!tee) continue;
     const lvl = TEE_LEVELS[tee.level];
-    const aim = teeAim(doc, tee);
-    const back = toScreen({ x: tee.x - Math.cos((aim * Math.PI) / 180) * (tee.padLength / 2 + 2), y: tee.y - Math.sin((aim * Math.PI) / 180) * (tee.padLength / 2 + 2) });
-    const dir = { x: back.x - toScreen(tee).x, y: back.y - toScreen(tee).y };
-    const dl = Math.hypot(dir.x, dir.y) || 1;
     const r = 9.5 * ts;
-    const at = { x: back.x + (dir.x / dl) * (r + 3 * ts), y: back.y + (dir.y / dl) * (r + 3 * ts) };
+    const at = numAt.get(st.holeId)!;
     const o = dim(st.holeId);
     if (forest) {
       // Bold white italic numbers beside the tee, as on painted course maps
-      const side = { x: -dir.y / dl, y: dir.x / dl };
-      const p = { x: toScreen(tee).x + side.x * 14 * ts + (dir.x / dl) * 4 * ts, y: toScreen(tee).y + side.y * 14 * ts + (dir.y / dl) * 4 * ts };
-      label(`num:${st.holeId}`, p, q => `<text x="${n(q.x)}" y="${n(q.y)}" font-family="${font}" font-size="${n(15 * ts)}" font-weight="700" font-style="italic" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="rgba(8,20,4,.75)" stroke-width="${n(2.6 * ts)}" stroke-linejoin="round" paint-order="stroke" opacity="${o}">${st.label}</text>`);
+      label(`num:${st.holeId}`, at, q => `<text x="${n(q.x)}" y="${n(q.y)}" font-family="${font}" font-size="${n(15 * ts)}" font-weight="700" font-style="italic" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="rgba(8,20,4,.75)" stroke-width="${n(2.6 * ts)}" stroke-linejoin="round" paint-order="stroke" opacity="${o}">${st.label}</text>`);
       continue;
     }
     label(`num:${st.holeId}`, at, q => `<g opacity="${o}"><circle cx="${n(q.x)}" cy="${n(q.y)}" r="${n(r)}" fill="${lvl.color}" stroke="${lvl.color === "#f8fafc" ? "#1f2937" : "#ffffff"}" stroke-width="${n(1.6 * ts)}"/>${textLabel({ x: q.x, y: q.y + 0.5 * ts }, st.label, 11.5 * ts, { color: lvl.ink, halo: lvl.color, weight: 700 })}</g>`);
@@ -1616,6 +1747,8 @@ const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
     const el = (id: PageElementId): PageElementStyle => pageEls[id] ?? {};
     type Box = { x: number; y: number; w: number; h: number };
     const pieces: Box[] = [];
+    // (all that lies over the map: its numbers and lengths keep clear of them)
+    const covers: Box[] = [];
     const placed = (id: string, o: { x?: number; y?: number; scale?: number; hidden?: boolean; rot?: number; opacity?: number }, box: Box, content: string) => {
       if (o.hidden) return;
       const k = keepsItsSize(id) ? 1 : o.scale ?? 1;
@@ -1625,6 +1758,7 @@ const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
       // (one put or sized by hand: where it's wanted, the map doesn't move for it)
       const byHand = o.x !== undefined || o.y !== undefined || (!keepsItsSize(id) && o.scale !== undefined && o.scale !== 1);
       if (!(s.mapStays && byHand)) pieces.push({ x: X, y: Y, w: box.w * k, h: box.h * k });
+      if (id !== "credit") covers.push({ x: X, y: Y, w: box.w * k, h: box.h * k });
       // (with a box to pick it by on the Design page, never drawn)
       parts.push(`<g data-el="${id}" data-box="${n(X)} ${n(Y)} ${n(box.w * k)} ${n(box.h * k)}" transform="translate(${n(X)} ${n(Y)}) scale(${n(k)}) translate(${n(-box.x)} ${n(-box.y)})"><rect x="${n(box.x)}" y="${n(box.y)}" width="${n(box.w)}" height="${n(box.h)}" fill="none" pointer-events="all"/>${turned(content, keepsItsTurn(id) ? undefined : o.rot, o.opacity)}</g>`);
     };
@@ -1639,14 +1773,16 @@ const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
     for (let out = 0, last = false; ; ) {
       parts.length = base;
       pieces.length = 0;
+      covers.length = 0;
       const scale = Math.min((W - 2 * (m + room)) / bw, (H - 2 * (m + room)) / bh) / (1 + out);
       const center = (clearOf && leastOffSite(doc, box, rotation, scale, W, H, m + room, { pts: turnedPts, boxes: clearOf, near })) || leastOffSite(doc, box, rotation, scale, W, H, m + room)!;
       const view: MapView = { cx: center.x, cy: center.y, rotation, scale, width: W, height: H };
       const onPage = (q: P) => { const r = rotatePoint({ x: q.x - center.x, y: q.y - center.y }, -rotation); return { x: W / 2 + r.x * scale, y: H / 2 + r.y * scale }; };
-      const map = last ? renderMapLayers(doc, view, { stats, contours: opts.contours, hillshade: opts.hillshade, textScale: ts * 0.9, fontFamily: s.font, canopy: opts.canopy, labelAt: s.labelAt ?? {} }, "pm") : { svg: "", toScreen: onPage };
-      parts.push(`<g data-el="map" data-box="0 0 ${n(W)} ${n(H)}" data-k="${scale}" data-rot="${rotation}">${map.svg}</g>`);
+      // (the map itself last, once the page's pieces are laid out over it)
+      const mapAt = parts.length;
+      parts.push("");
       // The emptiest corner for the title
-      const shown = pts.map(map.toScreen);
+      const shown = pts.map(onPage);
       const bw2 = W * 0.42, bh2 = H * 0.4;
       const spots = [{ x: 0, y: 0 }, { x: W - bw2, y: 0 }, { x: 0, y: H - bh2 }, { x: W - bw2, y: H - bh2 }];
       const busy = (c: P) => shown.filter(p => p.x >= c.x && p.x <= c.x + bw2 && p.y >= c.y && p.y <= c.y + bh2).length;
@@ -1789,7 +1925,11 @@ const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
       }
       // Pictures, QR codes and sponsors added to the map (the course's own name filled in)
       parts.push(extrasSvg(s.mapExtras, s.sponsors, "", { hole: "", par: "", length: "", course: title, name: "" }, W, H, s.font, (id, c) => `<g data-el="${id}">${c}</g>`));
-      if (last) return { svg: wrapSvg(W, H, parts.join(""), opts.dpi), width: W, height: H, page, holeLines: holeLinesOf(stats, map.toScreen) };
+      if (last) {
+        const map = renderMapLayers(doc, view, { stats, contours: opts.contours, hillshade: opts.hillshade, textScale: ts * 0.9, fontFamily: s.font, canopy: opts.canopy, labelAt: s.labelAt ?? {}, avoid: covers }, "pm");
+        parts[mapAt] = `<g data-el="map" data-box="0 0 ${n(W)} ${n(H)}" data-k="${scale}" data-rot="${rotation}">${map.svg}</g>`;
+        return { svg: wrapSvg(W, H, parts.join(""), opts.dpi), width: W, height: H, page, holeLines: holeLinesOf(stats, map.toScreen) };
+      }
       // (a little room round each: its hole number, its label)
       if (out >= 0.6 || !shown.some(q => pieces.some(b => q.x > b.x - near && q.x < b.x + b.w + near && q.y > b.y - near && q.y < b.y + b.h + near))) last = true;
       else {

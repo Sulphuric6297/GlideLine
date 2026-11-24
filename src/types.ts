@@ -790,8 +790,10 @@ export interface MapStyle {
    * share of the page's width and height (unset: a free corner). */
   legendAt?: { x: number; y: number };
   /** Labels on the course map dragged on the Design page ("num:HOLE", "dist:HOLE", "name:ITEM",
-   * "tag:ITEM", "text:ITEM"): moved by (dx, dy) feet on the ground, or hidden. */
-  labelAt?: Record<string, { dx: number; dy: number; hidden?: boolean }>;
+   * "tag:ITEM", "text:ITEM"): moved by (dx, dy) feet on the ground, or hidden. `placed`: moved
+   * from where the label goes by itself now, clear of the lines and pads (unset: from where it
+   * went before labels kept clear, so a label dragged then stays where it was put). */
+  labelAt?: Record<string, { dx: number; dy: number; hidden?: boolean; placed?: boolean }>;
   /** How wide every walk to the next tee is, ft (a hole's own walk width wins; unset: 6). */
   walkWidth?: number;
   /** How tee signs look (a hole's own settings go over these). */

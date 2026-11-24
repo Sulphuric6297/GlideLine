@@ -4,7 +4,8 @@ import { areaPath, autoWalks, createAmenity, createArea, createBasket, createDro
 import { contourInterval, meander, paintedFrom, paintedLine } from "../../src/lib/forest";
 import { contoursOf, reliefExaggeration } from "../../src/lib/relief";
 import { dist, distanceToPath } from "../../src/lib/geom";
-import { BASKET_MARKS, EARTH, LINE_CREAM, PRINT_EARTH, basketMark, bestRotation, lineStyleOf, renderPoster } from "../../src/lib/mapSvg";
+import { BASKET_MARKS, EARTH, LINE_CREAM, PRINT_EARTH, basketMark, bestRotation, lineStyleOf, renderMapLayers, renderPoster } from "../../src/lib/mapSvg";
+import { holeStats } from "../../src/lib/holeStats";
 import { renderScorecard, renderTeeSign } from "../../src/lib/teeSign";
 import { renderHolePage } from "../../src/lib/holePage";
 import { tallGrassOf } from "../../src/lib/landscapes";
@@ -351,6 +352,50 @@ plain("another tee's line joins the hole's where it runs into it, keeps its own 
   plainExpect(lineStyleOf({ ...doc.style, lineLook: "painted" }, "gold", true).color).toBe(LINE_CREAM);
   plainExpect(lineIn(two, lineStyleOf(doc.style, mainLevel, true, true).color)).toBe(true);
   plainExpect(lineIn(one, lineStyleOf(doc.style, mainLevel, true, true).color)).toBe(false);
+});
+
+plain("a line's length and a hole's number keep clear of pads, lines and each other; one dragged before stays where it was put", () => {
+  const doc = sample();
+  const [h1] = doc.holes;
+  doc.style.theme = "forest";
+  doc.style.throwLines = true;
+  doc.style.distances = true;
+  // (the map alone, at a set size: 1.5 px to the foot, hole 1 from (100, 500) to (450, 500))
+  const view = { cx: 300, cy: 450, rotation: 0, scale: 1.5, width: 900, height: 700 };
+  const on = (q: { x: number; y: number }) => ({ x: 450 + (q.x - 300) * 1.5, y: 350 + (q.y - 450) * 1.5 });
+  const off = (q: { x: number; y: number }) => ({ x: 300 + (q.x - 450) / 1.5, y: 450 + (q.y - 350) / 1.5 });
+  const draw = (d: typeof doc) => renderMapLayers(d, view, { stats: d.holes.map(h => holeStats(d, h)), contours: null, hillshade: null, textScale: 1, fontFamily: d.style.font, labelAt: d.style.labelAt ?? {} }, "t").svg;
+  const at = (svg: string, id: string) => { const m = svg.match(new RegExp(`<g data-label="${id}">(?:<g[^>]*>)?<text x="([-\\d.]+)" y="([-\\d.]+)"`))!; return { x: +m[1], y: +m[2] }; };
+  const plainMap = draw(doc);
+  const len = at(plainMap, `dist:${h1.id}`), num = at(plainMap, `num:${h1.id}`), tee1 = on({ x: 100, y: 500 });
+  // (as they always went: the length above its line a little past the middle, the number beside its tee)
+  plainExpect(Math.hypot(len.x - on({ x: 292.5, y: 500 }).x, len.y - (on({ x: 0, y: 500 }).y - 9))).toBeLessThan(0.2);
+  plainExpect(Math.hypot(num.x - (tee1.x - 4), num.y - (tee1.y - 14))).toBeLessThan(0.2);
+  // Another tee's pad right where the length goes: the length takes a clear place by its line
+  const pad = createTee(h1.id, off(len), "red");
+  const padded = { ...doc, items: [...doc.items, pad] };
+  const moved = at(draw(padded), `dist:${h1.id}`);
+  plainExpect(dist(moved, len)).toBeGreaterThan(8);
+  // (still right by its line: 9 px off it, or a little nearer on its other side)
+  plainExpect(Math.abs(moved.y - on({ x: 0, y: 500 }).y)).toBeGreaterThan(7.9);
+  plainExpect(Math.abs(moved.y - on({ x: 0, y: 500 }).y)).toBeLessThan(9.2);
+  // (one dragged before lengths kept clear: still that far from where it went then; dragged since: from its clear place)
+  const key = `dist:${h1.id}`;
+  const dragged = (placed?: boolean) => at(draw({ ...padded, style: { ...doc.style, labelAt: { [key]: { dx: 0, dy: -20, placed } } } }), key);
+  plainExpect(dist(dragged(), { x: len.x, y: len.y - 30 })).toBeLessThan(0.2);
+  plainExpect(dist(dragged(true), { x: moved.x, y: moved.y - 30 })).toBeLessThan(0.2);
+  // Another hole's tee right where the number goes: the number moves to its own tee's other side,
+  // nearer its own tee than that one, and the two numbers apart
+  const h3 = newHole();
+  const crowded = { ...doc, holes: [...doc.holes, h3], items: [...doc.items, createTee(h3.id, off(num)), createBasket(h3.id, { x: 100, y: 250 })] };
+  const svg = draw(crowded), n1 = at(svg, `num:${h1.id}`), n3 = at(svg, `num:${h3.id}`);
+  plainExpect(dist(n1, tee1)).toBeLessThan(dist(n1, num) / 1.2);
+  plainExpect(dist(n3, num)).toBeLessThan(dist(n3, tee1) / 1.2);
+  plainExpect(dist(n1, n3)).toBeGreaterThan(12);
+  // (and no length lies on a number, a pad or another length)
+  const l1 = at(svg, `dist:${h1.id}`), l3 = at(svg, `dist:${h3.id}`);
+  for (const l of [l1, l3]) for (const q of [n1, n3, tee1, num]) plainExpect(dist(l, q)).toBeGreaterThan(9);
+  plainExpect(dist(l1, l3)).toBeGreaterThan(9);
 });
 
 test("the Lines tool: Line look, each tee's line set its own way, and where lines meet, on the course map", async ({ page }) => {
