@@ -12,7 +12,7 @@ import { latitudeOf, sunFromOf } from "./mapLook";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, FIELD_KINDS, FT_PER_M, LINE_KINDS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER } from "../constants";
 import type { AmenityItem, AreaItem, BasketItem, CourseDoc, DropZoneItem, LabelItem, LineItem, MandoItem, MapStyle, MapTheme, P, PageElementId, PageElementStyle, PaperSize, StructureItem, StructureKind, TeeItem, TreeItem } from "../types";
 import { activeLayout, throwLine, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, isWall, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, wallAsBuilt, wallDry, taglineOf, titleFontOf, amenityMarked, AMENITY_ROLE } from "./course";
-import { boundsOf, dist, offsetPath, pathLength, pointAlong, pointInPolygon, polygonArea, rectCorners, rotatePoint, smoothPath, subPath } from "./geom";
+import { boundsOf, dist, distanceToPath, offsetPath, pathLength, pointAlong, pointInPolygon, polygonArea, rectCorners, rotatePoint, smoothPath, subPath } from "./geom";
 import { courseTotals, holeStats, isOb, isOutOfPlay, playsOf, type HoleStats } from "./holeStats";
 import { forestCanvas, forestCanvasAsync, paintedFrom, paintedLine, paintsAgain, paintsFromPhoto, treesOverOf, type CanopyGrid } from "./forest";
 import { BASKET_MARKS, RESTRICTED, STRUCTURE_INK, amenitySymbol, basketMark, dropZoneSymbol, gateSymbol, mandoSymbol, structureLegend, structureSymbol, type StructureDraw, type StructureInk } from "./symbols";
@@ -579,12 +579,25 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       if (!st.complete) continue;
       const hole = doc.holes.find(h => h.id === st.holeId)!;
       const o = dim(st.holeId);
-      // Other tees of the hole: thinner dashed lines in their colors
-      for (const tee of doc.items.filter(i => i.type === "tee" && i.holeId === st.holeId && i.id !== st.teeId) as TeeItem[]) {
-        const line = smoothPath(throwLine(hole, tee, st.line[st.line.length - 1]), 10);
-        out.push(`<path d="${pathD(line)}" fill="none" stroke="${TEE_LEVELS[tee.level].color === "#f8fafc" ? "#e5e7eb" : TEE_LEVELS[tee.level].color}" stroke-width="${n(px(1.6))}" stroke-dasharray="${n(px(5))} ${n(px(4))}" opacity="${n(0.9 * o)}"/>`);
-      }
       const line = smoothPath(st.line, 12);
+      // Other tees of the hole: each its own line in its tee's color, outlined dark so it reads
+      // over trees and grass as the hole's does, a little thinner; only where it runs apart from
+      // the hole's line (from where it meets it, it plays the hole's line, drawn already)
+      for (const tee of doc.items.filter(i => i.type === "tee" && i.holeId === st.holeId && i.id !== st.teeId) as TeeItem[]) {
+        const own = smoothPath(throwLine(hole, tee, st.line[st.line.length - 1]), 10);
+        const ownLen = pathLength(own), step = Math.max(px(2), 0.5);
+        const along = Array.from({ length: Math.ceil(ownLen / step) + 1 }, (_, i) => pointAlong(own, Math.min(ownLen, i * step)).point);
+        // (on the hole's line: within its width and a little)
+        const meets = (q: P) => distanceToPath(q, line) < px(3.5);
+        let to = along.length;
+        while (to > 0 && meets(along[to - 1])) to--;
+        // (on the hole's line all along, a tee in front of the back one: its pad says where it is)
+        const part = along.slice(0, Math.min(along.length, to + 1));
+        if (part.length < 2 || pathLength(part) < px(6)) continue;
+        const c = TEE_LEVELS[tee.level].color === "#f8fafc" ? "#eef0f2" : TEE_LEVELS[tee.level].color;
+        out.push(`<path d="${pathD(part)}" fill="none" stroke="${pal.lineCasing}" stroke-width="${n(px(3.8))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
+        out.push(`<path d="${pathD(part)}" fill="none" stroke="${c}" stroke-width="${n(px(2))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
+      }
       const len = pathLength(line);
       const trim = trimPath(line, 6 / k, len - Math.max(2.2 / k * 6, 8));
       out.push(`<path d="${pathD(trim)}" fill="none" stroke="${pal.lineCasing}" stroke-width="${n(px(4.6))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);

@@ -617,7 +617,7 @@ export const TOPICS: Topic[] = [
   },
   {
     id: "drawn-on-map", section: "map", title: "Lines",
-    body: "Extra lines on the printed map: Throw lines, the Distances on them, and the Putting circle, the 10 m (33 ft) circle around each basket. These only change the printed map. The map you work on stays as it is. How the hills are drawn, and contour lines, are under Elevation in the map style.",
+    body: "Extra lines on the printed map: Throw lines, the Distances on them, and the Putting circle, the 10 m (33 ft) circle around each basket. The layout you're on draws its throw lines in white. Every other tee's line is in its tee's color, a little thinner, where it plays apart from the white one, and joins it where they meet. A tee standing right on the white line shows just its pad. Tee signs and hole pages draw them the same way. These only change the printed map. The map you work on stays as it is. How the hills are drawn, and contour lines, are under Elevation in the map style.",
     words: "lines drawn on the map throw lines distances putting circle",
     path: "Map › Course map › Lines",
     where: { step: "map", tab: "map", find: "drawn-on-map" }

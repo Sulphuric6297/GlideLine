@@ -247,6 +247,20 @@ const sample = () => {
   return doc;
 };
 
+plain("course map: another tee's line in its color where it plays apart from the hole's, none for a tee on it", () => {
+  const doc = sample();
+  const h1 = doc.holes[0];
+  // (the hole plays from its blue tee; a red one off to the side, a white one right on its line)
+  doc.items.push(createTee(h1.id, { x: 160, y: 620 }, "red"), createTee(h1.id, { x: 250, y: 500 }, "white"));
+  doc.style.throwLines = true;
+  const svg = renderPoster(doc, { contours: null, hillshade: null }).svg;
+  const red = [...svg.matchAll(/<path d="([^"]+)" fill="none" stroke="#dc2626" stroke-width="[\d.]+" stroke-linecap="round"/g)];
+  plainExpect(red).toHaveLength(1);
+  // (outlined, as the hole's is: the same path under it, darker and wider)
+  plainExpect(svg.split(`<path d="${red[0][1]}"`).length - 1).toBe(2);
+  plainExpect(svg).not.toContain('stroke="#eef0f2"');
+});
+
 plain("course map: a piece moved or sized by hand doesn't move the map; an older map keeps its fit until one is", () => {
   const doc = sample();
   doc.style.theme = "forest";
