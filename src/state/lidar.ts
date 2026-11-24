@@ -6,6 +6,7 @@
 import { usgsDem } from "../lib/geo/elevation";
 import { withMeasuredHeights } from "../lib/geo/buildings";
 import { fetchLidar } from "../lib/geo/lidarFetch";
+import { dhmLidar, dkToken, inDenmark } from "../lib/geo/denmark";
 import { findBushes, groundOnGrid } from "../lib/lidar";
 import { signed, withMeasuredTrees } from "../lib/importSite";
 import { natureFromPhoto } from "../lib/geo/photoNature";
@@ -24,7 +25,8 @@ export const measureLidar = async () => {
     const ref = { ...d.site.bounds, width: d.canvas.width, height: d.canvas.height };
     // (no tree stands on a building the course has)
     const outlines = d.items.filter(i => i.type === "structure" && (i.kind === "building" || i.kind === "shelter")).map(i => (i as { points: P[] }).points);
-    const got = await fetchLidar(ref, f => busy(f), { dem: usgsDem(d.site.bounds, d.canvas.width, d.canvas.height), outlines });
+    // (in Denmark, with a token: the height model's)
+    const got = inDenmark(ref) && dkToken() ? await dhmLidar(ref, f => busy(f), { outlines }) : await fetchLidar(ref, f => busy(f), { dem: usgsDem(d.site.bounds, d.canvas.width, d.canvas.height), outlines });
     if (!got) {
       // (remembered: the Site step says so, with Check again)
       changeDoc(doc => ({ site: { ...doc.site, noLidar: true, lidarFailed: undefined } }), false);

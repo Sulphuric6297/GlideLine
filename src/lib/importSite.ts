@@ -14,6 +14,8 @@ import { FEET_PER_METER, getGeoBounds, throwIfAborted, untilAborted, type GeoBou
 import { boundsKey, cached } from "./geo/cache";
 import { fetchBestElevationGrid, usgsGroundLabel } from "./geo/elevation";
 import { fetchLidar } from "./geo/lidarFetch";
+import { dhmLidar, dkToken, inDenmark } from "./geo/denmark";
+import { allBuildings } from "./geo/buildings";
 import { findBushes, groundOnGrid, standingTrees, surveyYear, type LidarBush } from "./lidar";
 import { summerFills, treesFromSummer } from "./summerTrees";
 import { fetchMapImagery, type MapImagerySource } from "./geo/imagery";
@@ -835,7 +837,13 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
       // (the survey's ground checked against 3DEP's, when that's what the elevation is: awaited only
       // once the points are in, so both still download at once)
       const dem = elevationJob.then(e => (e && e.elev.source.startsWith("USGS") ? { values: e.elev.values, samplesX, samplesY } : null)).catch(() => null);
-      const got = cached("lidar", here, report => fetchLidar(ref, report, { dem, signal, calm: opts.calm }), { signal, onProgress: f => progress.set("lidar", { fraction: f }) });
+      // (in Denmark, with a token: the height model's surface over its ground; the buildings on the
+      // maps, traced from the air, left out)
+      const dk = inDenmark(bounds) && !!dkToken();
+      const outlines = dk ? allBuildings(ref).then(list => list.map(b => b.points.map(p => toPlanXY(ref, p.lat, p.lon)))).catch(() => [] as P[][]) : undefined;
+      const got = dk
+        ? cached("lidar", `dhm|${here}`, report => dhmLidar(ref, report, { signal, outlines }), { signal, onProgress: f => progress.set("lidar", { fraction: f }) })
+        : cached("lidar", here, report => fetchLidar(ref, report, { dem, signal, calm: opts.calm }), { signal, onProgress: f => progress.set("lidar", { fraction: f }) });
       const lidar = await untilAborted(got.value, signal);
       if (!lidar) { progress.set("lidar", { state: "not-here", cached: got.hit }); return null; }
       const g = groundOnGrid(lidar.measured, width, height, grid);
