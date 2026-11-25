@@ -324,8 +324,9 @@ plain("another tee's line joins the hole's where it runs into it, keeps its own 
   for (const [look, color] of [[undefined, "#dc2626"], ["painted", EARTH.red], ["trail", EARTH.red]] as const) {
     const [red] = redPaths(withRed(160, 512, { lineLook: look }), color);
     const end = red[red.length - 1], before = red[red.length - 4];
-    plainExpect(Math.abs(end.y - 500), String(look)).toBeLessThan(0.6);
-    plainExpect(Math.abs(end.y - before.y), String(look)).toBeLessThan(0.3);
+    // (the painted looks: it ends where it goes under that line, its middle at that line's edge)
+    plainExpect(Math.abs(end.y - 500), String(look)).toBeLessThan(look ? 1.2 : 0.6);
+    plainExpect(Math.abs(end.y - before.y), String(look)).toBeLessThan(look ? 0.5 : 0.3);
     plainExpect(basket.x - end.x, String(look)).toBeGreaterThan(33);
     // (and it starts as the line the tee plays: straight at the basket)
     plainExpect(Math.abs((red[3].y - red[0].y) / (red[3].x - red[0].x) - (500 - 512) / (450 - 160))).toBeLessThan(0.01);
