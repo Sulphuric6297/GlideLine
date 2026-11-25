@@ -37,6 +37,9 @@ export interface TeeItem extends BaseItem {
   doglegs?: P[];
   /** Its own par (unset: the hole's). */
   par?: number;
+  /** Its throw line left off the course map (this tee on this hole alone; a tee color's line on
+   * every hole is hidden in the map's Lines). */
+  noLine?: true;
 }
 
 /** A basket (target). A hole can have several pin positions (A, B, C...). */
@@ -235,6 +238,10 @@ export interface AreaItem extends BaseItem {
   bushes?: number;
   density?: number;
   heights?: [number, number];
+  /** Its heights hold for every tree in it: the measured ones it keeps too, and its treetops on
+   * the painted map (set along with them from its panel). Unset on a wood whose heights are from
+   * before that: only the trees it grows in 3D, as it was drawn then. */
+  heightsAll?: true;
   /** Underbrush beneath its trees: bushes and young trees, light to heavy (unset: none). */
   underbrush?: "light" | "medium" | "heavy";
   /** What the underbrush is: a mix (unset), thicket shrubs, briars and thorns, or weeds. */
@@ -320,6 +327,70 @@ export interface LineItem extends BaseItem {
  * (buildings, shelters, decks). Real-scale models in 3D, drawn to scale on the printed map. */
 export type StructureKind = "bridge" | "boardwalk" | "stairs" | "wall" | "building" | "shelter" | "deck";
 export type RoofKind = "gable" | "hip" | "flat" | "shed" | "pyramid";
+/** What a building is (its usual look, size and doors). */
+export type BuildingType = "house" | "garage" | "barn" | "shed" | "restrooms" | "clubhouse" | "church" | "school" | "store";
+/** A building's walls: lap siding, boards (board and batten), brick, stone, stucco, metal. */
+export type SidingKind = "lap" | "board" | "brick" | "stone" | "stucco" | "metal";
+/** A pitched roof's covering. */
+export type RoofingKind = "shingles" | "slate" | "clay" | "metal" | "shakes";
+/** How high a building's floor stands: a slab on the ground, a crawl space, raised. */
+export type FoundationKind = "slab" | "crawl" | "raised";
+/** How many windows a building has round its walls. */
+export type WindowAmount = "none" | "few" | "even" | "many";
+/** Its windows: plain sashes, a grid of panes, or a grid with shutters. */
+export type WindowStyle = "plain" | "grid" | "shutters";
+/** Something built against a building's wall: a porch (its floor, posts and roof), a carport, a
+ * deck (raised, railed, no roof) or a patio (a slab on the ground). */
+export interface AddOn {
+  id: string;
+  kind: "porch" | "carport" | "deck" | "patio";
+  /** Which wall, and its middle, ft along it from the wall's first corner. */
+  wall: number;
+  at: number;
+  /** Ft along the wall, and out from it (set into the house: in from it). */
+  width: number;
+  depth: number;
+  /** Its roof: the house's ("house": set into the house, under its roof, the wall set back behind
+   * it), its own sloping away from the wall ("own"), or none. Unset: own for a porch or a carport,
+   * none for a deck or a patio. */
+  roof?: "house" | "own" | "none";
+  /** Its own roof's slope, inches of rise per foot. Unset: 3 in 12. */
+  pitch?: number;
+  /** Its floor, ft up from the ground at the wall. Unset: a porch's and a deck's at the house's
+   * floor; a carport's and a patio's a slab on the ground. */
+  floor?: number;
+  /** A railing round a raised floor. Unset: on where the floor is 1½ ft or more up. */
+  railing?: boolean;
+  /** Its open sides with no railing: 0 its end toward the wall's first corner, 1 the front, 2 its
+   * other end. */
+  noRail?: number[];
+  /** Its steps down: on which open side (as noRail) and how far along it (0 to 1). Unset: one in
+   * the middle of the front where the floor stands over the ground. */
+  steps?: { side: number; at: number }[];
+}
+/** A door or a window put on a wall by hand. */
+export interface Opening {
+  id: string;
+  kind: "window" | "door" | "garage";
+  /** Which wall: the outline's edge from point `wall` to the next. */
+  wall: number;
+  /** Its middle, ft along the wall from that point. */
+  at: number;
+  /** Its size, ft. */
+  width: number;
+  height: number;
+  /** A window's sill, ft above its story's floor (unset: 3). */
+  sill?: number;
+  /** Which story it's on, 0 the ground floor (unset: 0). */
+  story?: number;
+  /** A window's own style, over the building's `windowStyle` (unset: the building's). */
+  style?: WindowStyle;
+  /** Its own color over the building's: a window's frames, a door's or a garage door's (unset:
+   * the building's). */
+  color?: string;
+  /** A window's shutters' own color (unset: the building's). */
+  shutterColor?: string;
+}
 export interface StructureItem extends BaseItem {
   /** More holes it belongs to (an OB line along two fairways): with `holeId`, all of them. */
   alsoHoles?: string[];
@@ -339,9 +410,41 @@ export interface StructureItem extends BaseItem {
   roofPitch?: number;
   /** The ridge runs across the building, between its long sides (unset: along its length). */
   ridgeAcross?: boolean;
-  /** Its own colors (unset: the map's): the roof, and a building's walls. */
+  /** Its own colors (unset: the map's, or a building's walls and roof their own, "Natural"): the
+   * roof, and a building's walls. */
   roofColor?: string;
   wallColor?: string;
+  /** A building: what it is (unset: a house). */
+  buildingType?: BuildingType;
+  /** A building's stories (1, 1.5, 2, 3; unset: from its wall height). */
+  stories?: number;
+  /** A building's walls and pitched roof (unset: lap siding, shingles). */
+  siding?: SidingKind;
+  roofing?: RoofingKind;
+  /** A building's other colors (unset: white trim and frames, a navy door, forest green shutters,
+   * a stone foundation in its own colors). */
+  trimColor?: string;
+  frameColor?: string;
+  doorColor?: string;
+  shutterColor?: string;
+  foundationColor?: string;
+  /** One wall's own color, by its edge (over `wallColor`). */
+  wallColors?: Record<number, string>;
+  /** A building's floor (unset: a slab, half a foot up). */
+  foundation?: FoundationKind;
+  /** A building's windows round its walls, and their style (unset: even; a grid of panes). */
+  windows?: WindowAmount;
+  windowStyle?: WindowStyle;
+  /** The wall its front door is on (unset: its longest). */
+  front?: number;
+  /** Doors and windows put on by hand: a wall that has some, or is in `handWalls`, keeps only those. */
+  openings?: Opening[];
+  /** Porches, carports, decks and patios built against its walls. */
+  addOns?: AddOn[];
+  /** Walls whose doors and windows are set by hand (none, if it has no openings). */
+  handWalls?: number[];
+  /** What the import guessed rather than found: named on its panel. */
+  guessed?: ("type" | "stories" | "roof" | "colors")[];
   /** Brought in from OpenStreetMap, or (a building nobody's mapped) traced from the air: looking
    * the maps up again replaces it. */
   importSource?: "osm" | "traced" | "fema" | "lidar";
@@ -642,10 +745,52 @@ export interface PageImage {
   hidden?: boolean;
 }
 
+/** A tee color's throw line on the course map, as set by hand (unset: the line look's own). */
+export interface LineStyle {
+  color?: string;
+  dash?: "solid" | "dashed" | "dotted";
+  /** Times the look's own width. */
+  width?: number;
+  opacity?: number;
+  outline?: "soft" | "dark" | "none";
+  shadow?: boolean;
+  arrow?: boolean;
+  /** Its own length along it, in its color. */
+  distance?: boolean;
+  hidden?: boolean;
+}
+
 export interface MapStyle {
   theme: MapTheme;
   /** The course map's page: the parts moved, sized, colored or hidden by hand. */
   page?: Partial<Record<PageElementId, PageElementStyle>>;
+  /** The course map stays where it is when a piece is moved or sized by hand: only pieces where they
+   * go by themselves keep the course clear of them. Set by the first such move; unset (maps made
+   * before 2026-11-24 and not touched since), the course keeps clear of every piece. */
+  mapStays?: boolean;
+  /** How the throw lines are drawn: painted (cream, warm edges, soft shadows), the same with the
+   * other tees' lines in dashes (trail), or as maps first had them (unset: Classic). New courses
+   * start Painted. */
+  lineLook?: "painted" | "trail";
+  /** The layout the course map draws as its main line (on top, with the arrow and distances), apart
+   * from the layout Design is on. */
+  mapLayout?: string;
+  /** Each tee color's line as set by hand, over the line look's own. */
+  lineStyles?: Partial<Record<TeeLevel, LineStyle>>;
+  /** Where another tee's line meets the main one: it joins it (unset) or runs alongside it. */
+  linesMeet?: "alongside";
+  /** Every throw line's width, times the line look's own (unset: 1). */
+  lineWeight?: number;
+  /** The arrowheads: their shape (unset: the look's own, a leaf in the painted looks and a triangle
+   * in Classic) and their size, times the look's own (unset: 1). */
+  arrowLook?: "leaf" | "triangle" | "open" | "none";
+  arrowSize?: number;
+  /** Where a line toward the basket stops in the painted looks: at its putting circle (unset) or
+   * by the basket itself. */
+  lineEnd?: "basket";
+  /** A line's bends in the painted looks: swept wide, as a disc flies them (unset), or exactly
+   * through each bend as it was plotted. */
+  lineBends?: "plotted";
   texts?: PageText[];
   images?: PageImage[];
   /** Hills: how strongly the ground's relief shows on the map, times the automatic (0: flat). */
@@ -664,8 +809,10 @@ export interface MapStyle {
    * share of the page's width and height (unset: a free corner). */
   legendAt?: { x: number; y: number };
   /** Labels on the course map dragged on the Design page ("num:HOLE", "dist:HOLE", "name:ITEM",
-   * "tag:ITEM", "text:ITEM"): moved by (dx, dy) feet on the ground, or hidden. */
-  labelAt?: Record<string, { dx: number; dy: number; hidden?: boolean }>;
+   * "tag:ITEM", "text:ITEM"): moved by (dx, dy) feet on the ground, or hidden. `placed`: moved
+   * from where the label goes by itself now, clear of the lines and pads (unset: from where it
+   * went before labels kept clear, so a label dragged then stays where it was put). */
+  labelAt?: Record<string, { dx: number; dy: number; hidden?: boolean; placed?: boolean }>;
   /** How wide every walk to the next tee is, ft (a hole's own walk width wins; unset: 6). */
   walkWidth?: number;
   /** How tee signs look (a hole's own settings go over these). */
@@ -679,6 +826,9 @@ export interface MapStyle {
   subtitle: string;
   /** The line under the course's name on the map and the signs (unset: "Disc golf course"; "": none). */
   tagline?: string;
+  /** Tees named on the signs and hole pages by the layout played from them ("layouts": a tee color
+   * one layout plays takes its name), or (unset) by their color. */
+  teeNames?: "layouts";
   footer: string;
   /** Colors. */
   fairway: string;

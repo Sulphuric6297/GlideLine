@@ -7,7 +7,7 @@
 import { useRef, type ReactNode } from "react";
 import { Brush, Navigation, Plus, RotateCw, Scissors, Shuffle, Video } from "lucide-react";
 import { editFlyover } from "../FlyoverSettings";
-import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, stoneShown, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint, ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER } from "../../constants";
+import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, stoneShown, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint, ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER, WOODS_HEIGHTS } from "../../constants";
 import { bendOwner, holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
 import { holeClears } from "../../lib/lidar";
 import { holeStats } from "../../lib/holeStats";
@@ -18,7 +18,7 @@ import { fmtDist } from "../../lib/units";
 import { addHoleOb, nextHomeCorner, obChoiceOf, toLineWall, pinsFull, select, setFieldKind, setFieldPlay, setLineKind, setPinPosition, setTeeLevel, shareBasket, startAnotherPin, startAnotherTee, startHoleToBasket, teesFull } from "../../state/actions";
 import { setBends, updateHole, updateItem, useCourse, useEditor } from "../../state/course";
 import type { AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseItem, FieldKind, Hole, LabelItem, LineItem, LineKind, MandoItem, PathSurface, StructureItem, StructureKind, TeeItem, TeeSurface, TreeItem, RockItem, RockKind, RockLook, RockStone } from "../../types";
-import { BRUSH_LEVELS, useTeeOwn, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
+import { BRUSH_LEVELS, HEIGHT_ENDS, heightsOf, heightsWith, useTeeOwn, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
 import { HoleChips } from "../ApplyToHoles";
 import { OnSiteButton } from "../OnSite";
 import { useTouch } from "../useLayout";
@@ -29,7 +29,9 @@ import { TREE_KINDS, speciesNow } from "../TreeSettings";
 import { ROCK_ICONS, kindPatch, ovalOutline, rockShapes, sizePatch } from "../RockSettings";
 import { ROCK_BURIED, rockSpan } from "../../three/rocks";
 import { SPECIES } from "../../three/ezShapes";
-import { ChipPick, ColorInput, OnlyGroup, PickRow, Segmented, Select, TextInput, Toggle } from "../ui";
+import { ChipPick, OnlyGroup, PickRow, Segmented, Select, TextInput, Toggle } from "../ui";
+import { ColorInput } from "../ColorSwatches";
+import { buildingSettings } from "../BuildingPanel";
 import { ActRow, type BarSetting } from "./GlassBar";
 
 /** A wall from before walls were lines: the row that makes it the new wall. */
@@ -214,6 +216,8 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     out.push({ id: "surface", name: "Surface", value: TEE_SURFACES[t.surface].label, control: <ChipPick label="Tee surface" value={t.surface} onChange={(v: TeeSurface) => set({ surface: v })} options={(Object.keys(TEE_SURFACES) as TeeSurface[]).map(k => ({ value: k, label: TEE_SURFACES[k].label, color: TEE_SURFACES[k].color }))} /> });
     if (own) {
       out.push({ id: "bends", name: "Bends", value: own.own ? "Its own" : "The hole's", control: <Segmented label="Bends" value={own.own ? "own" : "hole"} onChange={v => own.setOwn(v === "own")} options={own.bendOptions} /> });
+      // (its line on the course map, this tee on this hole alone: a switch)
+      out.push({ id: "mapline", name: "Map line", value: (item as TeeItem).noLine ? "Hidden" : "Shown", on: !(item as TeeItem).noLine, run: () => set({ noLine: (item as TeeItem).noLine ? undefined : true }) });
       out.push({ id: "teepar", name: "Par", value: t.par ?? own.parSaid, control: <Segmented label="Par from this tee" value={t.par ?? 0} onChange={own.setPar} options={own.parOptions} /> });
     }
     if (t.aimFixed) out.push({ id: "aim", name: "Facing", value: "Down the hole", icon: <Navigation size={16} />, run: () => set({ aimFixed: false }) });
@@ -271,6 +275,17 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     if (item.type === "area" && item.kind === "woods") {
       const t = thickOf(item);
       out.push({ id: "thick", name: "Thick", value: THICK.find(x => x.value === t)!.label, control: <Segmented label="How thick" value={t} onChange={v => set({ density: densityFor(v) })} options={[...THICK]} /> });
+      // (its trees' heights: one setting, the shortest and the tallest a dial each under it, named
+      // as in its panel, and the way back to the usual)
+      if ((item.bushes ?? 0) < 1) {
+        const tall = heightsOf(item);
+        out.push({ id: "tree-height", name: "Tree height", value: item.heights ? `${fmtSize(tall[0], u).replace(/ (ft|m)$/, "")} to ${fmtSize(tall[1], u)}` : "Usual", wide: true, control: (
+          <div className="flex flex-col gap-0.5" data-testid="strip-tree-height">
+            {HEIGHT_ENDS.map(e => <Dial key={e.id} label={e.label} value={tall[e.end]} min={e.min} max={e.max} step={1} format={x => fmtSize(x, u)} onChange={x => live(heightsWith(item, e.end, x))} onDone={done} />)}
+            {item.heights && <ActRow label="Reset height" hint={`The usual, ${fmtSize(WOODS_HEIGHTS[0], u).replace(/ (ft|m)$/, "")} to ${fmtSize(WOODS_HEIGHTS[1], u)}`} onClick={() => set({ heights: undefined, heightsAll: undefined })} />}
+          </div>
+        ) });
+      }
     }
     // (woods, and tall grass when you want some; a wood of bushes only is brush already)
     if (item.type === "area" && (item.kind === "rough" || (item.kind === "woods" && (item.bushes ?? 0) < 1)))
@@ -326,8 +341,9 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     const kinds = STRUCTURE_ORDER.filter(k => STRUCTURE_KINDS[k].shape === meta.shape && (k !== "wall" || s.kind === "wall"));
     out.push({ id: "kind", name: "Kind", value: meta.label, wide: true, control: <KindTiles label="Structure kind" value={s.kind} onChange={(v: StructureKind) => set({ kind: v })} options={kinds.map(k => ({ value: k, label: STRUCTURE_KINDS[k].label, picture: bigIcon(builtIcon(k)) }))} /> });
     if (s.kind === "wall" && !s.locked) out.push(newWall(s.id, false));
-    if (s.kind === "building" || s.kind === "shelter") out.push({ id: "look", name: "Look", value: "Roof and walls", wide: true, control: <div className="p-1.5"><StructureLook item={s} /></div> });
-    if (meta.heightLabel) {
+    if (s.kind === "building") out.push(...buildingSettings(s, (p, h) => set(p as Record<string, unknown>, h), done, u));
+    if (s.kind === "shelter") out.push({ id: "look", name: "Look", value: "Shape and roof", wide: true, control: <div className="p-1.5"><StructureLook item={s} /></div> });
+    if (meta.heightLabel && s.kind !== "building") {
       const h = structureHeight(s);
       dial("height", meta.heightLabel.split(" ")[0], fmtSize(h, u), { label: meta.heightLabel, value: h, min: meta.heights[0], max: Math.max(meta.heights[1], h), step: 0.5, format: v => fmtSize(v, u), onChange: v => live({ height: v }), onDone: done });
     }

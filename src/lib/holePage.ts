@@ -4,13 +4,13 @@
 // small elevation profile. Pages for print (Letter, A4, a 4 × 6 in card) and a square picture for
 // sharing; pure SVG, like the course map.
 import { fitAttr, capAttr } from "./fitText";
-import { FT_PER_M, TEE_LEVELS } from "../constants";
+import { FT_PER_M } from "../constants";
 import type { CourseDoc, PinPosition, TeeLevel, Units } from "../types";
 import { activeLayout, holeBaskets, holeTees, taglineOf, throwLine } from "./course";
 import { dist, rotatePoint } from "./geom";
 import { holeStats } from "./holeStats";
-import { markingsInView, northArrow, palette, scaleBar, wrapSvg } from "./mapSvg";
-import { autoRules, cardStyle, courseNameAs, elevationProfile as profile, holeFacts, holeMap, holeOfText, obKey, type SignArt } from "./teeSign";
+import { markingsInView, northArrow, palette, scaleBar, wrapSvg, teeLevelOf } from "./mapSvg";
+import { autoRules, cardStyle, teeName, courseNameAs, elevationProfile as profile, holeFacts, holeMap, holeOfText, obKey, type SignArt } from "./teeSign";
 import { fmtDist, fmtElev } from "./units";
 import { extrasSvg, followName, piecer } from "./pieces";
 
@@ -110,7 +110,7 @@ export const renderHolePage = (doc: CourseDoc, holeId: string, size: HolePageSiz
   const map = holeMap(doc, holeId, { w: box.w, h: box.h }, art, 1.1 * u, uid);
   const st = map.st;
   const mainTee = tees.find(t => t.id === st.teeId) ?? tees[0];
-  const lvl = TEE_LEVELS[mainTee?.level ?? st.level];
+  const lvl = teeLevelOf(doc.style, mainTee?.level ?? st.level);
   const done = st.complete;
 
   parts.push(`<rect width="${n(W)}" height="${n(H)}" fill="${PAPER}"/>`);
@@ -152,8 +152,8 @@ export const renderHolePage = (doc: CourseDoc, holeId: string, size: HolePageSiz
     let x = x0;
     const h = 18 * u, fs = 10 * u;
     for (const t of lengths.tees) {
-      const L = TEE_LEVELS[t.level];
-      const text = `${L.label.toUpperCase()} ${big(t.length, units)}`;
+      const L = teeLevelOf(doc.style, t.level);
+      const text = `${teeName(doc, t.level).toUpperCase()} ${big(t.length, units)}`;
       const w = text.length * fs * 0.52 + 18 * u;
       if (x + w > W - m) break;
       parts.push(`<g data-part="tee-length"><rect x="${n(x)}" y="${n(y - h / 2)}" width="${n(w)}" height="${n(h)}" rx="${n(h / 2)}" fill="${L.color}" stroke="#151a14" stroke-width="${n(0.8 * u)}" stroke-opacity="${L.color === "#f8fafc" ? 1 : 0.35}"/><text${fitAttr(w - 10 * u)} x="${n(x + w / 2)}" y="${n(y + 0.5 * u)}" text-anchor="middle" dominant-baseline="central" font-family="${HEAD}" font-weight="600" font-size="${n(fs)}" fill="${L.ink}">${esc(text)}</text></g>`);

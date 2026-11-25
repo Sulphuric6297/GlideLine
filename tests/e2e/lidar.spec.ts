@@ -348,6 +348,11 @@ test("any tree the app planted in a wood acts like a tree placed by hand: picked
   }, [cx, cy]);
   const trees = async () => (await course(page)).items.filter((i: any) => i.type === "tree");
   const before = await forest();
+  // (a step to redo, from before: looking at a tree leaves it there, and adds none of its own)
+  await page.evaluate(() => { const w = window as any; w.__dgActions.style({ treeCover: 0.6 }); w.__dgStore.getState().undo(); });
+  const hist = () => page.evaluate(() => (window as any).__dgHistory() as { past: number; future: number });
+  const was = await hist();
+  expect(was.future).toBe(1);
   // A click: the tree is picked, with the Tree panel, where it stood and as tall
   const a = await spot(550, 500);
   await page.mouse.click(a.at.x, a.at.y);
@@ -362,6 +367,8 @@ test("any tree the app planted in a wood acts like a tree placed by hand: picked
   await page.keyboard.press("Escape");
   await expect.poll(async () => (await trees()).length).toBe(0);
   await expect.poll(forest).toBe(before);
+  // (Undo and Redo as they were: nothing to redo from the look, and the step from before still there)
+  expect(await hist()).toEqual(was);
   // Picked and deleted: it stays gone
   await page.mouse.click(a.at.x, a.at.y);
   await expect.poll(async () => (await trees()).length).toBe(1);
@@ -763,8 +770,14 @@ test("the import's Trees step has Site's tree settings, and they come in with th
   await page.keyboard.press("Escape");
   await page.evaluate(id => (window as any).__dgActions.select(id), hole.id);
   await expect(page.getByTestId("hole-clear-trees")).toBeChecked();
+  // (the course's switch, under the hole's own: on while the course clears and no hole says otherwise)
+  await expect(page.getByTestId("every-hole-clear")).toBeChecked();
+  await expect(page.getByTestId("every-hole-said")).toHaveText("This hole, and any you add");
   await page.getByTestId("hole-clear-trees").uncheck();
   await expect.poll(async () => (await course(page)).holes[0].clearTrees).toBe(false);
+  // (the course still clears: its switch stays on and says which hole differs)
+  await expect(page.getByTestId("every-hole-clear")).toBeChecked();
+  await expect(page.getByTestId("every-hole-said")).toContainText("Not on hole 1");
   await page.getByRole("button", { name: /^1\s*Site$/ }).click();
   // (the fold is shut again on coming back to the step)
   await page.getByTestId("site-trees").locator("summary").click();
@@ -777,4 +790,26 @@ test("the import's Trees step has Site's tree settings, and they come in with th
   await page.evaluate(id => (window as any).__dgActions.hole(id, { clearTrees: true }), hole.id);
   await page.getByTestId("lidar-clear").locator("input").uncheck();
   await expect.poll(async () => { const d = await course(page); return [d.lidar.clearFairways, d.holes[0].clearTrees]; }).toEqual([undefined, undefined]);
+  // The same switch from a hole's panel in Design: every hole cleared, a hole's own setting dropped; off again
+  await page.getByRole("button", { name: /^2\s*Design$/ }).click();
+  const second = await addHole(page, { x: W2 / 2 - 250, y: H2 / 2 - 150 }, { x: W2 / 2 + 110, y: H2 / 2 - 150 });
+  await page.keyboard.press("Escape");
+  await page.evaluate(id => (window as any).__dgActions.hole(id, { clearTrees: true }), hole.id);
+  await page.evaluate(id => (window as any).__dgActions.select(id), second.id);
+  await expect(page.getByTestId("hole-clear-trees")).not.toBeChecked();
+  await expect(page.getByTestId("every-hole-clear")).not.toBeChecked();
+  await expect(page.getByTestId("every-hole-said")).toContainText("Only on hole 1");
+  // (Same for every hole: the hole's own setting dropped, the course's as it was)
+  await page.getByTestId("every-hole-same").click();
+  await expect.poll(async () => { const d = await course(page); return [d.lidar.clearFairways, d.holes[0].clearTrees]; }).toEqual([undefined, undefined]);
+  await expect(page.getByTestId("every-hole-said")).toHaveCount(0);
+  await page.evaluate(id => (window as any).__dgActions.hole(id, { clearTrees: true }), hole.id);
+  await page.getByTestId("every-hole-clear").check();
+  await expect.poll(async () => { const d = await course(page); return [d.lidar.clearFairways, d.holes[0].clearTrees, d.holes[1].clearTrees]; }).toEqual([true, undefined, undefined]);
+  await expect(page.getByTestId("hole-clear-trees")).toBeChecked();
+  await expect(page.getByTestId("every-hole-said")).toHaveText("All 2 holes, and any you add");
+  await expect.poll(() => page.evaluate(() => ((window as any).__dgSaid as string[]).some(t => /^Trees on every hole's fairway, tees and basket are cut down/.test(t)))).toBe(true);
+  await page.getByTestId("every-hole-clear").uncheck();
+  await expect.poll(async () => { const d = await course(page); return [d.lidar.clearFairways, d.holes[0].clearTrees, d.holes[1].clearTrees]; }).toEqual([undefined, undefined, undefined]);
+  await expect(page.getByTestId("hole-clear-trees")).not.toBeChecked();
 });

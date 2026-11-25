@@ -10,13 +10,14 @@ import { SCRIPT_FONTS } from "./fontKinds";
 import { GOV_CREDITS } from "./geo/usgov";
 import { latitudeOf, sunFromOf } from "./mapLook";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, FIELD_KINDS, FT_PER_M, LINE_KINDS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER } from "../constants";
-import type { AmenityItem, AreaItem, BasketItem, CourseDoc, DropZoneItem, LabelItem, LineItem, MandoItem, MapStyle, MapTheme, P, PageElementId, PageElementStyle, PaperSize, StructureItem, StructureKind, TeeItem, TreeItem } from "../types";
-import { activeLayout, throwLine, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, isWall, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, wallAsBuilt, wallDry, taglineOf, titleFontOf, amenityMarked, AMENITY_ROLE } from "./course";
-import { boundsOf, dist, offsetPath, pathLength, pointAlong, pointInPolygon, polygonArea, rectCorners, rotatePoint, smoothPath, subPath } from "./geom";
+import type { AmenityItem, AreaItem, BasketItem, CourseDoc, DropZoneItem, LabelItem, LineItem, LineStyle, MandoItem, MapStyle, MapTheme, P, PageElementId, PageElementStyle, PaperSize, StructureItem, StructureKind, TeeItem, TeeLevel, TreeItem } from "../types";
+import { mapLayoutOf, throwLine, areaObEdges, beyondSides, drawnAreas, fairwayOutline, holeBaskets, isWall, linePath, obFor, obPicked, obRanges, sharedWalks, teeAim, walkRoutes, wallAsBuilt, wallDry, taglineOf, titleFontOf, amenityMarked, AMENITY_ROLE } from "./course";
+import { boundsOf, densify, dist, nearestOnSegment, offsetPath, pathLength, pointAlong, pointInPolygon, polygonArea, rectCorners, rotatePoint, smoothPath, subPath } from "./geom";
 import { courseTotals, holeStats, isOb, isOutOfPlay, playsOf, type HoleStats } from "./holeStats";
 import { forestCanvas, forestCanvasAsync, paintedFrom, paintedLine, paintsAgain, paintsFromPhoto, treesOverOf, type CanopyGrid } from "./forest";
 import { BASKET_MARKS, RESTRICTED, STRUCTURE_INK, amenitySymbol, basketMark, dropZoneSymbol, gateSymbol, mandoSymbol, structureLegend, structureSymbol, type StructureDraw, type StructureInk } from "./symbols";
 import { isLineKind, structureHeight, structurePath, structureRoof, structureWidth } from "./structures";
+import { addOnRoof, buildingFrame } from "./buildingParts";
 import { chainContours, type Contours } from "./relief";
 import { fmtDist } from "./units";
 import { tallGrassOf } from "./landscapes";
@@ -144,6 +145,9 @@ export type MapLayers = {
   canopy?: CanopyGrid | null;
   /** Labels moved or hidden by hand (the course map's page): each one marked to be picked. */
   labelAt?: MapStyle["labelAt"];
+  /** What lies over the map (the page's title, panels and the like, in the map's own pixels): the
+   * hole numbers and lengths keep clear of them. */
+  avoid?: { x: number; y: number; w: number; h: number }[];
 };
 
 const OWN_FONTS = new Set(["", "Oswald", "Inter", "Bitter", "Script"]);
@@ -156,6 +160,38 @@ export const titleStack = (f: string) => (f === "Script" ? "'Kaushan Script', 'B
 export const keepsCase = (f: string) => f === "Script" || SCRIPT_FONTS.has(f);
 
 export { BASKET_MARKS, basketMark };
+
+/** The painted line looks' colors: the tee colors, earthier, to sit in a painting and still stand
+ * out; the main line's cream; the warm dark of their edges and shadows. */
+export const EARTH: Record<TeeLevel, string> = { gold: "#e6ad2e", blue: "#4a8ad6", white: "#efe8d6", red: "#d9553c", green: "#74b04c", purple: "#a07ad0" };
+export const LINE_CREAM = "#f3ead3";
+const CREAM = LINE_CREAM, KEY = "#2e2416", INK = "#141c0a";
+/** How the throw lines are drawn: Classic (as maps first had them), Painted or Trail. */
+export const lineLookOf = (s: Pick<MapStyle, "lineLook">): "classic" | "painted" | "trail" => s.lineLook ?? "classic";
+/** A tee color as the course's printouts show it: earthier with the painted lines. */
+export const teeColorOf = (s: Pick<MapStyle, "lineLook">, level: TeeLevel) => (lineLookOf(s) === "classic" ? TEE_LEVELS[level].color : EARTH[level]);
+/** The painted tee colors a shade deeper for the printouts' chips and bands, so their white
+ * lettering reads (white stays white, to show on the page). */
+export const PRINT_EARTH: Record<TeeLevel, string> = { gold: "#d99a1e", blue: "#3b73b9", white: TEE_LEVELS.white.color, red: "#c2452e", green: "#4d8a2f", purple: "#7d56b0" };
+/** A tee color on the printouts (signs, pages): its own, earthier with the painted lines. */
+export const teeLevelOf = (s: Pick<MapStyle, "lineLook">, level: TeeLevel) => ({ ...TEE_LEVELS[level], color: lineLookOf(s) === "classic" ? TEE_LEVELS[level].color : PRINT_EARTH[level] });
+/** The tee color a layout's main line comes from, of the colors there are: its own, else the nearest
+ * (as each hole picks its tee, `teeFor`). */
+export const mainLevelOf = (levels: TeeLevel[], want: TeeLevel) =>
+  [...levels].sort((a, b) => Math.abs(TEE_ORDER.indexOf(a) - TEE_ORDER.indexOf(want)) - Math.abs(TEE_ORDER.indexOf(b) - TEE_ORDER.indexOf(want)) || TEE_ORDER.indexOf(a) - TEE_ORDER.indexOf(b))[0] ?? want;
+/** A tee color's line, all its settings: the line look's own, with what was set by hand over them.
+ * `main`: drawn as the map's main line. `ownColor`: the main line in its tee's color too (a course
+ * with more than one layout: each layout's line its own color, none of them the white one). */
+export const lineStyleOf = (s: MapStyle, level: TeeLevel, main: boolean, ownColor = false) => {
+  const look = lineLookOf(s), classic = look === "classic", own = s.lineStyles?.[level] ?? {};
+  const base: Required<LineStyle> = {
+    color: main && !ownColor ? (classic ? palette(s).line : CREAM) : classic ? (TEE_LEVELS[level].color === "#f8fafc" ? "#eef0f2" : TEE_LEVELS[level].color) : EARTH[level],
+    dash: !main && look === "trail" ? "dashed" : "solid",
+    width: 1, opacity: 1, outline: classic ? "dark" : "soft", shadow: !classic, arrow: true, distance: main && s.distances, hidden: false
+  };
+  const set = Object.fromEntries(Object.entries(own).filter(([, v]) => v !== undefined)) as LineStyle;
+  return { ...base, ...set, ...(main ? { hidden: false, distance: s.distances } : {}) };
+};
 
 /** The map itself (everything inside the frame), in a box `view.width` × `view.height`. */
 export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers, uid = "m") => {
@@ -404,7 +440,20 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     const order: StructureKind[] = ["wall", "stairs", "boardwalk", "deck", "bridge", "shelter", "building"];
     for (const st of [...structures].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind))) {
       const shape = isLineKind(st.kind) ? structurePath(st) : st.points;
-      out.push(`<g opacity="${dim(st.holeId, st.alsoHoles)}">${structureSymbol(st.kind, shape, structureWidth(st), structureHeight(st), structureRoof(st), { ...draw, id: `${uid}-s${st.id}`, ink: st.roofColor ? { ...draw.ink, roof: st.roofColor, shelter: st.roofColor } : draw.ink }, { pitch: st.roofPitch, across: st.ridgeAcross })}</g>`);
+      const ink = st.roofColor && st.roofColor !== "natural" ? { ...draw.ink, roof: st.roofColor, shelter: st.roofColor } : draw.ink;
+      // (a building's porches, carports, decks and patios out from its walls, under it: a roof, a
+      // deck's boards, a patio's slab; one set into the house is under the house's roof)
+      if (st.kind === "building" && st.addOns?.length) {
+        const F = buildingFrame(st, () => 0);
+        for (const a of st.addOns) {
+          const w = F.walls[a.wall], roof = addOnRoof(a);
+          if (!w || roof === "house") continue;
+          const m = F.along(a.wall, a.at), h = a.width / 2, q = (sx: number, d: number) => ({ x: m.x + w.dir.x * sx + w.out.x * d, y: m.y + w.dir.y * sx + w.out.y * d });
+          const pts = [q(-h, 0), q(h, 0), q(h, a.depth), q(-h, a.depth)];
+          out.push(`<g opacity="${dim(st.holeId, st.alsoHoles)}">${roof === "own" ? structureSymbol("building", pts, 0, 8, "shed", { ...draw, id: `${uid}-a${a.id}`, ink }, { pitch: 0.25 }) : a.kind === "patio" ? `<polygon points="${pts.map(p => `${n(p.x)},${n(p.y)}`).join(" ")}" fill="${ink.stone}" stroke="${ink.casing}" stroke-width="${n(px(0.5))}" stroke-opacity="0.6"/>` : structureSymbol("deck", pts, 0, 2, "flat", { ...draw, id: `${uid}-a${a.id}`, ink })}</g>`);
+        }
+      }
+      out.push(`<g opacity="${dim(st.holeId, st.alsoHoles)}">${structureSymbol(st.kind, shape, structureWidth(st), structureHeight(st), structureRoof(st), { ...draw, id: `${uid}-s${st.id}`, ink }, { pitch: st.roofPitch, across: st.ridgeAcross })}</g>`);
     }
   }
   // (the painted treetops over the buildings, and their shade on the roofs: crowns overhang roofs
@@ -560,30 +609,494 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       for (const b of holeBaskets(doc, st.holeId)) out.push(`<circle cx="${n(b.x)}" cy="${n(b.y)}" r="${n(CIRCLE_ONE_FT)}" fill="none" stroke="${pal.line}" stroke-opacity="${n(0.6 * o)}" stroke-width="${n(px(1))}" stroke-dasharray="${n(px(3))} ${n(px(3))}"/>`);
     }
   }
+  // Throw lines: each hole's main line (its layout's) and its other tees' lines, in the line look
+  // picked, with each tee color's own settings over it. Classic as it was drawn, exactly, unless a
+  // line was set by hand.
+  const look = lineLookOf(s);
+  // (more than one layout: each one's line in its own tee color)
+  const multi = doc.layouts.length > 1;
+  /** Where each line's own distance goes (with the labels). */
+  const ownDistances: { id: string; path: P[]; text: string; color: string; o: number }[] = [];
+  /** Every throw line as it's drawn (`own`: its length's label; `half`: half its width, ft;
+   * `arrow`: with an arrowhead at its end). */
+  const drawnLines: { own: string; path: P[]; half: number; arrow?: boolean }[] = [];
+  // (every line's width and its arrowhead's size, times the look's own)
+  const weight = s.lineWeight ?? 1, headSize = s.arrowSize ?? 1, classicLook = look === "classic";
+  // (a painted line's edge: a darker shade of its own color, the same for every line; Classic's by
+  // hand as it was)
+  const darker = (hex: string, by: number) => {
+    const m = /^#([0-9a-f]{6})$/i.exec(hex);
+    if (!m) return KEY;
+    const v = parseInt(m[1], 16), c = (x: number) => Math.round(x * by).toString(16).padStart(2, "0");
+    return `#${c(v >> 16)}${c((v >> 8) & 255)}${c(v & 255)}`;
+  };
+  const softEdge = (color: string) => (classicLook ? { c: KEY, o: 0.7, w: 0.9 } : { c: darker(color, 0.4), o: 0.9, w: 1 });
+  const turn = (from: number, to: number) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  /** Where the painted looks' arrowheads lie (plan ft), for the labels to keep off. */
+  const headsAt: { p: P; r: number }[] = [];
+  /** A line's bends swept wider, as a disc flies them: smoothed along its length (about 14 ft each
+   * way), every spot kept within `most` ft of where it was plotted, so it stays on its fairway;
+   * its ends where they were. In feet, so the same at every scale. */
+  const swept = (path: P[], most: number): P[] => {
+    if (path.length < 3 || most <= 0) return path;
+    const src = densify(path, 3), last = src.length - 1;
+    let cur = src;
+    for (let it = 0; it < 44; it++) {
+      cur = cur.map((p, i) => {
+        if (i === 0 || i === last) return p;
+        const q = { x: (cur[i - 1].x + 2 * p.x + cur[i + 1].x) / 4, y: (cur[i - 1].y + 2 * p.y + cur[i + 1].y) / 4 };
+        const dx = q.x - src[i].x, dy = q.y - src[i].y, d = Math.hypot(dx, dy);
+        return d > most ? { x: src[i].x + (dx * most) / d, y: src[i].y + (dy * most) / d } : q;
+      });
+    }
+    return cur;
+  };
   if (s.throwLines) {
+    // (where the lines' parts are written: a hole's lines in two passes, every line's shadow and
+    // outline, then every line's color, so no outline cuts across where two lines join)
+    let sink: string[] = out;
+    let shadowId = "";
+    const shadow = () => {
+      if (!shadowId) {
+        // (over the whole map, in the plan's feet: a line lying flat would have no height of its own)
+        const r = Math.hypot(view.width, view.height) / k;
+        shadowId = `${uid}-lsh`;
+        defs.push(`<filter id="${shadowId}" filterUnits="userSpaceOnUse" x="${n(view.cx - r)}" y="${n(view.cy - r)}" width="${n(r * 2)}" height="${n(r * 2)}"><feGaussianBlur stdDeviation="${n(px(1.5))}"/></filter>`);
+      }
+      return shadowId;
+    };
+    let seed = 0;
+    // A painted stroke: a ribbon narrow at the tee, full along, the brush's width wavering a little
+    const ribbon = (line: P[], w: number, round = false) => {
+      const d = densify(line, px(2.5)), len = pathLength(d) || 1, s0 = ++seed * 1.7;
+      const wAt = (t: number) => w * (0.45 + 0.55 * Math.min(1, t / 0.2)) * (1 + 0.05 * Math.sin((t * len) / px(7) + s0) + 0.035 * Math.sin((t * len) / px(19) + s0 * 2));
+      const L = offsetPath(d, t => wAt(t) / 2), R = offsetPath(d, t => -wAt(t) / 2).reverse();
+      // (round at its far end: from its one side round the front to the other)
+      const cap: P[] = [];
+      if (round && d.length > 1) {
+        const E = d[d.length - 1], q = d[d.length - 2], ahead = Math.atan2(E.y - q.y, E.x - q.x), l = L[L.length - 1];
+        const a0 = Math.atan2(l.y - E.y, l.x - E.x), r = dist(l, E), half = turn(a0, ahead);
+        for (let i = 1; i < 8; i++) cap.push({ x: E.x + Math.cos(a0 + (half * 2 * i) / 8) * r, y: E.y + Math.sin(a0 + (half * 2 * i) / 8) * r });
+      }
+      return `M${[...L, ...cap, ...R].map(q => `${n(q.x)} ${n(q.y)}`).join("L")}Z`;
+    };
+    // (a soft shadow under a shape or a stroke, falling as the trees' do)
+    const under = (dd: string, w?: number) =>
+      sink.push(`<path d="${dd}" ${w === undefined ? `fill="${INK}" fill-opacity="${classicLook ? 0.3 : 0.22}"` : `fill="none"`} stroke="${INK}" stroke-opacity="${classicLook ? 0.3 : 0.22}" stroke-width="${n(w ?? px(1.4))}" stroke-linejoin="round" stroke-linecap="round" filter="url(#${shadow()})" transform="translate(${n(px(classicLook ? 1.4 : 1.1))} ${n(px(classicLook ? 1.4 : 1.1))})"/>`);
+    // A painted arrowhead, shaped like a leaf, its tip `tipAt` along the line
+    const leaf = (line: P[], color: string, al: number, tipAt: number, ls: { shadow: boolean; outline: string }) => {
+      const end = pointAlong(line, Math.max(0, tipAt - al * 0.75));
+      const t = end.point, a = end.angle, c = Math.cos(a), sn = Math.sin(a);
+      const P0 = { x: t.x + c * al * 0.75, y: t.y + sn * al * 0.75 };
+      const side = (s1: number) => ({ x: t.x - c * al * 0.5 - sn * al * 0.5 * s1, y: t.y - sn * al * 0.5 + c * al * 0.5 * s1 });
+      const B = { x: t.x - c * al * 0.25, y: t.y - sn * al * 0.25 };
+      const l = side(1), r = side(-1);
+      const dd = `M${n(P0.x)} ${n(P0.y)}Q${n((P0.x + l.x) / 2 - sn * al * 0.12)} ${n((P0.y + l.y) / 2 + c * al * 0.12)} ${n(l.x)} ${n(l.y)}Q${n(B.x)} ${n(B.y)} ${n(r.x)} ${n(r.y)}Q${n((P0.x + r.x) / 2 + sn * al * 0.12)} ${n((P0.y + r.y) / 2 - c * al * 0.12)} ${n(P0.x)} ${n(P0.y)}Z`;
+      if (ls.shadow) under(dd);
+      const soft = softEdge(color);
+      const edge = ls.outline === "none" ? "" : ` stroke="${ls.outline === "dark" ? pal.lineCasing : soft.c}" stroke-opacity="${ls.outline === "dark" ? 1 : soft.o}" stroke-width="${n(px(ls.outline === "dark" ? 1 : soft.w * 0.5))}" stroke-linejoin="round"`;
+      sink.push(`<path d="${dd}" fill="${color}"${edge}/>`);
+    };
+    // (where a line toward the basket stops in the painted looks: just outside its putting circle, or its mark)
+    const short = (s.circle ? CIRCLE_ONE_FT : (4 * ts) / k) + 3 / k;
+    let unders: string[] = [], fills: string[] = [];
+    // (where a line stops, from the basket, in the painted looks: every line that comes to the
+    // basket, the main one and another tee's own alike, at its putting circle, or by the basket
+    // itself where the map says so. Classic's own lines as they did: clear of the main arrowhead)
+    const byBasket = Math.max(8 / k, 6), stop = s.lineEnd === "basket" ? byBasket : short;
+    // (hole by hole: a hole whose last leg is too short for an arrowhead at the circle runs its lines on to the basket)
+    let atBasket = s.lineEnd === "basket";
+    let ownEnd = classicLook ? Math.max(short, 22 / k) + 8 / k : stop;
+    // (how far apart two lines come to the circle for each to have its own arrowhead)
+    const headRoom = (9.5 / k) * Math.sqrt(weight) * headSize * 1.05;
+    /** Where a line toward the basket comes to where the lines stop. */
+    const arrives = (path: P[]) => pointAlong(path, Math.max(0, pathLength(path) - ownEnd)).point;
+    // A line of its own, drawn to end aimed at the basket: where the line it plays still bends
+    // inside the putting circle, its last stretch is bent to come in aimed at the basket, so its
+    // arrowhead at the circle points at it.
+    // (`to`: where on the circle it comes in, when not where it would by itself: fanned out from
+    // another line's arrowhead)
+    const aimed = (truth: P[], basket: P, to?: P): P[] => {
+      // (where it comes to the putting circle: as far from the basket as its tip goes, straight across)
+      const len = pathLength(truth);
+      let at = len - ownEnd;
+      while (at > len * 0.5 && dist(pointAlong(truth, at).point, basket) < ownEnd) at -= 1 / k;
+      if (at < len * 0.5) return truth;
+      const E0 = pointAlong(truth, at), E = to ? { point: to, angle: E0.angle } : E0, aim = Math.atan2(basket.y - E.point.y, basket.x - E.point.x);
+      if (!to && Math.abs(Math.atan2(Math.sin(E.angle - aim), Math.cos(E.angle - aim))) < 0.12) return truth;
+      // (the bend ends an arrowhead's length before the circle, so the arrowhead lies on a straight run at the basket)
+      // (fanned out: from farther back, and coming in halfway between its own way there and straight
+      // at the basket, so it's one easy curve, never an S)
+      const back = to ? Math.min(at * 0.85, px(120)) : Math.min(at * 0.6, px(70)), A = pointAlong(truth, at - back), run = to ? 0 : 14 / k;
+      const want = to ? (c => c + turn(c, aim) * 0.5)(Math.atan2(E.point.y - A.point.y, E.point.x - A.point.x)) : aim;
+      const a = A.point, b = { x: E.point.x - Math.cos(want) * run, y: E.point.y - Math.sin(want) * run }, h = dist(a, b) * 0.4;
+      const c1 = { x: a.x + Math.cos(A.angle) * h, y: a.y + Math.sin(A.angle) * h }, c2 = { x: b.x - Math.cos(want) * h, y: b.y - Math.sin(want) * h };
+      const bend = Array.from({ length: 24 }, (_, i) => {
+        const t = (i + 1) / 24, u = 1 - t;
+        return { x: u * u * u * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x, y: u * u * u * a.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * b.y };
+      });
+      return [...trimPath(truth, 0, at - back), ...bend, E.point, basket];
+    };
+    /** One line, every setting of it: `main` with its arrowhead and the map's own trims. Its shadow
+     * and outline into `unders`, its color into `fills`. */
+    /** A line that comes to the basket where `host` does: over its last stretch it runs into that
+     * line at the base of its arrowhead, in one shallow curve, and ends there under it (no stub
+     * left beside the arrowhead). `gap`: how far apart the two come in. */
+    const tuckInto = (truth: P[], host: P[], gap: number, at?: number): { path: P[]; rest: P[] } => {
+      const hostLen = pathLength(host), len = pathLength(truth), headLen = (9.5 / k) * Math.sqrt(weight) * headSize;
+      const hostAt = at ?? Math.max(hostLen * 0.3, hostLen - ownEnd - headLen * 0.7);
+      const from = Math.max(0, len - ownEnd - Math.min(len * 0.6, Math.max(px(75), gap * 12)));
+      const A = pointAlong(truth, from), B = pointAlong(host, hostAt), a = A.point, b = B.point, h = dist(a, b) * 0.4;
+      const c1 = { x: a.x + Math.cos(A.angle) * h, y: a.y + Math.sin(A.angle) * h }, c2 = { x: b.x - Math.cos(B.angle) * h, y: b.y - Math.sin(B.angle) * h };
+      const bend = Array.from({ length: 32 }, (_, i) => {
+        const t = (i + 1) / 32, u = 1 - t;
+        return { x: u * u * u * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x, y: u * u * u * a.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * b.y };
+      });
+      return { path: [...(from > 0 ? trimPath(truth, 0, from) : [a]), ...bend], rest: trimPath(host, hostAt, hostLen) };
+    };
+    /** A line that ends on another, less the end of it that lies under that one (within `hide` of
+     * its middle: a dash or an edge of it would only peek out from under it). */
+    const lessHidden = (path: P[], hide: number, over: P[]): P[] => {
+      if (hide <= 0 || over.length < 2 || path.length < 3) return path;
+      const off = (q: P) => { let m = Infinity; for (let i = 1; i < over.length; i++) m = Math.min(m, nearestOnSegment(q, over[i - 1], over[i]).distance); return m; };
+      let end = path.length - 1;
+      while (end > 1 && off(path[end - 1]) < hide) end--;
+      return end < path.length - 1 ? path.slice(0, end + 1) : path;
+    };
+    const drawLine = (line: P[], ls0: ReturnType<typeof lineStyleOf>, main: boolean, o: number, basket: P, alone = false) => {
+      let ls = ls0;
+      const classic = look === "classic";
+      const W = px((main ? (classic ? 2.4 : 3.2) : classic ? 2 : 2.2) * ls.width * weight);
+      const headLook = s.arrowLook ?? (classic ? "triangle" : "leaf");
+      // (no arrowheads on the map at all)
+      if (headLook === "none") ls = { ...ls, arrow: false };
+      const len = pathLength(line);
+      // (the classic main line ends as it did; the painted ones, and any line run to the basket, at its putting circle)
+      // (`alone`: another tee's line that goes to the basket by itself, its tip clear of the main line's arrowhead)
+      const toBasket = main || alone;
+      // (a line of its own stops at the putting circle, clear of the main line's arrowhead; `aimed` has it come in aimed at the basket)
+      // (the painted looks' arrowhead goes with its line's width, a little bigger for it on a thin line)
+      const al = (classic ? (9 / k) * Math.sqrt(ls.width * weight) * (alone ? 0.65 : 1) : (9.5 / k) * Math.sqrt(ls.width * weight) * (main ? 1 : 0.78)) * headSize;
+      const edge = Math.max(len * 0.5, len - ownEnd);
+      // (the classic arrowhead reaches past the spot it's set at: set back, so its tip is where the painted one's is)
+      // (the painted looks: at where the hole's lines stop; with no arrowhead, right at the basket's mark
+      // where they run on to it)
+      const tipAt = classic ? (main ? len - Math.max(12 / k, 6) : alone ? edge - al * 0.6 : len) : !toBasket ? len : atBasket && !ls.arrow ? Math.max(len * 0.5, len - 4 / k) : edge;
+      // (how far short of its tip the line itself ends, under its arrowhead; an open one's tip a little short of the circle)
+      const under0 = headLook === "open" ? 2 / k + W * 0.3 : headLook === "triangle" ? al * 0.5 : al * 0.9;
+      const body = main ? trimPath(line, 6 / k, classic ? len - Math.max(2.2 / k * 6, 8) : ls.arrow ? tipAt - under0 : tipAt) : toBasket ? trimPath(line, 0, ls.arrow ? tipAt - (classic ? 1.2 / k : under0) : tipAt) : ls.arrow && !classic ? trimPath(line, 0, Math.max(0, len - under0)) : line;
+      if (body.length < 2) return;
+      const dd = pathD(densify(body, px(3)));
+      const stroke = (c: string, w: number, op = 1, extra = "") => sink.push(`<path d="${dd}" fill="none" stroke="${c}"${op < 1 ? ` stroke-opacity="${n(op)}"` : ""} stroke-width="${n(w)}" stroke-linecap="round" stroke-linejoin="round"${extra}/>`);
+      // (dashes three widths long, a gap of one and a third, fitted to the line so it ends on a whole
+      // dash; Classic's as they were)
+      const fit = (d0: number, g0: number) => { const L = pathLength(body), nn = Math.max(1, Math.round((L + g0) / (d0 + g0))), f = L / (nn * d0 + (nn - 1) * g0); return ` stroke-dasharray="${n(d0 * f)} ${n(g0 * f)}"`; };
+      const dash = ls.dash === "dashed" ? (classic ? ` stroke-dasharray="${n(W * 2.1)} ${n(W * 1.25)}"` : fit(W * 2, W * 2.3)) : ls.dash === "dotted" ? ` stroke-dasharray="0 ${n(W * 2)}"` : "";
+      const soft = softEdge(ls.color);
+      const painted = main && !classic && ls.dash === "solid";
+      // (a see-through line all in one piece, over the others: its color hides its own outline's middle)
+      const whole = o * ls.opacity < 1;
+      sink = whole ? fills : unders;
+      sink.push(`<g opacity="${n(o * ls.opacity)}">`);
+      if (ls.shadow) under(dd, W + px(1.8));
+      if (ls.outline === "soft") {
+        // (a lane of light under the main line, as a cleared line through the woods; the others their thin dark edge alone)
+        if (main) sink.push(`<path d="${dd}" fill="none" stroke="${CREAM}" stroke-opacity="0.11" stroke-width="${n(W * 3.4)}" stroke-linecap="round" stroke-linejoin="round" filter="url(#${shadow()})"/>`);
+        if (!painted) stroke(soft.c, W + px(soft.w), soft.o, dash);
+      } else if (ls.outline === "dark") stroke(pal.lineCasing, W + px(main ? 2.2 : 1.8), 1, dash);
+      if (!whole) { sink.push(`</g>`); sink = fills; sink.push(`<g opacity="${n(o * ls.opacity)}">`); }
+      if (painted) sink.push(`<path d="${ribbon(body, W, !ls.arrow)}" fill="${ls.color}"${ls.outline === "soft" ? ` stroke="${soft.c}" stroke-opacity="${soft.o}" stroke-width="${n(px(soft.w * 0.45))}" stroke-linejoin="round"` : ""}/>`);
+      else stroke(ls.color, W, 1, dash);
+      // (the labels keep off a painted look's arrowhead)
+      if (ls.arrow && !classic) headsAt.push({ p: pointAlong(line, Math.max(0, tipAt - al * 0.45)).point, r: al * 0.7 });
+      if (ls.arrow) {
+        if (headLook === "open") {
+          // (two strokes from the tip, as a line arrow)
+          const end = pointAlong(line, Math.max(0, tipAt - 2 / k)), tip = end.point, a = end.angle, hw = W * 0.75;
+          const wing = (sg: number) => ({ x: tip.x - Math.cos(a - 0.52 * sg) * al * 1.05, y: tip.y - Math.sin(a - 0.52 * sg) * al * 1.05 });
+          const l = wing(1), r = wing(-1), hd = `M${n(l.x)} ${n(l.y)}L${n(tip.x)} ${n(tip.y)}L${n(r.x)} ${n(r.y)}`;
+          if (ls.shadow) under(hd, hw + px(1.8));
+          if (ls.outline !== "none") sink.push(`<path d="${hd}" fill="none" stroke="${ls.outline === "dark" ? pal.lineCasing : soft.c}" stroke-opacity="${ls.outline === "dark" ? 1 : soft.o}" stroke-width="${n(hw + px(ls.outline === "dark" ? 2 : soft.w))}" stroke-linecap="round" stroke-linejoin="round"/>`);
+          sink.push(`<path d="${hd}" fill="none" stroke="${ls.color}" stroke-width="${n(hw)}" stroke-linecap="round" stroke-linejoin="round"/>`);
+        } else if (headLook === "triangle") {
+          // (Classic's reaches past the spot it's set at; in the painted looks its tip is where the line stops)
+          const end = pointAlong(line, Math.max(0, classic ? tipAt : tipAt - al * 0.6)), tip = end.point, a = end.angle;
+          const head = [
+            { x: tip.x + Math.cos(a) * al * 0.6, y: tip.y + Math.sin(a) * al * 0.6 },
+            { x: tip.x - Math.cos(a - 0.45) * al, y: tip.y - Math.sin(a - 0.45) * al },
+            { x: tip.x - Math.cos(a + 0.45) * al, y: tip.y - Math.sin(a + 0.45) * al }
+          ];
+          if (ls.shadow && !classic) under(`M${pts(head).split(" ").join("L")}Z`);
+          sink.push(`<polygon points="${pts(head)}" fill="${ls.color}"${ls.outline === "none" ? "" : ls.outline === "soft" && !classic ? ` stroke="${soft.c}" stroke-opacity="${soft.o}" stroke-width="${n(px(soft.w * 0.5))}" stroke-linejoin="round"` : ` stroke="${pal.lineCasing}" stroke-width="${n(px(1))}"`}/>`);
+        } else leaf(line, ls.color, al, tipAt, ls);
+      }
+      sink.push(`</g>`);
+      sink = out;
+    };
+    // Another tee's line where it joins a line of its hole already drawn (the main one, or another
+    // tee's). It's the line the tee really plays. Where that gets onto the other line (within the
+    // lines' own width of it, to stay there) before the putting circle, it joins it: one bend over
+    // the last stretch, ending on it and heading its way, as a side road joins a road (the other
+    // line's color lies over its end). It's never bent off to a line it doesn't run into: a
+    // tee with its own way to the basket keeps it (`alone`). Decided from the lines alone, so the
+    // same in every line look. Null: nothing to draw, on a line all along or too short to read
+    // (its pad says where it is).
+    // (`shows`: each of `trunks` as it's drawn, where that isn't as it was plotted (its bends swept
+    // wide): where the line joins is told from the lines as plotted, and it's drawn onto the line
+    // as drawn, as far along it)
+    // (`taken`: where lines joined this hole's lines already; another joins a little before or
+    // after, never on the same spot, which would knot)
+    const joinOnto = (truth: P[], trunks: P[][], clear: number, shows?: P[][], taken?: P[], anyAngle = false): { path: P[]; alone: boolean; rest?: P[]; host?: number } | null => {
+      const nearOn = (t: P[], q: P) => { let best = { point: q, distance: Infinity, i: 1 }; for (let i = 1; i < t.length; i++) { const m = nearestOnSegment(q, t[i - 1], t[i]); if (m.distance < best.distance) best = { ...m, i }; } return best; };
+      const all = truth.map(q => trunks.map(t => nearOn(t, q).distance)), last = truth.length - 1;
+      if (all.every(ds => Math.min(...ds) < px(9))) return null;
+      const arc = [0];
+      for (let i = 1; i <= last; i++) arc.push(arc[i - 1] + dist(truth[i - 1], truth[i]));
+      const left = (i: number) => arc[last] - arc[i];
+      // (where it gets onto a line, to stay on one)
+      const onto = (d: (i: number) => number) => { let i = truth.length; while (i > 0 && d(i - 1) <= px(6)) i--; return i; };
+      let to = onto(i => Math.min(...all[i]));
+      // (not before the putting circle: its own way there)
+      if (to > last || left(to) < clear) return { path: truth, alone: true };
+      // (the one line it joins: the nearest a little before it's on it)
+      let before = to;
+      while (before > 0 && arc[to] - arc[before] < px(30)) before--;
+      const k0 = all[before].indexOf(Math.min(...all[before])), host = trunks[k0];
+      const ns = truth.map(q => nearOn(host, q));
+      to = onto(i => ns[i].distance);
+      if (to > last || left(to) < clear) return { path: truth, alone: true };
+      // (it leaves its own line three and a half times as far back as it has to come across, 24 px
+      // at least and 90 at most: a gentle bend, and its own line till it's nearly there)
+      let a = to;
+      while (a > 0 && arc[to] - arc[a] < px(90) && (arc[to] - arc[a] < px(24) || arc[to] - arc[a] < 3.5 * ns[a].distance)) a--;
+      // (a stub by the line: its pad is enough; off the line by more than a pad's width, a short
+      // bend from the pad onto it, or the pad would look forgotten)
+      const stub = arc[to] < px(30);
+      if (stub && ns[0].distance < px(classicLook ? 15 : 8)) return null;
+      if (stub) a = 0;
+      // One bend from its own line onto the other: leaving its own heading its own way, arriving a
+      // little on along the other heading that one's way (short of the putting circle)
+      const hostArc = [0];
+      for (let i = 1; i < host.length; i++) hostArc.push(hostArc[i - 1] + dist(host[i - 1], host[i]));
+      const met = hostArc[ns[to].i - 1] + dist(host[ns[to].i - 1], ns[to].point), hostLen = hostArc[host.length - 1];
+      let atHost = Math.max(met, Math.min(met + Math.max(px(stub ? 30 : 12), (arc[to] - arc[a]) * 0.5), hostLen - clear));
+      if (taken?.length) {
+        const apart = px(16), free = (d: number) => taken.every(q => dist(pointAlong(host, d).point, q) >= apart);
+        let found = false;
+        for (const step of [0, 1, -1, 2, -2, 3]) {
+          const d = atHost + step * apart;
+          if (d >= met - apart && d <= hostLen - clear && d > 0 && free(d)) { atHost = d; found = true; break; }
+        }
+        // (no room on it clear of the other join: its own way to the basket)
+        if (!found) return { path: truth, alone: true };
+      }
+      const shown = shows?.[k0], shownLen = shown ? pathLength(shown) : 0, atShown = shown ? (atHost / (hostLen || 1)) * shownLen : 0;
+      const B = shown ? pointAlong(shown, atShown) : pointAlong(host, atHost);
+      const A = truth[a], n1 = truth[Math.min(last, a + 1)], n0 = truth[Math.max(0, a - 1)];
+      const ta0 = { x: n1.x - n0.x, y: n1.y - n0.y }, tl = Math.hypot(ta0.x, ta0.y) || 1, ta = { x: ta0.x / tl, y: ta0.y / tl };
+      const tb = { x: Math.cos(B.angle), y: Math.sin(B.angle) }, b = B.point, h = dist(A, b) * 0.4;
+      // (the painted looks: only where it comes in along the line, within 22 degrees of its own way and
+      // of the line's, 34 in all; a line that would have to turn to it goes its own way to the basket, as it plays)
+      if (!classicLook && !anyAngle) {
+        const chord = Math.atan2(b.y - A.y, b.x - A.x);
+        if (Math.abs(turn(Math.atan2(ta.y, ta.x), chord)) > 0.38 || Math.abs(turn(chord, B.angle)) > 0.38 || Math.abs(turn(Math.atan2(ta.y, ta.x), B.angle)) > 0.6) return { path: truth, alone: true };
+      }
+      const c1 = { x: A.x + ta.x * h, y: A.y + ta.y * h }, c2 = { x: b.x - tb.x * h, y: b.y - tb.y * h };
+      const bend = Array.from({ length: 32 }, (_, i) => {
+        const t = (i + 1) / 32, u = 1 - t;
+        return { x: u * u * u * A.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x, y: u * u * u * A.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * b.y };
+      });
+      // (and on along the line it joined, to the basket: what a later tee's line joins)
+      const at = nearOn(host, b);
+      taken?.push(pointAlong(host, atHost).point);
+      return { path: [...truth.slice(0, a + 1), ...bend], alone: false, rest: shown ? trimPath(shown, atShown, shownLen) : host.slice(at.i), host: k0 };
+    };
     for (const st of layers.stats) {
       if (!st.complete) continue;
       const hole = doc.holes.find(h => h.id === st.holeId)!;
       const o = dim(st.holeId);
-      // Other tees of the hole: thinner dashed lines in their colors
-      for (const tee of doc.items.filter(i => i.type === "tee" && i.holeId === st.holeId && i.id !== st.teeId) as TeeItem[]) {
-        const line = smoothPath(throwLine(hole, tee, st.line[st.line.length - 1]), 10);
-        out.push(`<path d="${pathD(line)}" fill="none" stroke="${TEE_LEVELS[tee.level].color === "#f8fafc" ? "#e5e7eb" : TEE_LEVELS[tee.level].color}" stroke-width="${n(px(1.6))}" stroke-dasharray="${n(px(5))} ${n(px(4))}" opacity="${n(0.9 * o)}"/>`);
+      const basket = st.line[st.line.length - 1];
+      const mainTee = doc.items.find(i => i.id === st.teeId) as TeeItem | undefined;
+      const mainLs = lineStyleOf(s, mainTee?.level ?? "blue", true, multi);
+      // (in the painted looks the main line too stops where the lines stop, come in aimed at the basket)
+      // (and its bends swept wide, within a third of its fairway's width of where they were plotted)
+      const sweep = classicLook || s.lineBends === "plotted" ? 0 : Math.max(5, Math.min(12, (hole.fairway ? hole.fairwayWidth : 30) * 0.3));
+      const plotted = smoothPath(st.line, 12), bent = classicLook ? plotted : swept(plotted, sweep);
+      atBasket = s.lineEnd === "basket";
+      if (!classicLook) {
+        ownEnd = stop;
+        // (its last leg, from where the line last turns to the circle, too short to hold an arrowhead:
+        // this hole's lines run on to the basket, where the arrowhead has the room)
+        const L = pathLength(bent), last = pointAlong(bent, Math.max(0, L - 1 / k)).angle, headLen = (9.5 / k) * Math.sqrt(mainLs.width * weight) * headSize;
+        let back = ownEnd;
+        while (back < L * 0.6 && Math.abs(turn(pointAlong(bent, L - back).angle, last)) < 0.5) back += 2 / k;
+        if (!atBasket && back < L * 0.6 && back - ownEnd < headLen * 2.2) { atBasket = true; ownEnd = byBasket; }
       }
-      const line = smoothPath(st.line, 12);
-      const len = pathLength(line);
-      const trim = trimPath(line, 6 / k, len - Math.max(2.2 / k * 6, 8));
-      out.push(`<path d="${pathD(trim)}" fill="none" stroke="${pal.lineCasing}" stroke-width="${n(px(4.6))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
-      out.push(`<path d="${pathD(trim)}" fill="none" stroke="${pal.line}" stroke-width="${n(px(2.4))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
-      // Arrowhead short of the basket
-      const end = pointAlong(line, Math.max(0, len - Math.max(12 / k, 6)));
-      const tip = end.point, a = end.angle, al = 9 / k;
-      const head = [
-        { x: tip.x + Math.cos(a) * al * 0.6, y: tip.y + Math.sin(a) * al * 0.6 },
-        { x: tip.x - Math.cos(a - 0.45) * al, y: tip.y - Math.sin(a - 0.45) * al },
-        { x: tip.x - Math.cos(a + 0.45) * al, y: tip.y - Math.sin(a + 0.45) * al }
-      ];
-      out.push(`<polygon points="${pts(head)}" fill="${pal.line}" stroke="${pal.lineCasing}" stroke-width="${n(px(1))}" opacity="${o}"/>`);
+      const line = classicLook ? plotted : aimed(bent, basket);
+      unders = []; fills = [];
+      const mainW = px((look === "classic" ? 2.4 : 3.2) * mainLs.width * weight);
+      if (!mainTee?.noLine) drawnLines.push({ own: `dist:${st.holeId}`, path: line, half: mainW / 2, arrow: mainLs.arrow });
+      // Other tees of the hole: each its own line; where it runs into the hole's line, or another
+      // tee's, it joins it (from there it plays that line, drawn already), or runs alongside the
+      // hole's line to the basket. The longest first: a shorter one may join it.
+      // (the main tee's line left off this hole: the others go their own ways)
+      const trunks: P[][] = mainTee?.noLine ? [] : [line];
+      // (how wide each is drawn; and each other tee's line's color, to lay the lines down the last first)
+      const widths: number[] = mainTee?.noLine ? [] : [mainW], laid: string[][] = [];
+      // (run beside the main line: how many lanes are taken on each side of it)
+      const lanes: Record<number, number> = {};
+      // (each of them as plotted: what tells where another line gets onto it)
+      const plots: P[][] = mainTee?.noLine ? [] : [plotted];
+      const joins: P[] = [];
+      // (a join stays clear of the arrowhead at the circle)
+      const clearOf = classicLook ? Math.max(30 / k, short + px(4)) : Math.max(30 / k, ownEnd + headRoom * 1.5 + px(6));
+      const others = (doc.items.filter(i => i.type === "tee" && i.holeId === st.holeId && i.id !== st.teeId) as TeeItem[])
+        .map(tee => { const played = throwLine(hole, tee, basket); return { tee, played, len: pathLength(played) }; }).sort((p, q) => q.len - p.len);
+      for (const { tee, played } of others) {
+        const ls = lineStyleOf(s, tee.level, false);
+        if (ls.hidden || tee.noLine) continue;
+        // (as plotted, to see where it gets onto a line already drawn: one of its own all the way is swept as the main line is)
+        const own = smoothPath(played, 10);
+        const ownLen = pathLength(own), step = Math.max(px(2), 0.5);
+        let along = Array.from({ length: Math.ceil(ownLen / step) + 1 }, (_, i) => pointAlong(own, Math.min(ownLen, i * step)).point);
+        let alone = false, onto = -1;
+        const W2 = px((classicLook ? 2 : 2.2) * ls.width * weight), from = fills.length;
+        if (s.linesMeet === "alongside" && classicLook) {
+          // (pushed off the hole's line to lie beside it, on the side it comes from)
+          const off = mainW / 2 + px((look === "classic" ? 2 : 2.6) * ls.width) / 2 + px(1.8);
+          const nearest = (q: P) => { let best = { point: line[0], distance: Infinity, i: 0 }; for (let i = 1; i < line.length; i++) { const m = nearestOnSegment(q, line[i - 1], line[i]); if (m.distance < best.distance) best = { ...m, i }; } return best; };
+          const sideOf = (q: P) => { const m = nearest(q), a = line[m.i - 1], b2 = line[m.i]; return Math.sign((b2.x - a.x) * (q.y - a.y) - (b2.y - a.y) * (q.x - a.x)) || 1; };
+          let side = sideOf(along[0]);
+          along = along.map(q => {
+            const m = nearest(q);
+            // (right on it: the side it was on)
+            if (m.distance > px(0.5)) side = sideOf(q);
+            if (m.distance >= off) return q;
+            const a = line[m.i - 1], b2 = line[m.i], L = Math.hypot(b2.x - a.x, b2.y - a.y) || 1;
+            const nx = -(b2.y - a.y) / L * side, ny = (b2.x - a.x) / L * side;
+            return { x: m.point.x + nx * off, y: m.point.y + ny * off };
+          });
+          if (along.length < 2 || pathLength(along) < px(6)) continue;
+        } else {
+          // (joined outside the putting circle and short of the arrowhead: inside it, only arrowheads)
+          // Run beside it (the painted looks): the line it plays, as plotted, till it gets onto the main
+          // line; from there in a lane of its own beside that line, on the side it came from, never
+          // across it, a second tee's in the next lane out; each ending in its own arrowhead just behind
+          // the main line's. A tee with its own way to the basket keeps it, as when lines join.
+          const beside = s.linesMeet === "alongside" && !classicLook && !mainTee?.noLine;
+          const sideAt = (q: P) => { let best = Infinity, sg = 1; for (let i = 1; i < line.length; i++) { const m = nearestOnSegment(q, line[i - 1], line[i]); if (m.distance < best) { best = m.distance; const a = line[i - 1], b2 = line[i]; sg = Math.sign((b2.x - a.x) * (q.y - a.y) - (b2.y - a.y) * (q.x - a.x)) || 1; } } return sg; };
+          // (its own arrowhead at its lane's end, smaller than the main line's and a head's length behind
+          // the lane inside it, so the heads step back from the basket and none lies on another)
+          const laneHead = ls.arrow && s.arrowLook !== "none" ? (9.5 / k) * Math.sqrt(ls.width * weight) * 0.78 * headSize : 0;
+          /** The next free lane on a side of the main line: its track, and how far along it the lane ends. */
+          const laneOn = (sd: number) => {
+            const ln = (lanes[sd] ?? 0) + 1, gap = px(1.7), off = mainW / 2 + gap + W2 / 2 + (ln - 1) * (W2 + gap);
+            const tr = offsetPath(densify(line, px(3)), () => sd * off), L = pathLength(line);
+            const head = mainLs.arrow && s.arrowLook !== "none" ? (9.5 / k) * Math.sqrt(mainLs.width * weight) * headSize : 0;
+            // (level with where the main line's arrowhead starts; with none, where the main line ends)
+            const endAt = (head ? L - ownEnd - head * 1.05 : atBasket ? L - 4 / k : L - ownEnd) - (laneHead ? (ln - 1) * laneHead * 1.15 : 0);
+            return { ln, off, tr, end: pathLength(tr) * Math.max(0.2, Math.min(1, endAt / (L || 1))) };
+          };
+          const drawBeside = (path: P[]) => {
+            drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path, half: W2 / 2, arrow: laneHead > 0 });
+            drawLine(path, { ...ls, arrow: laneHead > 0 }, false, o, basket);
+            if (ls.distance && s.distances && !(focus && st.holeId !== focus)) ownDistances.push({ id: `dist:${st.holeId}:${tee.id}`, path, text: `${fmtDist(pathLength(played), doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, color: ls.color, o });
+            laid.push(fills.splice(from));
+          };
+          let lane: ReturnType<typeof laneOn> | null = null, side = 1;
+          if (beside) {
+            const offOf = (t: P[], q: P) => { let m = Infinity; for (let i = 1; i < t.length; i++) m = Math.min(m, nearestOnSegment(q, t[i - 1], t[i]).distance); return m; };
+            // (the side it comes from: where it is a little before it gets onto the line, clear of it)
+            let t = along.length;
+            while (t > 0 && offOf(plotted, along[t - 1]) <= px(6)) t--;
+            let i0 = Math.max(0, t - 1), back = 0;
+            while (i0 > 0 && back < px(160) && (back < px(50) || offOf(line, along[i0]) < px(4))) { back += dist(along[i0], along[i0 - 1]); i0--; }
+            side = sideAt(along[i0]);
+            lane = laneOn(side);
+          }
+          const j = classicLook ? joinOnto(along, trunks, clearOf) : lane ? joinOnto(along, [plotted], clearOf, [lane.tr], undefined, true) : joinOnto(along, plots, clearOf, trunks, joins);
+          if (!j || j.path.length < 2 || pathLength(j.path) < px(6)) continue;
+          if (lane && !j.alone) {
+            lanes[side] = lane.ln;
+            const rest = j.rest ?? [], keep = pathLength(rest) - (pathLength(lane.tr) - lane.end);
+            drawBeside([...j.path, ...(keep > 0 ? trimPath(rest, 0, keep) : [])]);
+            continue;
+          }
+          alone = j.alone;
+          onto = j.host ?? -1;
+          const mine = alone ? swept(j.path, sweep) : j.path;
+          along = alone ? aimed(mine, basket) : mine;
+          let rest = j.rest;
+          // Coming to the basket where another line does (at the circle within half an arrowhead; run
+          // on to the basket, within 30 degrees of its way in): it runs into the base of that line's
+          // arrowhead. At the circle a little apart: fanned out, each with room for its own.
+          if (alone && !classicLook) {
+            const heading = (t: P[]) => pointAlong(t, Math.max(0, pathLength(t) - ownEnd - 1 / k)).angle;
+            const E = arrives(along), by = trunks.map(t => ({ t, at: arrives(t), d: dist(arrives(t), E) })).sort((p, q) => p.d - q.d)[0];
+            // (coming in where that line does, and much its way: into the base of its arrowhead)
+            const same = by && Math.abs(turn(heading(along), heading(by.t))) < 0.5 && (atBasket || by.d < headRoom * 0.55);
+            // (run beside it: one that comes in where the main line does takes a lane beside it for its
+            // last stretch, on its own side, never under the main line's arrowhead or across a lane)
+            if (beside && by && same && by.t === line) {
+              const sd = sideAt(pointAlong(mine, Math.max(0, pathLength(mine) - ownEnd - px(70))).point), ln = laneOn(sd);
+              const m = tuckInto(mine, trimPath(ln.tr, 0, ln.end), by.d + ln.off, Math.max(0, ln.end - px(16)));
+              lanes[sd] = ln.ln;
+              drawBeside([...m.path, ...m.rest]);
+              continue;
+            }
+            if (by && same) {
+              const m = tuckInto(mine, by.t, by.d);
+              along = m.path; rest = m.rest; alone = false; onto = trunks.indexOf(by.t);
+              joins.push(along[along.length - 1]);
+            } else if (by && !atBasket && by.d < headRoom) {
+              const a0 = Math.atan2(E.y - basket.y, E.x - basket.x), ah = Math.atan2(by.at.y - basket.y, by.at.x - basket.x);
+              const off = Math.atan2(Math.sin(a0 - ah), Math.cos(a0 - ah)), want = 2 * Math.asin(Math.min(0.7, headRoom / (2 * ownEnd)));
+              const a1 = ah + (off < 0 ? -1 : 1) * want;
+              along = aimed(mine, basket, { x: basket.x + Math.cos(a1) * ownEnd, y: basket.y + Math.sin(a1) * ownEnd });
+            }
+          }
+          trunks.push(rest ? [...along, ...rest] : along);
+          widths.push(W2);
+          plots.push(rest ? [...along, ...rest] : j.path);
+        }
+        drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path: along, half: px((look === "classic" ? 2 : 2.2) * ls.width * weight) / 2, arrow: alone && ls.arrow });
+        // (its own way to the basket: its own arrowhead; one that joins a line has none, unless asked for)
+        const joined = { ...ls, arrow: s.lineStyles?.[tee.level]?.arrow === true };
+        // (one that ends on the main line: less the end of it that lies hidden under that line)
+        // (under another tee's line, drawn over this one, once it's half on it)
+        // (the main line: from where its middle goes under that line's edge, so none of it runs on beside
+        // it as a rim; a dashed line onto another tee's: from where the two touch, so no dash lies on a dash)
+        if (!alone && !classicLook && onto >= 0 && trunks[onto]) along = lessHidden(along, onto === 0 && !mainTee?.noLine ? widths[0] / 2 : ls.dash !== "solid" ? (widths[onto] + W2) / 2 : Math.max((widths[onto] - W2) / 2, W2 * 0.5), trunks[onto]);
+        if (alone) drawLine(along, ls, false, o, basket, true);
+        else if (look === "classic" && !s.lineStyles?.[tee.level] && s.linesMeet !== "alongside" && weight === 1) {
+          const c = TEE_LEVELS[tee.level].color === "#f8fafc" ? "#eef0f2" : TEE_LEVELS[tee.level].color;
+          (o < 1 ? fills : unders).push(`<path d="${pathD(along)}" fill="none" stroke="${pal.lineCasing}" stroke-width="${n(px(3.8))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
+          fills.push(`<path d="${pathD(along)}" fill="none" stroke="${c}" stroke-width="${n(px(2))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
+        } else drawLine(along, joined, false, o, basket);
+        // (the painted looks: a line that joins another lies under it, so its end never sits on that one)
+        if (!classicLook) laid.push(fills.splice(from));
+        // (its own length, where the map shows lengths: as the signs give it)
+        if (ls.distance && s.distances && !(focus && st.holeId !== focus)) ownDistances.push({ id: `dist:${st.holeId}:${tee.id}`, path: along, text: `${fmtDist(pathLength(played), doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, color: ls.color, o });
+      }
+      // (the last drawn lowest: each lies under the line it joined, the main line over them all)
+      for (const l of laid.reverse()) fills.push(...l);
+      if (look === "classic" && !multi && !s.lineStyles?.[mainTee?.level ?? "blue"] && !mainTee?.noLine && weight === 1 && headSize === 1 && !s.arrowLook) {
+        // (Classic, as maps first had it)
+        const len = pathLength(line);
+        const trim = trimPath(line, 6 / k, len - Math.max(2.2 / k * 6, 8));
+        (o < 1 ? fills : unders).push(`<path d="${pathD(trim)}" fill="none" stroke="${pal.lineCasing}" stroke-width="${n(px(4.6))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
+        fills.push(`<path d="${pathD(trim)}" fill="none" stroke="${pal.line}" stroke-width="${n(px(2.4))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
+        // Arrowhead short of the basket
+        const end = pointAlong(line, Math.max(0, len - Math.max(12 / k, 6)));
+        const tip = end.point, a = end.angle, al = 9 / k;
+        const head = [
+          { x: tip.x + Math.cos(a) * al * 0.6, y: tip.y + Math.sin(a) * al * 0.6 },
+          { x: tip.x - Math.cos(a - 0.45) * al, y: tip.y - Math.sin(a - 0.45) * al },
+          { x: tip.x - Math.cos(a + 0.45) * al, y: tip.y - Math.sin(a + 0.45) * al }
+        ];
+        fills.push(`<polygon points="${pts(head)}" fill="${pal.line}" stroke="${pal.lineCasing}" stroke-width="${n(px(1))}" opacity="${o}"/>`);
+      } else if (!mainTee?.noLine) drawLine(line, mainLs, true, o, basket);
+      out.push(...unders, ...fills);
     }
   }
   out.push(`</g>`);
@@ -632,23 +1145,174 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     label(`name:${l.id}`, toScreen(mid.point), q => textLabel(q, l.label!, 9 * ts, { weight: 600, angle: ang }));
   }
 
+  // Where the hole numbers and the lines' lengths go: clear of the throw lines, the tee pads, the
+  // baskets, the page's own pieces and each other. Each stays where it always went when that's
+  // clear; else it takes the nearest clear place of its own (a number round its tee, a length
+  // along its line, on either side), with room round it where there is some. What's in the way, as
+  // circles in the map's pixels (`thin`: a ring or a path, which a label that has to move keeps off;
+  // one lying on it where it always went stays, as on maps made before):
+  const obs: { x: number; y: number; r: number; of?: string; thin?: boolean }[] = [];
+  for (const h of headsAt) { const q = toScreen(h.p); obs.push({ x: q.x, y: q.y, r: h.r * k }); }
+  for (const d of drawnLines) {
+    // (wider at its arrowhead)
+    const dense = densify(d.path, 3 / k), head = 4.5 * Math.max(1, ts * 0.8);
+    let left = pathLength(dense);
+    dense.forEach((q, i) => {
+      if (i) left -= dist(dense[i - 1], q);
+      const p = toScreen(q);
+      obs.push({ x: p.x, y: p.y, r: classicLook && d.arrow && left < 24 / k ? Math.max(d.half * k, head) : d.half * k, of: d.own });
+    });
+  }
+  for (const tee of items.filter(i => i.type === "tee") as TeeItem[]) {
+    const len = Math.max(tee.padLength * k, 9 * ts), wid = Math.max(tee.padWidth * k, 4.5 * ts), c = toScreen(tee);
+    const a = ((teeAim(doc, tee) - view.rotation) * Math.PI) / 180, run = Math.max(0, (len - wid) / 2), steps = Math.max(1, Math.ceil((run * 4) / wid));
+    for (let i = 0; i <= steps; i++) { const t = -run + (2 * run * i) / steps; obs.push({ x: c.x + Math.cos(a) * t, y: c.y + Math.sin(a) * t, r: wid / 2, of: tee.id }); }
+  }
+  for (const b of items) if (b.type === "basket") { const p = toScreen(b); obs.push({ x: p.x, y: p.y, r: 6 * ts }); }
+  // (the putting circles' rings, and the narrow lines drawn on the map: paths, walks, OB lines, fences...)
+  if (s.circle) for (const st of layers.stats) if (st.complete) for (const b of holeBaskets(doc, st.holeId)) {
+    const c = toScreen(b), R = CIRCLE_ONE_FT * k, steps = Math.max(12, Math.ceil((R * 2 * Math.PI) / 3));
+    for (let i = 0; i < steps; i++) obs.push({ x: c.x + Math.cos((i / steps) * 2 * Math.PI) * R, y: c.y + Math.sin((i / steps) * 2 * Math.PI) * R, r: 0.6 * ts, thin: true });
+  }
+  for (const l of lines) {
+    const w = (l.width ?? LINE_KINDS[l.kind].width) * k;
+    if (l.points.length < 2 || w > 8 * ts) continue;
+    for (const q of densify(linePath(l), 3 / k)) { const p = toScreen(q); obs.push({ x: p.x, y: p.y, r: Math.max(w / 2, 0.8 * ts), thin: true }); }
+  }
+  const GAP = 1.2 * ts, ROOM = 4 * ts;
+  /** How far a label lies over things (`on`; 0: clear), and how crowded it is by the nearest (`by`; 0:
+   * room all round). The label: a bar `half` long each way from `c`, turned `ang` degrees, `rad`
+   * thick. `own`: what it may lie right beside; `skip`: what it's set by. */
+  const over = (c: P, ang: number, half: number, rad: number, own?: string, skip?: string[]) => {
+    const a = (ang * Math.PI) / 180, A = { x: c.x - Math.cos(a) * half, y: c.y - Math.sin(a) * half }, B = { x: c.x + Math.cos(a) * half, y: c.y + Math.sin(a) * half };
+    let on = 0, by = 0;
+    for (const o of obs) {
+      if (o.of && skip?.includes(o.of)) continue;
+      const mine = !!o.of && o.of === own, need = o.r + rad + (mine || o.thin ? 0 : GAP), reach = need + half + ROOM;
+      if (Math.abs(o.x - c.x) > reach || Math.abs(o.y - c.y) > reach) continue;
+      const d = nearestOnSegment(o, A, B).distance;
+      if (o.thin) { if (d < need) by = Math.max(by, ROOM + need - d); }
+      else if (d < need) on += need - d;
+      else if (!mine && d < need + ROOM) by = Math.max(by, need + ROOM - d);
+    }
+    for (const b of layers.avoid ?? []) for (const q of [A, c, B]) {
+      const d = Math.hypot(Math.max(b.x - q.x, 0, q.x - b.x - b.w), Math.max(b.y - q.y, 0, q.y - b.y - b.h));
+      if (d < rad + GAP) on += (rad + GAP - d) * 4;
+    }
+    return { on, by };
+  };
+  /** Where a label goes, of the places tried: `was`, where it always went, while nothing lies under
+   * it there (a map made before stays as it was); else the first with room all round; none, the
+   * clear one least crowded (`more`: what else crowds it); none clear, the one least in the way. */
+  const clearest = <T extends { at: P; ang: number }>(tries: T[], half: number, rad: number, was?: T, own?: string, skip?: string[], more?: (t: T) => number): T | undefined => {
+    let best: T | undefined, least = Infinity;
+    for (const t of tries) {
+      const v = over(t.at, t.ang, half, rad, own, skip);
+      if (v.on === 0 && t === was) return t;
+      const score = v.on * 1000 + v.by + (more?.(t) ?? 0);
+      if (score === 0) return t;
+      if (score < least) { least = score; best = t; }
+    }
+    return best;
+  };
+  const taken = (at: P, ang: number, half: number, rad: number) => {
+    const a = (ang * Math.PI) / 180;
+    for (const t of [-1, 0, 1]) obs.push({ x: at.x + Math.cos(a) * half * t, y: at.y + Math.sin(a) * half * t, r: rad });
+  };
+  // (a label dragged before labels kept clear by themselves: still measured from where it went then)
+  const fromOld = (id: string) => { const o = moved?.[id]; return !!o && !o.placed && !!(o.dx || o.dy); };
+
+  // The hole numbers first: a number is worth more than a length
+  const numAt = new Map<string, P>();
+  const teesOn = (items.filter(i => i.type === "tee") as TeeItem[]).map(t => ({ hole: t.holeId, p: toScreen(t) }));
+  for (const st of layers.stats) {
+    const tee = items.find(i => i.id === st.teeId) as TeeItem | undefined;
+    if (!tee) continue;
+    const aim = teeAim(doc, tee), c = toScreen(tee);
+    const back = toScreen({ x: tee.x - Math.cos((aim * Math.PI) / 180) * (tee.padLength / 2 + 2), y: tee.y - Math.sin((aim * Math.PI) / 180) * (tee.padLength / 2 + 2) });
+    const dir = { x: back.x - c.x, y: back.y - c.y };
+    const dl = Math.hypot(dir.x, dir.y) || 1;
+    const r = 9.5 * ts;
+    // (round the tee: `a` to a side of it, `b` back from it)
+    const spot = (side: number, a: number, b: number) => ({ at: { x: c.x + (-dir.y / dl) * side * a + (dir.x / dl) * b, y: c.y + (dir.x / dl) * side * a + (dir.y / dl) * b }, ang: 0 });
+    const padL = Math.max(tee.padLength * k, 9 * ts) / 2, padW = Math.max(tee.padWidth * k, 4.5 * ts) / 2;
+    // (the painted map's bare number beside the tee; the other maps' badge behind it)
+    const side = { x: -dir.y / dl, y: dir.x / dl };
+    const was = forest
+      ? { at: { x: c.x + side.x * 14 * ts + (dir.x / dl) * 4 * ts, y: c.y + side.y * 14 * ts + (dir.y / dl) * 4 * ts }, ang: 0 }
+      : { at: { x: back.x + (dir.x / dl) * (r + 3 * ts), y: back.y + (dir.y / dl) * (r + 3 * ts) }, ang: 0 };
+    const half = forest ? Math.max(0, st.label.length - 1) * 3.4 * ts : 0, rad = forest ? 6 * ts : r + 0.8 * ts;
+    const tries = forest
+      ? [was, spot(-1, 14 * ts, 4 * ts), spot(1, 14 * ts, 13 * ts), spot(-1, 14 * ts, 13 * ts), spot(0, 0, padL + 11 * ts), spot(1, 21 * ts, 4 * ts), spot(-1, 21 * ts, 4 * ts), spot(1, 15 * ts, 22 * ts), spot(-1, 15 * ts, 22 * ts), spot(0, 0, padL + 20 * ts)]
+      : [was, spot(1, padW + r + 3 * ts, 0), spot(-1, padW + r + 3 * ts, 0), spot(1, r + 2 * ts, padL + r), spot(-1, r + 2 * ts, padL + r), spot(0, 0, padL + 2 * k + 3 * r + 6 * ts)];
+    const id = `num:${st.holeId}`;
+    // (set by its own pad and line, as it always was; plainly its own tee's: no other hole's tee nearly as near it)
+    const others = teesOn.filter(t => t.hole !== tee.holeId);
+    const nearer = (t: { at: P }, by: number) => others.every(o => Math.hypot(o.p.x - t.at.x, o.p.y - t.at.y) >= Math.hypot(c.x - t.at.x, c.y - t.at.y) * by);
+    const fair = tries.filter(t => nearer(t, 1.4));
+    const pick = fromOld(id) ? was : clearest(fair.length ? fair : tries, half, rad, was, undefined, [`dist:${st.holeId}`, tee.id], t => (nearer(t, 1.7) ? 0 : 6 * ts)) ?? was;
+    numAt.set(st.holeId, pick.at);
+    taken(pick.at, 0, half, rad);
+  }
+
   // Distance labels along each throw line
-  if (s.distances) {
+  const placedDist: P[] = [];
+  {
+    // (a length's room: its letters' width, by the font)
+    const narrow = font.startsWith("Oswald");
+    // (how much lower than its middle a length's figures sit, in the font's size: on the line's
+    // other side it's set that much nearer, so it's as close to the line there as on its own side)
+    const sag = narrow ? 0.09 : font.startsWith("Bitter") ? -0.09 : 0;
+    const bar = (text: string, size: number) => { const rad = size * 0.46, w = text.length * size * (narrow ? 0.45 : 0.58); return { half: Math.max(0, w / 2 - rad * 0.6), rad }; };
+    const upright = (angle: number) => {
+      let ang = (angle * 180) / Math.PI - view.rotation;
+      while (ang > 90) ang -= 180;
+      while (ang < -90) ang += 180;
+      return ang;
+    };
     for (const st of layers.stats) {
       if (!st.complete || (focus && st.holeId !== focus)) continue;
+      if (!s.distances) continue;
       const line = smoothPath(st.line, 10);
       const len = pathLength(line);
       // Along the line, clear of mandos, drop zones and the like
       const busy = items.filter(i => i.type === "mando" || i.type === "dropzone" || i.type === "amenity").map(i => toScreen(i));
       const clear = (q: P) => busy.every(b => Math.hypot(b.x - q.x, b.y - q.y) > 26 * ts);
+      const spot = (m: { point: P; angle: number }, side: number, out = 0) => {
+        const ang = upright(m.angle);
+        const off = side > 0 ? (9 + out) * ts : -(9 + out - sag * 10) * ts;
+        const sp = toScreen(m.point);
+        const nrm = { x: -Math.sin((ang * Math.PI) / 180), y: Math.cos((ang * Math.PI) / 180) };
+        return { at: { x: sp.x - nrm.x * off, y: sp.y - nrm.y * off }, ang, on: sp };
+      };
       const mid = [0.55, 0.4, 0.7, 0.3, 0.8].map(f => pointAlong(line, len * f)).find(m => clear(toScreen(m.point))) ?? pointAlong(line, len * 0.55);
-      let ang = (mid.angle * 180) / Math.PI - view.rotation;
-      while (ang > 90) ang -= 180;
-      while (ang < -90) ang += 180;
-      const off = 9 * ts;
-      const sp = toScreen(mid.point);
-      const nrm = { x: -Math.sin((ang * Math.PI) / 180), y: Math.cos((ang * Math.PI) / 180) };
-      label(`dist:${st.holeId}`, { x: sp.x - nrm.x * off, y: sp.y - nrm.y * off }, q => textLabel(q, `${fmtDist(st.length, doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, 10 * ts, { angle: ang, weight: 700 }));
+      const was = spot(mid, 1);
+      // (else the other side of the line there, then along it, by its middle first; no room by the
+      // line anywhere, as where other tees' lines run beside it: a little off it, past them)
+      const id = `dist:${st.holeId}`, text = `${fmtDist(st.length, doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, { half, rad } = bar(text, 10 * ts);
+      const tries = [was, spot(mid, -1), ...[0.55, 0.5, 0.6, 0.45, 0.65, 0.4, 0.7, 0.35, 0.75, 0.3, 0.8, 0.25, 0.85].flatMap(f => { const m = pointAlong(line, len * f); return [spot(m, 1), spot(m, -1)]; }).filter(t => clear(t.on)),
+        ...[5, 10].flatMap(out => [0.55, 0.45, 0.65, 0.35, 0.75].flatMap(f => { const m = pointAlong(line, len * f); return [spot(m, 1, out), spot(m, -1, out)]; })).filter(t => clear(t.on))];
+      const t = fromOld(id) ? was : clearest(tries, half, rad, was, id) ?? was;
+      label(id, t.at, q => textLabel(q, text, 10 * ts, { angle: t.ang, weight: 700 }));
+      placedDist.push(t.at);
+      taken(t.at, t.ang, half, rad);
+    }
+    // (another tee's own length, along its line, in its color: where it's clear of the other lengths)
+    for (const d of ownDistances) {
+      const len = pathLength(d.path);
+      const spot = (f: number, side: number) => {
+        const m = pointAlong(d.path, len * f), sp = toScreen(m.point);
+        const ang = upright(m.angle);
+        const r = (ang * Math.PI) / 180, off = 8 * ts * side;
+        return { at: { x: sp.x + Math.sin(r) * off, y: sp.y - Math.cos(r) * off }, ang };
+      };
+      const tries = [0.5, 0.35, 0.65, 0.25, 0.75, 0.42, 0.58, 0.3, 0.7, 0.2, 0.8].flatMap(f => [spot(f, 1), spot(f, -1)]).filter(c => placedDist.every(q => Math.hypot(q.x - c.at.x, q.y - c.at.y) > 24 * ts));
+      if (!tries.length) continue;
+      const { half, rad } = bar(d.text, 9 * ts);
+      const t = fromOld(d.id) ? tries[0] : clearest(tries, half, rad, tries[0], d.id) ?? tries[0];
+      placedDist.push(t.at);
+      taken(t.at, t.ang, half, rad);
+      label(d.id, t.at, q => `<g opacity="${n(d.o)}">${textLabel(q, d.text, 9 * ts, { angle: t.ang, weight: 700, color: "#ffffff", halo: shade(d.color, -0.35) })}</g>`);
     }
   }
 
@@ -733,6 +1397,13 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     const len = Math.max(tee.padLength * k, 9 * ts), wid = Math.max(tee.padWidth * k, 4.5 * ts);
     const c = toScreen(tee);
     const corners = rectCorners(c, len, wid, teeAim(doc, tee) - view.rotation);
+    if (look !== "classic") {
+      // (painted: its line's color, edged in cream, a soft shadow under it)
+      const sh = corners.map(q => ({ x: q.x + 0.7 * ts, y: q.y + 1 * ts }));
+      sym.push(`<polygon points="${pts(sh)}" fill="${INK}" fill-opacity="0.4" stroke="${INK}" stroke-opacity="0.4" stroke-width="${n(1.8 * ts)}" stroke-linejoin="round" opacity="${n(o)}"/>`);
+      sym.push(`<polygon points="${pts(corners)}" fill="${EARTH[tee.level] ?? lvl.color}" stroke="${CREAM}" stroke-width="${n(1.1 * ts)}" stroke-linejoin="round" opacity="${n(o)}"/>`);
+      continue;
+    }
     sym.push(`<polygon points="${pts(corners)}" fill="${lvl.color}" stroke="${lvl.color === "#f8fafc" ? "#333" : "#111"}" stroke-width="${n(0.9 * ts)}" opacity="${n(o * (mainTees.has(tee.id) ? 1 : 0.85))}"/>`);
   }
   for (const b of items.filter(i => i.type === "basket") as BasketItem[]) {
@@ -746,23 +1417,17 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     if (multi) sym.push(textLabel({ x: p.x + r * 1.6, y: p.y - r * 1.1 }, b.position, 7 * ts, { color: pal.label, weight: 800 }));
     sym.push(`</g>`);
   }
-  // Hole number badges at the tees used (the main tee), offset back from the pad
+  // Hole number badges at the tees used (the main tee): beside or behind the pad, where they were placed
   for (const st of layers.stats) {
     const tee = items.find(i => i.id === st.teeId) as TeeItem | undefined;
     if (!tee) continue;
     const lvl = TEE_LEVELS[tee.level];
-    const aim = teeAim(doc, tee);
-    const back = toScreen({ x: tee.x - Math.cos((aim * Math.PI) / 180) * (tee.padLength / 2 + 2), y: tee.y - Math.sin((aim * Math.PI) / 180) * (tee.padLength / 2 + 2) });
-    const dir = { x: back.x - toScreen(tee).x, y: back.y - toScreen(tee).y };
-    const dl = Math.hypot(dir.x, dir.y) || 1;
     const r = 9.5 * ts;
-    const at = { x: back.x + (dir.x / dl) * (r + 3 * ts), y: back.y + (dir.y / dl) * (r + 3 * ts) };
+    const at = numAt.get(st.holeId)!;
     const o = dim(st.holeId);
     if (forest) {
       // Bold white italic numbers beside the tee, as on painted course maps
-      const side = { x: -dir.y / dl, y: dir.x / dl };
-      const p = { x: toScreen(tee).x + side.x * 14 * ts + (dir.x / dl) * 4 * ts, y: toScreen(tee).y + side.y * 14 * ts + (dir.y / dl) * 4 * ts };
-      label(`num:${st.holeId}`, p, q => `<text x="${n(q.x)}" y="${n(q.y)}" font-family="${font}" font-size="${n(15 * ts)}" font-weight="700" font-style="italic" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="rgba(8,20,4,.75)" stroke-width="${n(2.6 * ts)}" stroke-linejoin="round" paint-order="stroke" opacity="${o}">${st.label}</text>`);
+      label(`num:${st.holeId}`, at, q => `<text x="${n(q.x)}" y="${n(q.y)}" font-family="${font}" font-size="${n(15 * ts)}" font-weight="700" font-style="italic" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="rgba(8,20,4,.75)" stroke-width="${n(2.6 * ts)}" stroke-linejoin="round" paint-order="stroke" opacity="${o}">${st.label}</text>`);
       continue;
     }
     label(`num:${st.holeId}`, at, q => `<g opacity="${o}"><circle cx="${n(q.x)}" cy="${n(q.y)}" r="${n(r)}" fill="${lvl.color}" stroke="${lvl.color === "#f8fafc" ? "#1f2937" : "#ffffff"}" stroke-width="${n(1.6 * ts)}"/>${textLabel({ x: q.x, y: q.y + 0.5 * ts }, st.label, 11.5 * ts, { color: lvl.ink, halo: lvl.color, weight: 700 })}</g>`);
@@ -1218,7 +1883,7 @@ export const coursePoints = (doc: CourseDoc, stats: HoleStats[]) => {
 
 /** The turn (degrees) that lets the course fill a page of this shape best. */
 export const bestRotation = (doc: CourseDoc) => {
-  const stats = doc.holes.map(h => holeStats(doc, h, activeLayout(doc)));
+  const stats = doc.holes.map(h => holeStats(doc, h, mapLayoutOf(doc)));
   const pts = coursePoints(doc, stats);
   if (pts.length < 2) return 0;
   const p = PAPER[doc.style.paper];
@@ -1281,7 +1946,8 @@ export const requiredCredit = (doc: CourseDoc) => [
 const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
   const s = doc.style;
   const pal = palette(s);
-  const layout = activeLayout(doc);
+  // (the course map's own layout, apart from the one Design is on)
+  const layout = mapLayoutOf(doc);
   const stats = doc.holes.map(h => holeStats(doc, h, layout));
   const totals = courseTotals(doc, stats);
   const rotation = s.rotation || 0;
@@ -1318,13 +1984,18 @@ const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
     const el = (id: PageElementId): PageElementStyle => pageEls[id] ?? {};
     type Box = { x: number; y: number; w: number; h: number };
     const pieces: Box[] = [];
+    // (all that lies over the map: its numbers and lengths keep clear of them)
+    const covers: Box[] = [];
     const placed = (id: string, o: { x?: number; y?: number; scale?: number; hidden?: boolean; rot?: number; opacity?: number }, box: Box, content: string) => {
       if (o.hidden) return;
       const k = keepsItsSize(id) ? 1 : o.scale ?? 1;
       // (kept at least partly on the page)
       const X = o.x !== undefined ? Math.max(10 - box.w * k, Math.min(W - 10, o.x * W)) : box.x;
       const Y = o.y !== undefined ? Math.max(10 - box.h * k, Math.min(H - 10, o.y * H)) : box.y;
-      pieces.push({ x: X, y: Y, w: box.w * k, h: box.h * k });
+      // (one put or sized by hand: where it's wanted, the map doesn't move for it)
+      const byHand = o.x !== undefined || o.y !== undefined || (!keepsItsSize(id) && o.scale !== undefined && o.scale !== 1);
+      if (!(s.mapStays && byHand)) pieces.push({ x: X, y: Y, w: box.w * k, h: box.h * k });
+      if (id !== "credit") covers.push({ x: X, y: Y, w: box.w * k, h: box.h * k });
       // (with a box to pick it by on the Design page, never drawn)
       parts.push(`<g data-el="${id}" data-box="${n(X)} ${n(Y)} ${n(box.w * k)} ${n(box.h * k)}" transform="translate(${n(X)} ${n(Y)}) scale(${n(k)}) translate(${n(-box.x)} ${n(-box.y)})"><rect x="${n(box.x)}" y="${n(box.y)}" width="${n(box.w)}" height="${n(box.h)}" fill="none" pointer-events="all"/>${turned(content, keepsItsTurn(id) ? undefined : o.rot, o.opacity)}</g>`);
     };
@@ -1339,14 +2010,16 @@ const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
     for (let out = 0, last = false; ; ) {
       parts.length = base;
       pieces.length = 0;
+      covers.length = 0;
       const scale = Math.min((W - 2 * (m + room)) / bw, (H - 2 * (m + room)) / bh) / (1 + out);
       const center = (clearOf && leastOffSite(doc, box, rotation, scale, W, H, m + room, { pts: turnedPts, boxes: clearOf, near })) || leastOffSite(doc, box, rotation, scale, W, H, m + room)!;
       const view: MapView = { cx: center.x, cy: center.y, rotation, scale, width: W, height: H };
       const onPage = (q: P) => { const r = rotatePoint({ x: q.x - center.x, y: q.y - center.y }, -rotation); return { x: W / 2 + r.x * scale, y: H / 2 + r.y * scale }; };
-      const map = last ? renderMapLayers(doc, view, { stats, contours: opts.contours, hillshade: opts.hillshade, textScale: ts * 0.9, fontFamily: s.font, canopy: opts.canopy, labelAt: s.labelAt ?? {} }, "pm") : { svg: "", toScreen: onPage };
-      parts.push(`<g data-el="map" data-box="0 0 ${n(W)} ${n(H)}" data-k="${scale}" data-rot="${rotation}">${map.svg}</g>`);
+      // (the map itself last, once the page's pieces are laid out over it)
+      const mapAt = parts.length;
+      parts.push("");
       // The emptiest corner for the title
-      const shown = pts.map(map.toScreen);
+      const shown = pts.map(onPage);
       const bw2 = W * 0.42, bh2 = H * 0.4;
       const spots = [{ x: 0, y: 0 }, { x: W - bw2, y: 0 }, { x: 0, y: H - bh2 }, { x: W - bw2, y: H - bh2 }];
       const busy = (c: P) => shown.filter(p => p.x >= c.x && p.x <= c.x + bw2 && p.y >= c.y && p.y <= c.y + bh2).length;
@@ -1392,10 +2065,17 @@ const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
         const cw = 104 * ts, chH = 20 * ts, named = doc.layouts.length > 1, cy0 = named ? 12 * ts : 2 * ts;
         chips.forEach((c, i) => {
           const x0 = left ? tx + i * (cw + 8 * ts) : tx - (chips.length - i) * (cw + 8 * ts) + 8 * ts;
-          const col = TEE_LEVELS[c.l.tee].color;
+          const painted = lineLookOf(s) !== "classic";
+          const col = teeColorOf(s, c.l.tee);
           if (named) {
             out.push(`<text${fitAttr(50 * ts)} x="${n(x0)}" y="${n(ty + 8 * ts)}" font-family="Oswald, Arial, sans-serif" font-weight="600" font-size="${n(7 * ts)}" fill="${col}" ${shadow}>${esc(`${c.l.name} layout`.toUpperCase())}</text>`);
-            out.push(`<rect x="${n(x0 + 52 * ts)}" y="${n(ty + 5.5 * ts)}" width="${n(cw - 52 * ts)}" height="${n(1.4 * ts)}" fill="${col}"/>`);
+            if (painted) {
+              // (a piece of its line as the map draws it, in its color; its tee's pad first)
+              const ls = lineStyleOf(s, c.l.tee, c.l.id === layout?.id, doc.layouts.length > 1), y = ty + 6.2 * ts, xa = x0 + 60 * ts;
+              const dash = ls.dash === "dashed" ? ` stroke-dasharray="${n(3.6 * ts)} ${n(2.2 * ts)}"` : ls.dash === "dotted" ? ` stroke-dasharray="0 ${n(3.4 * ts)}"` : "";
+              out.push(`<rect x="${n(x0 + 52 * ts)}" y="${n(y - 2 * ts)}" width="${n(5.5 * ts)}" height="${n(4 * ts)}" fill="${col}" stroke="${CREAM}" stroke-width="${n(0.8 * ts)}"/>`);
+              out.push(`<g opacity="${n(ls.opacity)}"><path d="M${n(xa)} ${n(y)}L${n(x0 + cw - 2 * ts)} ${n(y)}" stroke="${KEY}" stroke-opacity="0.7" stroke-width="${n(2.6 * ts)}" stroke-linecap="round"${dash}/><path d="M${n(xa)} ${n(y)}L${n(x0 + cw - 2 * ts)} ${n(y)}" stroke="${ls.color}" stroke-width="${n(1.8 * ts)}" stroke-linecap="round"${dash}/></g>`);
+            } else out.push(`<rect x="${n(x0 + 52 * ts)}" y="${n(ty + 5.5 * ts)}" width="${n(cw - 52 * ts)}" height="${n(1.4 * ts)}" fill="${col}"/>`);
           }
           out.push(`<rect x="${n(x0)}" y="${n(ty + cy0)}" width="${n(cw)}" height="${n(chH)}" fill="#0b0f0a" fill-opacity="0.88"/>`);
           out.push(`<text${fitAttr(cw - 8 * ts)} x="${n(x0 + cw / 2)}" y="${n(ty + cy0 + chH / 2)}" text-anchor="middle" dominant-baseline="central" font-family="Oswald, Arial, sans-serif" font-weight="600" font-size="${n(11 * ts)}" fill="${col === "#f8fafc" ? "#ffffff" : col}">PAR ${c.par} <tspan fill="#ffffff" fill-opacity="0.6">|</tspan> ${esc(fmtDist(c.len, doc.units).toUpperCase())}</text>`);
@@ -1482,7 +2162,11 @@ const posterPage = (doc: CourseDoc, opts: PosterOptions) => {
       }
       // Pictures, QR codes and sponsors added to the map (the course's own name filled in)
       parts.push(extrasSvg(s.mapExtras, s.sponsors, "", { hole: "", par: "", length: "", course: title, name: "" }, W, H, s.font, (id, c) => `<g data-el="${id}">${c}</g>`));
-      if (last) return { svg: wrapSvg(W, H, parts.join(""), opts.dpi), width: W, height: H, page, holeLines: holeLinesOf(stats, map.toScreen) };
+      if (last) {
+        const map = renderMapLayers(doc, view, { stats, contours: opts.contours, hillshade: opts.hillshade, textScale: ts * 0.9, fontFamily: s.font, canopy: opts.canopy, labelAt: s.labelAt ?? {}, avoid: covers }, "pm");
+        parts[mapAt] = `<g data-el="map" data-box="0 0 ${n(W)} ${n(H)}" data-k="${scale}" data-rot="${rotation}">${map.svg}</g>`;
+        return { svg: wrapSvg(W, H, parts.join(""), opts.dpi), width: W, height: H, page, holeLines: holeLinesOf(stats, map.toScreen) };
+      }
       // (a little room round each: its hole number, its label)
       if (out >= 0.6 || !shown.some(q => pieces.some(b => q.x > b.x - near && q.x < b.x + b.w + near && q.y > b.y - near && q.y < b.y + b.h + near))) last = true;
       else {
@@ -1676,9 +2360,13 @@ const legend = (doc: CourseDoc, x: number, y: number, w: number, ts: number, pal
   const sw = 18 * ts, sh = 9 * ts;
   const has = (pred: (i: (typeof doc.items)[number]) => boolean) => doc.items.some(pred);
   const levels = TEE_ORDER.filter(l => has(i => i.type === "tee" && i.level === l));
-  levels.forEach(l => entries.push({ sym: `<rect x="2" y="${n(sh * 0.2)}" width="${n(sw - 4)}" height="${n(sh * 0.6)}" fill="${TEE_LEVELS[l].color}" stroke="#333" stroke-width="0.6"/>`, text: `${TEE_LEVELS[l].label} tee` }));
+  levels.forEach(l => entries.push({ sym: `<rect x="2" y="${n(sh * 0.2)}" width="${n(sw - 4)}" height="${n(sh * 0.6)}" fill="${teeColorOf(s, l)}" stroke="${lineLookOf(s) === "classic" ? "#333" : CREAM}" stroke-width="${lineLookOf(s) === "classic" ? "0.6" : "1"}"/>`, text: `${TEE_LEVELS[l].label} tee` }));
   if (has(i => i.type === "basket")) entries.push({ sym: basketMark(s.basketMark ?? "basket", { x: sw / 2, y: sh / 2 }, (sh * 1.25) / 16, s.basket, "1"), text: "Basket" });
-  if (s.throwLines && doc.holes.length) entries.push({ sym: `<line x1="0" y1="${n(sh / 2)}" x2="${n(sw)}" y2="${n(sh / 2)}" stroke="${pal.lineCasing}" stroke-width="${n(4 * ts)}"/><line x1="0" y1="${n(sh / 2)}" x2="${n(sw)}" y2="${n(sh / 2)}" stroke="${pal.line}" stroke-width="${n(2 * ts)}"/>`, text: "Throw line" });
+  // (the throw line as the map's main one is drawn: its layout's color where each layout has its own)
+  const lineCol = doc.layouts.length > 1 ? lineStyleOf(s, mainLevelOf(levels, mapLayoutOf(doc).tee), true, true).color : lineLookOf(s) === "classic" ? pal.line : CREAM;
+  if (s.throwLines && doc.holes.length) entries.push({ sym: lineLookOf(s) === "classic"
+    ? `<line x1="0" y1="${n(sh / 2)}" x2="${n(sw)}" y2="${n(sh / 2)}" stroke="${pal.lineCasing}" stroke-width="${n(4 * ts)}"/><line x1="0" y1="${n(sh / 2)}" x2="${n(sw)}" y2="${n(sh / 2)}" stroke="${lineCol}" stroke-width="${n(2 * ts)}"/>`
+    : `<line x1="0" y1="${n(sh / 2)}" x2="${n(sw)}" y2="${n(sh / 2)}" stroke="${KEY}" stroke-opacity="0.7" stroke-width="${n(3.2 * ts)}" stroke-linecap="round"/><line x1="0" y1="${n(sh / 2)}" x2="${n(sw)}" y2="${n(sh / 2)}" stroke="${lineCol}" stroke-width="${n(2.4 * ts)}" stroke-linecap="round"/>`, text: "Throw line" });
   if (s.nextTee && doc.holes.length > 1) entries.push({ sym: `<line x1="0" y1="${n(sh / 2)}" x2="${n(sw)}" y2="${n(sh / 2)}" stroke="${pal.panelInk}" stroke-width="${n(1.6 * ts)}" stroke-dasharray="${n(1.5 * ts)} ${n(3 * ts)}" stroke-linecap="round"/>`, text: "To the next tee" });
   if (doc.holes.some(h => h.fairway)) entries.push({ sym: `<rect width="${n(sw)}" height="${n(sh)}" rx="${n(sh / 2)}" fill="${s.fairway}"/>`, text: "Fairway" });
   const areaKinds = new Set(doc.items.filter(i => i.type === "area").map(i => (i as AreaItem).kind));

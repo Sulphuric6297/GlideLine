@@ -18,7 +18,6 @@ import { measureLidar } from "../state/lidar";
 import { newCourse } from "../state/files";
 import { sourceOf } from "../lib/importReview";
 import { photoDateText } from "../lib/geo/photoSources";
-import { holeLabel } from "../lib/course";
 import { surveyWhen } from "../lib/lidar";
 import { MeasuredTuning, type MeasuredTune } from "./MeasuredTrees";
 import { getView } from "../state/view";
@@ -30,7 +29,7 @@ import { useToolbarRoom } from "./Toolbar";
 import { ExportPanel } from "./ExportPanel";
 import { useLayout } from "./useLayout";
 import { LockedRow } from "./DemoNote";
-import { InspectorBody, PANEL_INSET, SelectionHeader, useSelection } from "./Inspector";
+import { InspectorBody, PANEL_INSET, SelectionHeader, useSelection, clearEveryFairway, holesOwnClear } from "./Inspector";
 import { SERVER } from "../auth/api";
 import { holeOf, useComments } from "../auth/Comments";
 import { NearbyCourses, NearbySafety } from "../auth/Nearby";
@@ -221,15 +220,12 @@ function MeasuredSettings() {
   // (trees placed by hand standing on a measured one: the survey has them already)
   const doubled = doc.items.filter(i => i.type === "tree" && !i.importSource && lidar.trees.some(t => Math.hypot(t[0] - i.x, t[1] - i.y) < Math.max(6, t[3] * 0.5)));
   // (holes whose own switch differs from the course's)
-  const own = doc.holes.filter(h => h.clearTrees !== undefined && h.clearTrees !== (lidar.clearFairways === true));
-  const ownSaid = own.length > 3 ? `${own.length} holes` : `hole${own.length === 1 ? "" : "s"} ${own.map(h => holeLabel(doc, h.id)).join(", ").replace(/, ([^,]*)$/, " and $1")}`;
+  const { own, said: ownSaid } = holesOwnClear(doc);
   const everyHole = (d: CourseDoc) => (d.holes.some(h => h.clearTrees !== undefined) ? { holes: d.holes.map(h => (h.clearTrees === undefined ? h : { ...h, clearTrees: undefined })) } : {});
   const change = (patch: MeasuredTune, done: boolean) => {
     if ("clearFairways" in patch) {
       // (the course's switch: every hole takes it)
-      const v = patch.clearFairways === true;
-      changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, clearFairways: v ? true : undefined }, ...everyHole(d) } : {}));
-      toast(v ? "Trees on every hole's fairway, tees and basket are cut down. A hole's own switch leaves its trees standing." : "Trees on the fairways are standing again.", "info", true);
+      clearEveryFairway(patch.clearFairways === true);
       return;
     }
     const { saplings: young, clearFairways: _course, ...rest } = patch;
@@ -420,7 +416,8 @@ function LayoutEditor({ open, setOpen, picker = true }: { open: boolean; setOpen
             const id = `layout-${generateId()}`;
             const used = new Set(doc.layouts.map(l => l.tee));
             const tee = TEE_ORDER.find(t => !used.has(t)) ?? "white";
-            changeDoc(d => ({ layouts: [...d.layouts, { id, name: TEE_LEVELS[tee].label, tee, pin: "A" }] }));
+            // (the course map keeps showing the layout it had)
+            changeDoc(d => ({ layouts: [...d.layouts, { id, name: TEE_LEVELS[tee].label, tee, pin: "A" }], ...(d.style.mapLayout ? {} : { style: { ...d.style, mapLayout: d.activeLayout } }) }));
             pickLayout(id);
           }}><Plus size={14} /> Add a layout</Button>
         </div>

@@ -24,6 +24,10 @@ type CourseStore = {
   commit: () => void;
   undo: () => void;
   redo: () => void;
+  /** The last step taken back as if it had never been: nothing to redo from it, and what could be
+   * redone before it (`future`) can be again. For a change that turns out not to be one (a tree
+   * clicked only to look at it). */
+  takeBack: (future: CourseDoc[]) => void;
   /** Replaces the document (open, new, shared link): no undo back into the old one. */
   load: (doc: CourseDoc) => void;
 };
@@ -54,6 +58,11 @@ export const useCourse = create<CourseStore>()((set, get) => ({
     if (gestureStart && gestureStart !== doc) { set({ doc: catchUp(gestureStart), future: [doc, ...future], gestureStart: null }); return; }
     if (!past.length) return;
     set({ doc: catchUp(past[past.length - 1]), past: past.slice(0, -1), future: [doc, ...future], gestureStart: null });
+  },
+  takeBack: future => {
+    const { past, readOnly } = get();
+    if (readOnly || !past.length) return;
+    set({ doc: catchUp(past[past.length - 1]), past: past.slice(0, -1), future, gestureStart: null });
   },
   redo: () => {
     const { past, future, doc, readOnly } = get();
@@ -215,6 +224,8 @@ type EditorStore = {
   standTap?: "walk" | "edit";
   /** A part of the picked field (its backstop, its fence…): outlined, its own settings shown. */
   fieldPart?: FieldPart | null;
+  /** A wall of the picked building, or a door or window on it: outlined, its own settings shown. */
+  buildingPart?: { wall: number; opening?: string; addOn?: string } | null;
   /** The tee view's flyover settings open over it. */
   teeSettings?: boolean;
   flyover: boolean;
@@ -357,7 +368,7 @@ if (typeof window !== "undefined") {
 // (another hole, or back to the map: standing on its tee again, unless a spot came with it)
 useEditor.subscribe((s, p) => { if (s.teeView !== p.teeView && s.teeStand && s.teeStand === p.teeStand) s.set({ teeStand: null }); });
 // (another thing picked: no part of the last one)
-useEditor.subscribe((s, p) => { if (s.selectedId !== p.selectedId && s.fieldPart) s.set({ fieldPart: null }); });
+useEditor.subscribe((s, p) => { if (s.selectedId !== p.selectedId && (s.fieldPart || s.buildingPart)) s.set({ fieldPart: null, buildingPart: null }); });
 // (a flyover that ends, or another hole's, starts unpaused)
 useEditor.subscribe((s, p) => { if (s.flyPaused && (!s.flyover || s.teeView !== p.teeView)) s.set({ flyPaused: false }); });
 // (a keyframe is held selected while the flyover is paused on it: played on, stopped or another

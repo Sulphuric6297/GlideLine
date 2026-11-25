@@ -285,3 +285,19 @@ plain("tee signs and hole cards take the course's own card style: header, letter
   plainExpect(card).toContain('fill="#fde68a"');
   plainExpect(card).toContain("Bitter");
 });
+
+plain("tees named by their layouts on the signs and hole pages; by color until that's picked", () => {
+  const doc = createEmptyCourse();
+  const h = newHole();
+  doc.holes.push(h);
+  doc.items.push(createTee(h.id, { x: 200, y: 500 }, "gold"), createTee(h.id, { x: 260, y: 500 }, "red"), createBasket(h.id, { x: 500, y: 500 }));
+  doc.layouts = [{ id: "l1", name: "Long", tee: "gold", pin: "A" }, { id: "l2", name: "Jr.", tee: "red", pin: "A" }];
+  doc.activeLayout = "l2";
+  const art = { contours: null, hillshade: null };
+  const all = () => [renderTeeSign(doc, h.id, "18x12", art)!.svg, renderTeeSign(doc, h.id, "12x18", art)!.svg, renderHolePage(doc, h.id, "letter", art)!.svg];
+  for (const svg of all()) { plainExpect(svg).toMatch(/GOLD/); plainExpect(svg).not.toMatch(/LONG [0-9]|>LONG</); }
+  doc.style.teeNames = "layouts";
+  for (const svg of all()) { plainExpect(svg).toMatch(/>LONG<|LONG [0-9]/); plainExpect(svg).toMatch(/>JR\.<|JR\. [0-9]/); plainExpect(svg).not.toMatch(/>GOLD<|GOLD [0-9]/); }
+  // (the sign is the layout's: its name under the map)
+  plainExpect(all()[0]).toContain("JR. LAYOUT");
+});

@@ -10,6 +10,7 @@ import { flyoverOf, keysAsTheyFlew } from "./flight";
 
 export const defaultStyle = (): MapStyle => ({
   theme: "forest",
+  lineLook: "painted",
   title: "",
   subtitle: "",
   footer: "",
@@ -147,6 +148,8 @@ export const normalizeCourse = (raw: Partial<CourseDoc>): CourseDoc => {
   // without bare rock on its steep ground has none)
   delete base.style.mapLook;
   delete base.style.steepRock;
+  // (and its throw lines as they were drawn)
+  delete base.style.lineLook;
   const doc: CourseDoc = {
     ...base,
     ...raw,
@@ -191,6 +194,8 @@ export const normalizeCourse = (raw: Partial<CourseDoc>): CourseDoc => {
     version: 1
   };
   if (!doc.layouts.some(l => l.id === doc.activeLayout)) doc.activeLayout = doc.layouts[0].id;
+  // (the course map keeps the layout it shows: one saved before it had its own, the one Design was on)
+  if (doc.layouts.length > 1 && !doc.layouts.some(l => l.id === doc.style.mapLayout)) doc.style = { ...doc.style, mapLayout: doc.activeLayout };
   if (doc.lidar) doc.items = doc.items.filter(i => !bareStand(i));
   doc.items = simpleWoods(doc.items);
   // (the Golden trees are gone: Brushed's in their place)
@@ -536,6 +541,8 @@ export const basketFor = (doc: Pick<CourseDoc, "items">, holeId: string, pin?: P
 };
 
 export const activeLayout = (doc: Pick<CourseDoc, "layouts" | "activeLayout">) => doc.layouts.find(l => l.id === doc.activeLayout) ?? doc.layouts[0];
+/** The layout the course map draws as its main line: its own, else the one Design is on. */
+export const mapLayoutOf = (doc: Pick<CourseDoc, "layouts" | "activeLayout" | "style">) => doc.layouts.find(l => l.id === doc.style.mapLayout) ?? activeLayout(doc);
 
 /** The throw line of a hole: tee, its doglegs (the tee's own, where it has them, else the hole's
  * still ahead of it), basket. */

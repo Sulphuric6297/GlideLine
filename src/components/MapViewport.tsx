@@ -1,4 +1,5 @@
 // The map view (2D and 3D are one view): the CourseView engine, fed from the course store.
+import { addOnLevels, buildingFrame } from "../lib/buildingParts";
 import { useOnSite } from "../state/onSite";
 import { usePageShown } from "../state/exportPick";
 import { latitudeOf, paintLight, sunFromOf } from "../lib/mapLook";
@@ -109,6 +110,7 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
         else ed.set({ teeStand: p });
       },
       onFieldPart: part => useEditor.getState().set({ fieldPart: part }),
+      onBuildingPart: part => useEditor.getState().set({ buildingPart: part }),
       onDrawProgress: n => useEditor.getState().set({ drawPoints: n }),
       onPlotEnd: () => useEditor.getState().set({ plotLine: null }),
       onObPickEnd: () => useEditor.getState().set({ obPick: null, pickCut: false }),
@@ -124,6 +126,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
     });
     setLiveView(v);
     (window as any).__dgView = v;
+    // (the porch sums, for the tests)
+    (window as any).__dgParts = { buildingFrame, addOnLevels };
     setView(v);
     const off = v.onView(setInfo);
     return () => {
@@ -277,6 +281,8 @@ export function MapViewport({ onContextMenu, compact, controlsTop = 0, controlsR
   // (the picked field's part outlined; redrawn as the field changes)
   const partItem = useCourse(s => (ed.fieldPart && ed.selectedId ? s.doc.items.find(i => i.id === ed.selectedId) : undefined));
   useEffect(() => { view?.setFieldPart(partItem ? partItem.id : null, ed.fieldPart ?? null); }, [view, partItem, ed.fieldPart]);
+  const bldItem = useCourse(s => (ed.buildingPart && ed.selectedId ? s.doc.items.find(i => i.id === ed.selectedId) : undefined));
+  useEffect(() => { view?.setBuildingPart(bldItem ? bldItem.id : null, ed.buildingPart ?? null); }, [view, bldItem, ed.buildingPart]);
   // (the picked keyframe stands out on the map; another hole picked, none is)
   useEffect(() => { view?.setFlyKey(ed.flyKey); }, [view, ed.flyKey]);
   useEffect(() => { if (!useEditor.getState().flyCam) useEditor.getState().set({ flyKey: null }); }, [ed.selectedId]);

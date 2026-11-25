@@ -211,4 +211,10 @@ export const ROCK_LOOK_ORDER: RockLook[] = ["bedrock", "broken", "rocky", "cliff
 export const STEEP_ROCK = 40;
 export const STEEP_NEVER = 90;
 
+/** A woods' trees as they grow unless it says otherwise: the shortest and the tallest (ft); and
+ * how short and how tall a woods can ask for, the two kept this far apart. */
+export const WOODS_HEIGHTS: [number, number] = [16, 80];
+export const WOODS_HEIGHT_LIMITS: [number, number] = [5, 120];
+export const WOODS_HEIGHT_GAP = 5;
+
 export const TREE_COLORS = ["#4a7a3a", "#3d6b2f", "#5c8a3c", "#2f5d34", "#7a9a3a"];

@@ -1,7 +1,8 @@
 import { readFileSync } from "fs";
 import { test as plain, expect as plainExpect, type Page } from "@playwright/test";
 import { test, expect, addHole, blankCourse, course, geoAt, SITE } from "./fixtures";
-import { fileCourse, readCsv, readGeoJson, readName, readSurface, settle, withFileLayouts } from "../../src/lib/courseFile";
+import { fileCourse, readCsv, readGeoJson, readName, readSurface, settle, teeNameLayouts, withFileLayouts } from "../../src/lib/courseFile";
+import JSZip from "jszip";
 import { bendOwner, createBasket, createEmptyCourse, createTee, defaultLayouts, newHole, teeLines } from "../../src/lib/course";
 import { holeStats } from "../../src/lib/holeStats";
 import { holeHints, mappedCourse, osmFeaturesFrom } from "../../src/lib/geo/osm";
@@ -349,4 +350,92 @@ test("the help guide's KML example brings in the whole hole, and its GPX example
   plainExpect([g.h.doglegs.length, !!g.tee("blue"), !!g.tee("red"), g.h.name]).toEqual([1, true, true, undefined]);
   plainExpect(g.baskets.map(([pin]: any) => pin)).toEqual(["A", "B"]);
   plainExpect(g.c.layouts.map((l: any) => l.name)).toEqual(["Main"]);
+});
+
+// A course list with a row a point: each tee named (Long, Short, Jr.), the pin named Main, each
+// tee's line as bends that name the tee and pin they run between, numbered (and listed out of
+// order); a tee marked removed and a pin marked temporary.
+const HEAD = "course_name,hole_number,hole_status,type,label,latitude,longitude,position_type,position_name,basket_model,position_status,point_index,is_temporary";
+const row = (hole: number, type: string, label: string, e: number, n: number, o: { status?: string; index?: number; temp?: boolean } = {}) => {
+  const p = ll(e, n), tee = type === "tee", pin = type === "target";
+  return [`"Springfield Park"`, hole, "active", type, `"${label}"`, p.lat, p.lon, tee ? "grass" : "", pin ? "Springfield 24" : "", pin ? "Springfield Champion 24" : "", o.status ?? "active", o.index ?? "", o.temp ? "true" : "false"].join(",");
+};
+const namedTees = () => [HEAD,
+  row(1, "tee", "Long", 0, 0), row(1, "tee", "Short", 60, 20), row(1, "tee", "Jr.", 120, 30), row(1, "tee", "Pro", -30, 0, { status: "removed" }),
+  row(1, "target", "Main", 400, 100), row(1, "target", "Event", 420, 130, { temp: true }),
+  row(1, "dogleg", "Long -> Main", 250, 150, { index: 2 }), row(1, "dogleg", "Long -> Main", 150, 120, { index: 1 }),
+  row(1, "dogleg", "Short -> Main", 250, 150, { index: 1 }),
+  row(2, "tee", "Jr.", 580, 20), row(2, "tee", "Long", 500, 0), row(2, "tee", "Short", 540, 10), row(2, "target", "Main", 800, 0)
+].join("\n");
+
+plain("tees named the same on every hole make a layout each; bends that name their tee make its line, in their order; removed and temporary points stay out (pure logic)", () => {
+  const f = teeNameLayouts(settle(readCsv(namedTees())));
+  plainExpect(f.name).toBe("Springfield Park");
+  plainExpect(f.layouts).toEqual([{ name: "Long", tee: "gold", pin: "A" }, { name: "Short", tee: "blue", pin: "A" }, { name: "Jr.", tee: "red", pin: "A" }]);
+  plainExpect(f.teeLayouts).toBe(true);
+  const c = fileCourse(f);
+  plainExpect(c.left).toEqual([]);
+  const [h1, h2] = c.holes;
+  // (the back tee's line is the hole's, through both bends in their order; Short has its own; Jr. none, so straight)
+  plainExpect(h1.doglegs.map(p => +p.lat.toFixed(6))).toEqual([ll(150, 120), ll(250, 150)].map(p => +(+p.lat).toFixed(6)));
+  plainExpect(h1.tees?.map(t => [t.tag, t.surface, t.doglegs?.length])).toEqual([["gold", "natural", undefined], ["blue", "natural", 1], ["red", "natural", 0]]);
+  plainExpect(h1.baskets?.map(b => b.model)).toEqual(["Springfield Champion 24"]);
+  plainExpect(h2.tees?.map(t => [t.tag, t.doglegs])).toEqual([["red", undefined], ["gold", undefined], ["blue", undefined]]);
+  // (tees named only by color: no layouts made of them)
+  const colors = readCsv(["hole,kind,name,lat,lon", ...[1, 2].flatMap(h => [`${h},tee,Blue,${Object.values(ll(h * 300, 0)).join(",")}`, `${h},tee,Red,${Object.values(ll(h * 300 + 50, 0)).join(",")}`, `${h},basket,,${Object.values(ll(h * 300 + 200, 0)).join(",")}`])].join("\n"));
+  plainExpect(teeNameLayouts(settle(colors)).layouts).toBeUndefined();
+});
+
+test("named tees from a file: the park found and brought in first, then a layout each, and Export makes every layout's sign", async ({ page }) => {
+  test.setTimeout(Math.max(test.info().timeout, 420_000));
+  await blankCourse(page);
+  await page.keyboard.press("Escape");
+  await open(page, "springfield.csv", namedTees());
+  await page.getByTestId("course-file-find-park").click();
+  await expect(page.getByTestId("site-size")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('[data-testid=import-what][data-here=ready]')).toBeVisible({ timeout: 90_000 });
+  // (no trees or map data: the signs paint sooner)
+  const photoTrees = page.getByTestId("bring-photo-trees");
+  if (await photoTrees.isVisible()) await photoTrees.click();
+  await page.getByTestId("bring-osm").click();
+  await page.getByTestId("import-site").click();
+  await expect(page.getByTestId("import-review")).toBeVisible({ timeout: 120_000 });
+  // (while the site is only looked over, the file waits: holes brought in then would lose its layouts)
+  await expect(page.getByTestId("course-file-dialog")).toBeHidden();
+  await page.getByTestId("review-bring").click();
+  await expect(page.getByTestId("course-file-summary")).toContainText("2 holes, 2 with more than one tee. Layouts: Long, Short, Jr.", { timeout: 60_000 });
+  await expect(page.getByTestId("course-file-check")).toHaveCount(0);
+  await page.getByTestId("course-file-bring").click();
+  await expect(page.getByTestId("course-file-dialog")).toBeHidden();
+  const start = page.getByTestId("site-ready-start");
+  if (await start.isVisible().catch(() => false)) await start.click();
+  const c = await course(page);
+  plainExpect(c.layouts.map((l: any) => [l.name, l.tee])).toEqual([["Long", "gold"], ["Short", "blue"], ["Jr.", "red"]]);
+  plainExpect(c.style.teeNames).toBe("layouts");
+  plainExpect(c.items.filter((i: any) => i.type === "tee").length).toBe(6);
+  // (the Short tee's own bend on its hole, between it and the basket: on the ground with the rest, in the site's frame)
+  const shortTee = c.items.find((i: any) => i.type === "tee" && i.level === "blue" && i.doglegs?.length);
+  const pin = c.items.find((i: any) => i.type === "basket" && i.holeId === shortTee.holeId);
+  const apart = (p: any, q: any) => Math.hypot(p.x - q.x, p.y - q.y);
+  plainExpect(apart(shortTee.doglegs[0], pin)).toBeLessThan(apart(shortTee, pin));
+  plainExpect(apart(shortTee.doglegs[0], shortTee)).toBeLessThan(apart(shortTee, pin));
+  // Export: hole 1's sign for each layout, a folder each, the tees named by their layouts
+  await page.getByRole("button", { name: "4 Export" }).click();
+  const signs = page.getByTestId("export-thing-signs");
+  if (!(await signs.getAttribute("data-open"))) await signs.getByRole("button").first().click();
+  await signs.getByTestId("sign-pick").getByRole("radio", { name: "1", exact: true }).click();
+  await signs.getByTestId("sign-layout").getByRole("radio", { name: "All 3" }).click();
+  await signs.getByTestId("sign-size").getByRole("radio", { name: "Letter" }).click();
+  await signs.getByRole("radio", { name: "Pictures (ZIP)", exact: true }).click();
+  await expect(page.getByTestId("export-signs-zip")).toContainText("Download 3 sign pictures");
+  const [download] = await Promise.all([page.waitForEvent("download", { timeout: 240_000 }), page.getByTestId("export-signs-zip").click()]);
+  const zip = await JSZip.loadAsync(readFileSync((await download.path())!));
+  plainExpect(Object.keys(zip.files).filter(n => !n.endsWith("/")).sort()).toEqual(["jr/hole-01.png", "jr/hole-01.svg", "long/hole-01.png", "long/hole-01.svg", "short/hole-01.png", "short/hole-01.svg"]);
+  const short = await zip.file("short/hole-01.svg")!.async("string");
+  plainExpect(short).toContain("SHORT LAYOUT");
+  plainExpect(short).toContain(">JR.<");
+  plainExpect(short).not.toContain(">GOLD<");
+  // (picking one layout again: the course's own, as the holes column picks it)
+  await signs.getByTestId("sign-layout").getByRole("radio", { name: "Jr." }).click();
+  await expect.poll(async () => { const d = await course(page); return d.layouts.find((l: any) => l.id === d.activeLayout)?.name; }).toBe("Jr.");
 });

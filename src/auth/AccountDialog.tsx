@@ -103,7 +103,7 @@ export function AccountDialog({ onClose }: { onClose: () => void }) {
                   <div className="text-zinc-100">{device(s.userAgent)}{s.current && <span className="ml-2 text-[11px] text-emerald-300">This device</span>}</div>
                   <div className="text-[12px] text-zinc-500">{s.ip ?? ""} · {when(s.lastSeenAt)}</div>
                 </div>
-                {!s.current && <button className="text-xs text-red-300 hover:text-red-200" onClick={() => void api("DELETE", `me/sessions/${s.id}`).then(refresh)}>Sign out</button>}
+                {!s.current && <button className="text-xs text-red-300 hover:text-red-200" onClick={() => void api("DELETE", `me/sessions/${s.id}`).then(refresh, () => {})}>Sign out</button>}
               </li>
             ))}
           </ul>

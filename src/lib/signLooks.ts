@@ -3,15 +3,15 @@
 // tee's length on a chip, then the climb, the rules and the way on. Tall signs stack it; wide ones
 // set the hole on the left and the rest beside it, with the spot under the chips as picked.
 import { fitAttr } from "./fitText";
-import { FT_PER_M, TEE_LEVELS } from "../constants";
+import { FT_PER_M } from "../constants";
 import type { BasketItem, CourseDoc } from "../types";
 import { holeTees, taglineOf } from "./course";
 import { dist, rotatePoint } from "./geom";
 import { holeStats, type HoleStats } from "./holeStats";
-import { northArrow, palette, scaleBar, wrapSvg } from "./mapSvg";
+import { northArrow, palette, scaleBar, wrapSvg, teeLevelOf } from "./mapSvg";
 import { fmtElev } from "./units";
 import { piecer } from "./pieces";
-import { autoRules, bigLength, cardStyle, courseNameAs, designedBy, elevationProfile, esc, greenView, holeMap, holeOfText, miniCourseMap, signExtras, signOf, SIGN_SIZES, statTiles, wrap, type SignArt, type SignSize } from "./teeSign";
+import { autoRules, bigLength, teeName, cardStyle, courseNameAs, designedBy, elevationProfile, esc, greenView, holeMap, holeOfText, miniCourseMap, signExtras, signOf, SIGN_SIZES, statTiles, wrap, type SignArt, type SignSize } from "./teeSign";
 
 const n = (v: number) => (Math.round(v * 100) / 100).toString();
 type Box = { x: number; y: number; w: number; h: number };
@@ -51,7 +51,7 @@ export const renderTrailhead = (doc: CourseDoc, holeId: string, size: SignSize, 
   const map = holeMap(doc, holeId, { w: inner.w, h: inner.h }, opts, 1.5 * u, `th${holeId.slice(-4)}`, true);
   const st = map.st;
   const lens = teeLengths(doc, holeId, st);
-  const lvl = TEE_LEVELS[lens.find(l => l.main)?.t.level ?? "blue"];
+  const lvl = teeLevelOf(doc.style, lens.find(l => l.main)?.t.level ?? "blue");
   const clip = `thmap${holeId.slice(-4)}`;
   at = parts.length;
   parts.push(`<rect x="${n(mapBox.x)}" data-fill="1" y="${n(mapBox.y)}" width="${n(mapBox.w)}" height="${n(mapBox.h)}" rx="${n(20 * u)}" fill="${cream}"/>`);
@@ -107,7 +107,7 @@ export const renderTrailhead = (doc: CourseDoc, holeId: string, size: SignSize, 
   }
 
   // Each tee's length on a chip (wide: and what it plays like, when that differs)
-  const chips = show("lengths") ? lens.map(l => ({ label: TEE_LEVELS[l.t.level].label.toUpperCase(), value: l.len ? big(l.len) : "–", color: TEE_LEVELS[l.t.level].color })) : [];
+  const chips = show("lengths") ? lens.map(l => ({ label: teeName(doc, l.t.level).toUpperCase(), value: l.len ? big(l.len) : "–", color: teeLevelOf(doc.style, l.t.level).color })) : [];
   const playsWord = P.word("lengths", "plays", "PLAYS LIKE").trim();
   if (st.complete && show("elevation") && Math.abs(st.playsLike - st.length) >= 10 && chips.length < 4 && !(wide && sign.spot === "stats")) chips.push({ label: playsWord, value: big(st.playsLike), color: sty.fairway });
   const chipY = wide ? col.y + T + 24 * u : mapBox.y + mapBox.h + 18 * u;
@@ -241,7 +241,7 @@ export const renderFieldGuide = (doc: CourseDoc, holeId: string, size: SignSize,
   // The column: the number big, par and the hole's name, each tee's length with a dotted leader
   let y = col.y;
   const lens = teeLengths(doc, holeId, st);
-  const lvl = TEE_LEVELS[lens.find(l => l.main)?.t.level ?? "blue"];
+  const lvl = teeLevelOf(doc.style, lens.find(l => l.main)?.t.level ?? "blue");
   const big = (ft: number) => `${Math.round(doc.units === "m" ? ft / FT_PER_M : ft).toLocaleString()} ${doc.units === "m" ? "m" : "ft"}`;
   if (wide) {
     const numSize = Math.min(150 * u, col.h * 0.3);
@@ -255,9 +255,9 @@ export const renderFieldGuide = (doc: CourseDoc, holeId: string, size: SignSize,
   at = parts.length;
   if (show("lengths")) {
     for (const l of lens) {
-      const L = TEE_LEVELS[l.t.level];
+      const L = teeLevelOf(doc.style, l.t.level);
       parts.push(`<g data-part="tee-row"><circle cx="${n(col.x + 7 * u)}" cy="${n(y - 6 * u)}" r="${n(6 * u)}" fill="${L.color}" stroke="${ink}" stroke-opacity="0.4" stroke-width="${n(1 * u)}"/>`
-        + `<text${fitAttr(56 * u)} x="${n(col.x + 20 * u)}" y="${n(y)}" font-family="${card.body}" font-weight="500" font-size="${n(15 * u)}" fill="${ink}">${esc(L.label)}</text>`
+        + `<text${fitAttr(56 * u)} x="${n(col.x + 20 * u)}" y="${n(y)}" font-family="${card.body}" font-weight="500" font-size="${n(15 * u)}" fill="${ink}">${esc(teeName(doc, l.t.level))}</text>`
         + `<line x1="${n(col.x + 80 * u)}" x2="${n(col.x + col.w - 90 * u)}" y1="${n(y - 2 * u)}" y2="${n(y - 2 * u)}" stroke="${ink}" stroke-opacity="0.45" stroke-width="${n(1.4 * u)}" stroke-dasharray="${n(1.5 * u)} ${n(4 * u)}"/>`
         + `<text${fitAttr(84 * u)} x="${n(col.x + col.w)}" y="${n(y)}" text-anchor="end" font-family="${card.body}" font-weight="700" font-size="${n(16 * u)}" fill="${ink}">${l.len ? esc(big(l.len)) : "–"}</text></g>`);
       y += 28 * u;
@@ -339,7 +339,7 @@ export const renderOpenView = (doc: CourseDoc, holeId: string, size: SignSize, o
     const lens = teeLengths(doc, holeId, st);
     const gap = 10 * u, w = (cw - 52 * u - gap * (lens.length - 1)) / Math.max(1, lens.length);
     lens.forEach((l, i) => {
-      const L = TEE_LEVELS[l.t.level], x = nx + i * (w + gap), y = cy + 128 * u;
+      const L = teeLevelOf(doc.style, l.t.level), x = nx + i * (w + gap), y = cy + 128 * u;
       const v = bigLength(l.len, doc.units);
       parts.push(`<g data-part="tee-chip"><rect x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(40 * u)}" rx="${n(10 * u)}" fill="${L.color}"/><text${fitAttr(w - 10 * u)} x="${n(x + w / 2)}" y="${n(y + 20 * u)}" text-anchor="middle" dominant-baseline="central" font-family="${card.head}" font-weight="700" font-size="${n(20 * u)}" fill="${L.ink}">${l.len ? esc(v) : "–"}</text></g>`);
     });

@@ -200,9 +200,10 @@ function CourseComments() {
   useSendHere();
   useEffect(() => {
     useComments.setState({ threads: [], selected: null, placing: false, draftAt: null });
-    void loadComments();
+    // (no connection for a moment, a phone waking say: the next round tries again; nothing to say)
+    void loadComments().catch(() => {});
     // (others' comments: looked for now and then)
-    const t = window.setInterval(() => void loadComments(), 30_000);
+    const t = window.setInterval(() => void loadComments().catch(() => {}), 30_000);
     return () => window.clearInterval(t);
   }, [id]);
   if (!id || preview) return null;

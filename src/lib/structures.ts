@@ -223,16 +223,6 @@ export const boxOutline = (pts: P[]): P[] => {
   return [[-a, -b], [a, -b], [a, b], [-a, b]].map(([s, t]) => ({ x: c.x + u.x * s + v.x * t, y: c.y + u.y * s + v.y * t }));
 };
 
-/** Buildings that don't all look like houses: a roof and colors each (walls, roof). */
-export const BUILDING_LOOKS = [
-  { id: "house", label: "House", roof: "gable", wallColor: "#d9cbb2", roofColor: "#5e4232" },
-  { id: "barn", label: "Barn", roof: "gable", wallColor: "#8e2f25", roofColor: "#4a4f55" },
-  { id: "shed", label: "Shed", roof: "shed", wallColor: "#7d6a52", roofColor: "#6f7479" },
-  { id: "restrooms", label: "Restrooms", roof: "flat", wallColor: "#b9ae9c", roofColor: "#8d8b86" },
-  { id: "modern", label: "Modern", roof: "flat", wallColor: "#e7e3da", roofColor: "#5b5f63" },
-  { id: "lodge", label: "Lodge", roof: "hip", wallColor: "#6b4f35", roofColor: "#3f4a3a" }
-] as const;
-
 /** One sloping face of a roof: its outline on the plan, and the way it faces (level, outward). */
 export type RoofFacet = { poly: P[]; out: P };
 

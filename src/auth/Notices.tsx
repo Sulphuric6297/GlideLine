@@ -29,11 +29,12 @@ export function NoticeBell() {
   }, [menu]);
   const go = async (n: Notice) => {
     setMenu(false);
-    void api("POST", "notifications/read", { ids: [n.id] }).then(refresh);
+    void api("POST", "notifications/read", { ids: [n.id] }).then(refresh, () => {});
     if (useServerCourse.getState().id !== n.courseId && !(await openServerCourse(n.courseId))) return;
     useAuth.getState().showHome(false);
     if (!n.threadId) return;
-    await loadComments();
+    // (the list as it was if it can't be fetched now: the thread opens all the same)
+    await loadComments().catch(() => {});
     openComments(n.threadId);
   };
   return (
@@ -46,7 +47,7 @@ export function NoticeBell() {
         <div className="absolute right-0 top-full mt-1 w-80 max-h-[70vh] overflow-y-auto glass-solid rounded-xl shadow-xl shadow-black/40 ring-1 ring-white/10 py-1 z-50" role="menu" data-testid="notices">
           <div className="flex items-center px-3 py-1.5">
             <span className="text-[12px] font-bold uppercase tracking-wider text-zinc-500 flex-1">Notices</span>
-            {list.unread > 0 && <button className="text-xs text-orange-300" onClick={() => void api("POST", "notifications/read", {}).then(refresh)}>Mark all read</button>}
+            {list.unread > 0 && <button className="text-xs text-orange-300" onClick={() => void api("POST", "notifications/read", {}).then(refresh, () => {})}>Mark all read</button>}
           </div>
           {list.items.length === 0 && <p className="px-3 py-2 text-sm text-zinc-500">Nothing yet.</p>}
           {list.items.map(n => (

@@ -3,6 +3,7 @@ import { test as plain, expect as plainExpect, type Page } from "@playwright/tes
 import * as THREE from "three";
 import { create3dTree } from "../../src/three/trees";
 import { BASKET_LINKS, BASKET_NEAR, createBasket } from "../../src/three/courseModels";
+import { WATER_LIFT, waterFlows, waterLevel, withWaterBeds } from "../../src/lib/waterBed";
 
 const grassSetting = (page: import("@playwright/test").Page) => page.evaluate(() => (window as any).__dgEditor().grass);
 
@@ -424,6 +425,33 @@ test("3D water: a pond on sloping ground lies level, never under the ground out 
   expect(r.vertices).toBeGreaterThan(10);
   expect(r.below).toBe(0);
   expect(r.shoreUnderSeen).toBe(0);
+});
+
+plain("still water is flat: a lake whose outline runs up a bank lies at one level (the survey's own where it measured the water, its lower banks' otherwise), with its bed under it; a river still slopes down its length", () => {
+  const lake = [{ x: 100, y: 100 }, { x: 500, y: 100 }, { x: 500, y: 500 }, { x: 100, y: 500 }];
+  const spots = [[110, 300], [150, 150], [300, 300], [490, 490], [60, 300]];
+  // The survey flattened the water at 5 ft; the outline's west side runs 100 ft up a bank to 20 ft
+  const measured = (x: number) => (x < 200 ? 5 + (200 - x) * 0.15 : 5);
+  const flat = waterLevel(lake, measured);
+  for (const [x, y] of spots) plainExpect(flat(x, y)).toBeCloseTo(5 + WATER_LIFT, 5);
+  // No level measured (the ground tilts all through it): one level still, that of its lower banks
+  const tilted = (x: number, y: number) => 3 + y * 0.004 + (x < 200 ? (200 - x) * 0.15 : 0);
+  const low = waterLevel(lake, tilted), one = low(300, 300);
+  for (const [x, y] of spots) plainExpect(low(x, y)).toBe(one);
+  plainExpect(one).toBeGreaterThan(3.3);
+  plainExpect(one).toBeLessThan(5.5);
+  // Its bed: every spot of the ground inside the outline lies under the water, the bank up the hill too
+  const heights: Record<string, number> = {};
+  for (let x = 0; x <= 600; x += 20) for (let y = 0; y <= 600; y += 20) heights[`${x},${y}`] = measured(x);
+  const bedded = withWaterBeds(heights, 20, { width: 600, height: 600 }, [lake]);
+  for (let x = 120; x <= 480; x += 20) for (let y = 120; y <= 480; y += 20) plainExpect(bedded[`${x},${y}`]).toBeLessThan(5 + WATER_LIFT - 0.3);
+  plainExpect(bedded["60,300"]).toBe(heights["60,300"]);
+  // A river, long and narrow, falling 12 ft: at its banks' level nearby, lower downstream
+  const river = [{ x: 0, y: 0 }, { x: 1200, y: 0 }, { x: 1200, y: 60 }, { x: 0, y: 60 }];
+  plainExpect(waterFlows(river)).toBe(true);
+  plainExpect(waterFlows(lake)).toBe(false);
+  const run = waterLevel(river, x => 20 - x * 0.01);
+  plainExpect(run(100, 30) - run(1100, 30)).toBeGreaterThan(8);
 });
 
 test("the map view rests while the Design step's page covers it, and draws the changes when it comes back", async ({ page }) => {

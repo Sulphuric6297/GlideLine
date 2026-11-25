@@ -20,7 +20,8 @@ const style = (patch: (s: MapStyle) => Partial<MapStyle>, history = true) => cha
 
 /** A built-in element's settings, changed. */
 export const patchPage = (id: PageElementId, patch: Partial<PageElementStyle>, history = true) =>
-  style(s => ({ page: { ...s.page, [id]: { ...s.page?.[id], ...patch } } }), history);
+  // (moved or sized by hand: from now on the course map stays where it is for it)
+  style(s => ({ page: { ...s.page, [id]: { ...s.page?.[id], ...patch } }, ...("x" in patch || "y" in patch || "scale" in patch ? { mapStays: true } : {}) }), history);
 export const patchText = (id: string, patch: Partial<PageText>, history = true) =>
   style(s => ({ texts: (s.texts ?? []).map(t => (t.id === id ? { ...t, ...patch } : t)) }), history);
 export const patchImage = (id: string, patch: Partial<PageImage>, history = true) =>
@@ -54,7 +55,7 @@ export const elementLabel = (doc: CourseDoc, sel: string) => {
 const LABEL_KINDS: Record<string, string> = { num: "Hole number", dist: "Distance", name: "Name", tag: "OB tag", text: "Text label", walk: "Walk to the next tee" };
 
 /** A label on the map moved by (dx, dy) feet on the ground, hidden, or put back (null). */
-export const patchLabel = (id: string, patch: { dx?: number; dy?: number; hidden?: boolean } | null) =>
+export const patchLabel = (id: string, patch: { dx?: number; dy?: number; hidden?: boolean; placed?: boolean } | null) =>
   style(s => {
     const all = { ...s.labelAt };
     if (patch === null) delete all[id];
@@ -64,7 +65,8 @@ export const patchLabel = (id: string, patch: { dx?: number; dy?: number; hidden
 export const moveLabel = (id: string, dx: number, dy: number) => {
   const o = getDoc().style.labelAt?.[id];
   const r = (v: number) => Math.round(v * 10) / 10;
-  patchLabel(id, { dx: r((o?.dx ?? 0) + dx), dy: r((o?.dy ?? 0) + dy) });
+  // (first moved now: measured from where the label goes by itself, clear of the lines and pads)
+  patchLabel(id, { dx: r((o?.dx ?? 0) + dx), dy: r((o?.dy ?? 0) + dy), ...(o && (o.dx || o.dy) && !o.placed ? {} : { placed: true }) });
 };
 
 /** Whether an element shows on the page. */

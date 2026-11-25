@@ -1,11 +1,15 @@
 // Built things in 3D at real size (feet): bridges, boardwalks, stairs, walls, buildings, shelters
 // and decks. Each is a few meshes, one per material, with every board, post and stone merged into
 // it, so a course with many of them stays quick. The materials (weathered deck boards, timber,
-// stone, cedar shingles, a metal roof, siding, concrete, glass) and their textures are made once
-// and shared; texture coordinates are in feet, so every texture is at its real size.
+// stone, concrete) and their textures are made once and shared; a building's walls, roof, trim,
+// doors and windows, and a shelter's roof, are three/buildingLook's (scans painted any color).
+// Texture coordinates are in feet, so every texture is at its real size.
 import * as THREE from "three";
-import type { FenceStyle, P, StructureItem } from "../types";
+import type { AddOn, FenceStyle, P, StructureItem } from "../types";
 import { pointInPolygon } from "../lib/geom";
+import { addOnLevels, BEAM, buildingColors, buildingFrame, outlineOf, roofingOf, sidingOf, stepsUp, windowStyleOf, type Frame } from "../lib/buildingParts";
+import { STRUCTURE_INK } from "../lib/symbols";
+import { glass, onLookLoaded, paint as paintOf, ROOF_SHADE, ROOFING_SCAN, room, SIDING_SCAN, surface } from "./buildingLook";
 import {
   boardwalkDeck, bridgeDeck, isLineKind, offsetPolygon, orientedBox, roofBreaks, roofFor, samplePath, stairSteps,
   structureHeight, structurePath, structureRoof, structureWidth, type Roof
@@ -17,7 +21,7 @@ type V = THREE.Vector3;
 
 // ------------------------------------------------------------------ materials
 
-type MatKey = "deck" | "timber" | "stone" | "shingle" | "metal" | "siding" | "concrete" | "glass" | "trim" | "door";
+type MatKey = "deck" | "timber" | "stone" | "concrete";
 
 /** A small seeded random generator, so the textures come out the same every time. */
 const rng = (seed: number) => () => {
@@ -65,7 +69,7 @@ const grain = (g: CanvasRenderingContext2D, r: () => number, along: "x" | "y", a
   }
 };
 
-const painters: Record<Exclude<MatKey, "glass" | "trim" | "door">, () => THREE.Texture | null> = {
+const painters: Record<MatKey, () => THREE.Texture | null> = {
   // Deck boards across a bridge (seams across u): weathered gray-brown, a few butt joints and knots
   deck: () => paint(512, 256, 8, 4, (g, r) => {
     const bw = 32;
@@ -126,64 +130,6 @@ const painters: Record<Exclude<MatKey, "glass" | "trim" | "door">, () => THREE.T
       g.fillRect(r() * 512, r() * 512, 1 + r() * 2, 1 + r() * 2);
     }
   }, 13),
-  // Cedar shingles: courses of tabs up the roof (v), each course's bottom edge in shadow
-  shingle: () => paint(512, 512, 8, 8, (g, r) => {
-    const row = 32;
-    for (let y = 0; y < 512; y += row) {
-      let x = (y / row) % 2 ? -16 - Math.floor(r() * 20) : -Math.floor(r() * 20);
-      while (x < 512) {
-        const tw = 34 + Math.floor(r() * 44);
-        const l = 0.23 + r() * 0.08;
-        g.fillStyle = hsl(22 + r() * 8, 0.1 + r() * 0.06, l);
-        g.fillRect(x, y, tw, row);
-        for (let k = 0; k < 4; k++) {
-          g.fillStyle = `rgba(${r() < 0.5 ? "20,10,5" : "255,235,210"},${0.05 + r() * 0.08})`;
-          g.fillRect(x + 3 + r() * (tw - 6), y + 4, 1 + r() * 2, row - 6);
-        }
-        g.fillStyle = "rgba(15,8,4,.55)";
-        g.fillRect(x, y, 2, row);
-        x += tw;
-      }
-      g.fillStyle = "rgba(10,6,3,.55)";
-      g.fillRect(0, y, 512, 4);
-      g.fillStyle = "rgba(255,230,200,.08)";
-      g.fillRect(0, y + 4, 512, 3);
-    }
-  }, 14),
-  // A standing-seam metal roof: ribs down the slope (along v) every 1⅓ ft
-  metal: () => paint(256, 128, 4, 2, (g, r) => {
-    const grad = g.createLinearGradient(0, 0, 256, 0);
-    grad.addColorStop(0, "#4f6f54");
-    grad.addColorStop(1, "#557659");
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 256, 128);
-    for (let x = 0; x < 256; x += 256 / 3) {
-      g.fillStyle = "rgba(255,255,255,.35)";
-      g.fillRect(x, 0, 3, 128);
-      g.fillStyle = "rgba(0,0,0,.35)";
-      g.fillRect(x + 3, 0, 4, 128);
-    }
-    for (let i = 0; i < 1200; i++) {
-      g.fillStyle = `rgba(${r() < 0.5 ? "0,0,0" : "255,255,255"},${r() * 0.05})`;
-      g.fillRect(r() * 256, r() * 128, 1, 4 + r() * 10);
-    }
-  }, 15),
-  // Lap siding: boards along the wall, a shadow under each lap
-  siding: () => paint(256, 256, 4, 4, (g, r) => {
-    const row = 32;
-    for (let y = 0; y < 256; y += row) {
-      g.fillStyle = hsl(36 + r() * 4, 0.22, 0.6 + r() * 0.04);
-      g.fillRect(0, y, 256, row);
-      grain(g, r, "x", y + 3, y + row - 3, 256, 10);
-      const sh = g.createLinearGradient(0, y + row - 9, 0, y + row);
-      sh.addColorStop(0, "rgba(0,0,0,0)");
-      sh.addColorStop(1, "rgba(0,0,0,.45)");
-      g.fillStyle = sh;
-      g.fillRect(0, y + row - 9, 256, 9);
-      g.fillStyle = "rgba(255,240,220,.18)";
-      g.fillRect(0, y, 256, 2);
-    }
-  }, 16),
   // Concrete: light, a little mottled and speckled
   concrete: () => paint(256, 256, 8, 8, (g, r) => {
     g.fillStyle = "#b8b3a9";
@@ -205,54 +151,12 @@ const mats = new Map<MatKey, THREE.Material>();
 const material = (key: MatKey) => {
   let m = mats.get(key);
   if (m) return m;
-  const map = key in painters ? painters[key as keyof typeof painters]() : null;
-  const fallback: Record<MatKey, string> = {
-    deck: "#8d7a62", timber: "#5a4330", stone: "#8c857a", shingle: "#5e4232", metal: "#4f6f54", siding: "#6e5036",
-    concrete: "#b8b3a9", glass: "#3b4c5a", trim: "#e8e1d1", door: "#3e5644"
-  };
-  m = new THREE.MeshStandardMaterial({
-    color: map ? 0xffffff : fallback[key],
-    map,
-    roughness: key === "glass" ? 0.18 : key === "metal" ? 0.42 : key === "trim" || key === "door" ? 0.65 : 0.92,
-    metalness: key === "glass" ? 0.3 : key === "metal" ? 0.35 : 0,
-    // Roofs are single sheets: seen from under the eaves too
-    side: key === "shingle" || key === "metal" ? THREE.DoubleSide : THREE.FrontSide
-  });
+  const map = painters[key]();
+  const fallback: Record<MatKey, string> = { deck: "#8d7a62", timber: "#5a4330", stone: "#8c857a", concrete: "#b8b3a9" };
+  m = new THREE.MeshStandardMaterial({ color: map ? 0xffffff : fallback[key], map, roughness: 0.92 });
   m.userData.shared = true;
   mats.set(key, m);
   return m;
-};
-
-const tints = new Map<string, THREE.Material>();
-
-/** A material in a color of its own, keeping its texture's grain (turned grey, so the color shows
- * true rather than mixing with the texture's). */
-const tinted = (key: MatKey, color: string) => {
-  const id = `${key}|${color}`;
-  let m = tints.get(id);
-  if (m) return m;
-  const base = material(key) as THREE.MeshStandardMaterial;
-  const own = base.clone();
-  const src = base.map?.image as HTMLCanvasElement | undefined;
-  if (src && typeof document !== "undefined") {
-    const c = document.createElement("canvas");
-    c.width = src.width;
-    c.height = src.height;
-    const g = c.getContext("2d");
-    if (g) {
-      g.filter = "grayscale(1) brightness(1.45)";
-      g.drawImage(src, 0, 0);
-      const t = base.map!.clone();
-      t.image = c;
-      t.needsUpdate = true;
-      t.userData.shared = true;
-      own.map = t;
-    }
-  }
-  own.color = new THREE.Color(color);
-  own.userData.shared = true;
-  tints.set(id, own);
-  return own;
 };
 
 // ------------------------------------------------------------------ geometry
@@ -439,7 +343,8 @@ const railings = (timber: Mesher, deck: { x: number; y: number; s: number; angle
 
 // ------------------------------------------------------------------ the models
 
-type Parts = Partial<Record<MatKey, Mesher>>;
+/** A model's meshes by what they're made of: the materials' (MatKey), or a building's parts. */
+type Parts = Record<string, Mesher | undefined>;
 
 const bridge = (st: StructureItem, g: Ground, parts: Parts) => {
   const deck = bridgeDeck(structurePath(st), g, structureHeight(st), 1);
@@ -584,63 +489,297 @@ const soffit = (roof: Roof, walls: P[], eave: number, overhang: number, m: Meshe
   }
 };
 
-const outlineOf = (st: StructureItem) => {
-  const pts = st.points.filter((p, i) => i === 0 || Math.hypot(p.x - st.points[i - 1].x, p.y - st.points[i - 1].y) > 1e-3);
-  if (pts.length > 3 && Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 1e-3) pts.pop();
-  return pts;
-};
 
-const building = (st: StructureItem, g: Ground, parts: Parts) => {
-  const outline = outlineOf(st);
-  if (outline.length < 3) return;
-  const H = Math.max(6, structureHeight(st));
-  const gs = [...alongEdges(outline, 6), orientedBox(outline).c].map(p => g(p.x, p.y));
-  const gMin = Math.min(...gs), gMax = Math.max(...gs);
-  const floor = gMax + 0.6, eave = floor + H;
-  const roof = roofFor(st, 1.5, 0.5, outline);
-  const roofY = (p: P) => eave + roof.pitch * roof.run(p);
-  const siding = (parts.siding ??= new Mesher()), stone = (parts.stone ??= new Mesher()), trim = (parts.trim ??= new Mesher());
-  const glass = (parts.glass ??= new Mesher()), door = (parts.door ??= new Mesher());
-  // A stone foundation, a little proud of the walls
-  prism(stone, offsetPolygon(outline, 0.18), gMin - 0.6, floor + 0.15, p => [p.x, p.y]);
-  // Walls up to the roof (a gable end's triangle included)
-  let s = 0;
-  const edges = outline.map((a, i) => ({ a, b: outline[(i + 1) % outline.length] }));
-  const longest = edges.reduce((best, e) => (Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y) > Math.hypot(best.b.x - best.a.x, best.b.y - best.a.y) ? e : best), edges[0]);
-  for (const e of edges) {
-    const out = outward(outline, e.a, e.b);
-    const pts = roofBreaks(e.a, e.b, roof);
-    for (let k = 1; k < pts.length; k++) {
-      const p = pts[k - 1], q = pts[k], l = Math.hypot(q.x - p.x, q.y - p.y);
-      siding.quad(w3(p, floor), w3(q, floor), w3(q, roofY(q)), w3(p, roofY(p)), [[s, floor], [s + l, floor], [s + l, roofY(q)], [s, roofY(p)]], out);
-      s += l;
+/**
+ * A porch, carport, deck or patio against a building's wall (as the Security Camera Planner draws
+ * them): its floor (boards on a skirt for a porch, on posts for a deck; a slab for a carport or a
+ * patio), steps down where it's raised, a railing round a raised one (open at its steps and where
+ * it's been taken off), and its roof: its own, a shed roof from under the eaves with a light ceiling
+ * under it, a beam and posts along its front; or the house's (set into the house), posts and a beam
+ * along the wall's line; or none.
+ */
+const addOnModel = (a: AddOn, F: Frame, g: Ground, at: (k: string) => Mesher) => {
+  const w = F.walls[a.wall];
+  if (!w || a.width < 2 || a.depth < 2) return;
+  const dir = new V3(w.dir.x, 0, w.dir.y), out = new V3(w.out.x, 0, w.out.y);
+  const mid = F.along(a.wall, a.at);
+  const P = (s: number, d: number, y: number) => new V3(mid.x + w.dir.x * s + w.out.x * d, y, mid.y + w.dir.y * s + w.out.y * d);
+  const box = (m: Mesher, s0: number, s1: number, y0: number, y1: number, d0: number, d1: number) =>
+    m.box(P((s0 + s1) / 2, (d0 + d1) / 2, (y0 + y1) / 2), dir, UP, out, Math.abs(s1 - s0) / 2, Math.max(0.01, Math.abs(y1 - y0) / 2), Math.abs(d1 - d0) / 2);
+  // (a box along a side of it, from a to b, `t` thick, y0 to y1)
+  const bar = (m: Mesher, p: [number, number], q: [number, number], t: number, y0: number, y1: number) => {
+    const A = P(p[0], p[1], 0), B = P(q[0], q[1], 0), len = Math.hypot(B.x - A.x, B.z - A.z);
+    if (len < 1e-3) return;
+    const u = new V3(B.x - A.x, 0, B.z - A.z).normalize(), v = new V3(-u.z, 0, u.x);
+    m.box(new V3((A.x + B.x) / 2, (y0 + y1) / 2, (A.z + B.z) / 2), u, UP, v, len / 2 + t / 2, Math.max(0.01, (y1 - y0) / 2), t / 2);
+  };
+  const L = addOnLevels(F, a, g);
+  const { half, D, d0, d1, gAt, gMin, level, top, setIn } = L;
+  // The floor: boards (a porch's on a skirt to the ground, a deck's on posts), or a slab
+  if (!level) {
+    // (a slab following the ground, a few inches over it, its open edges down into it)
+    const slab = at("pslab"), ns = Math.max(1, Math.ceil(a.width / 4)), nd = Math.max(1, Math.ceil(D / 4));
+    const v = (i: number, j: number) => { const sx = -half + (a.width * i) / ns, d = d0 + (D * j) / nd; return P(sx, d, gAt(sx, d) + 0.3); };
+    for (let i = 0; i < ns; i++) for (let j = 0; j < nd; j++) {
+      const p00 = v(i, j), p10 = v(i + 1, j), p11 = v(i + 1, j + 1), p01 = v(i, j + 1);
+      slab.quad(p00, p10, p11, p01, [[p00.x, p00.z], [p10.x, p10.z], [p11.x, p11.z], [p01.x, p01.z]], UP);
     }
-    // Windows (and the door, on the longest wall)
-    const len = Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y);
-    if (len < 7 || H < 7.5) continue;
-    const dir = new V3((e.b.x - e.a.x) / len, 0, (e.b.y - e.a.y) / len);
-    const count = Math.max(1, Math.floor((len - 2) / 9));
-    for (let k = 0; k < count; k++) {
-      const t = (k + 0.5) / count;
-      const at = { x: e.a.x + (e.b.x - e.a.x) * t, y: e.a.y + (e.b.y - e.a.y) * t };
-      const isDoor = e === longest && k === Math.floor(count / 2) && H >= 8;
-      const wHalf = isDoor ? 1.6 : 1.5, y0 = isDoor ? floor : floor + 3, y1 = isDoor ? floor + 7 : floor + 6.5;
-      const c = (o: number, y: number) => new V3(at.x, y, at.y).addScaledVector(out, o);
-      trim.box(c(0.06, (y0 + y1) / 2 + (isDoor ? 0.15 : 0)), dir, UP, out, wHalf + 0.3, (y1 - y0) / 2 + (isDoor ? 0.15 : 0.3), 0.08);
-      if (isDoor) door.box(c(0.12, (y0 + y1) / 2), dir, UP, out, wHalf, (y1 - y0) / 2, 0.08);
-      else {
-        glass.box(c(0.1, (y0 + y1) / 2), dir, UP, out, wHalf, (y1 - y0) / 2, 0.06);
-        // Muntins
-        trim.box(c(0.16, (y0 + y1) / 2), dir, UP, out, 0.06, (y1 - y0) / 2, 0.03);
-        trim.box(c(0.16, (y0 + y1) / 2), dir, UP, out, wHalf, 0.06, 0.03);
+    const edge = (pts: V[]) => { for (let k = 0; k + 1 < pts.length; k++) { const p = pts[k], q = pts[k + 1]; const n = new V3(q.z - p.z, 0, p.x - q.x).normalize(); slab.quad(p, q, q.clone().setY(q.y - 0.8), p.clone().setY(p.y - 0.8), [[0, 0], [1, 0], [1, 1], [0, 1]], n.dot(P(0, (d0 + d1) / 2, 0).sub(p)) > 0 ? n.negate() : n); } };
+    edge(Array.from({ length: ns + 1 }, (_, i) => v(i, setIn ? nd : nd)));
+    if (!setIn || L.open0) edge(Array.from({ length: nd + 1 }, (_, j) => v(0, j)));
+    if (!setIn || L.open1) edge(Array.from({ length: nd + 1 }, (_, j) => v(ns, j)));
+  } else {
+    box(at("pdeck"), -half, half, top - 0.2, top, d0, d1);
+    if (a.kind === "deck") {
+      // (its rim joist, and posts down to the ground every 6 ft or so)
+      box(at("ptimber"), -half, half, top - 0.9, top - 0.2, d1 - 0.2, d1);
+      for (const sx of [-half, half]) box(at("ptimber"), sx - 0.1 * Math.sign(sx) - 0.1, sx - 0.1 * Math.sign(sx) + 0.1, top - 0.9, top - 0.2, d0, d1);
+      const n = Math.max(1, Math.ceil(a.width / 6));
+      for (let k = 0; k <= n; k++) for (const d of [d1 - 0.4, (d0 + d1) / 2]) {
+        const sx = -half + 0.3 + ((a.width - 0.6) * k) / n;
+        box(at("ptimber"), sx - 0.25, sx + 0.25, gAt(sx, d) - 0.5, top - 0.9, d - 0.25, d + 0.25);
+      }
+    } else box(at("pskirt"), -half + 0.1, half - 0.1, gMin - 0.5, top - 0.2, d0 + 0.05, d1 - 0.1);
+  }
+  // Steps down, each as wide as a door's and a half, risers of about 7 in
+  for (const e of L.steps) {
+    const n = stepsUp(e.rise);
+    if (!n) continue;
+    const riser = e.rise / n, sw = L.STEP / 2 - 0.2, [ox, oy] = e.sd.out, [ux, uy] = [-oy, ox];
+    const ground = gAt(e.sx + ox, e.d + oy);
+    for (let k = 1; k <= n; k++) {
+      const c0: [number, number] = [e.sx + ux * -sw, e.d + uy * -sw], c1: [number, number] = [e.sx + ux * sw, e.d + uy * sw];
+      // (tread k: from the side out to k treads, as high as the floor less k risers)
+      const o0 = (k - 1) * 0.95, o1 = k * 0.95;
+      const q = (c: [number, number], o: number): [number, number] => [c[0] + ox * o, c[1] + oy * o];
+      const A = q(c0, o0), B = q(c1, o0), C = q(c1, o1), E = q(c0, o1);
+      const s0 = Math.min(A[0], B[0], C[0], E[0]), s1 = Math.max(A[0], B[0], C[0], E[0]), e0 = Math.min(A[1], B[1], C[1], E[1]), e1 = Math.max(A[1], B[1], C[1], E[1]);
+      box(at("steps"), s0, s1, ground - 0.4, top - k * riser + 0.02, e0, e1);
+    }
+  }
+  // A railing round a raised one: top and bottom rails, balusters between, open at its steps
+  if (L.rail) {
+    const rail = at("rail"), y0 = top, y1 = top + 3, noRail = new Set(a.noRail ?? []), inset = 0.2;
+    for (const sd of L.sides) {
+      if (noRail.has(sd.i)) continue;
+      const gaps = L.steps.filter(e => e.sd.i === sd.i).map(e => e.at * sd.len).sort((x, y) => x - y);
+      const runs: [number, number][] = [];
+      let from = 0;
+      for (const gp of gaps) { if (gp - L.STEP / 2 > from + 0.3) runs.push([from, gp - L.STEP / 2]); from = gp + L.STEP / 2; }
+      if (sd.len > from + 0.3) runs.push([from, sd.len]);
+      for (const [t0, t1] of runs) {
+        // (just inside its edge)
+        const p0 = L.sideAt(sd, t0 / sd.len), p1 = L.sideAt(sd, t1 / sd.len);
+        const pin = (q: [number, number]): [number, number] => [q[0] - sd.out[0] * inset, q[1] - sd.out[1] * inset];
+        const A = pin(p0), B = pin(p1), len = t1 - t0, n = Math.max(1, Math.round(len / 0.45));
+        bar(rail, A, B, 0.3, y1 - 0.2, y1);
+        bar(rail, A, B, 0.16, y0 + 0.34, y0 + 0.46);
+        for (let k = 0; k <= n; k++) { const q: [number, number] = [A[0] + ((B[0] - A[0]) * k) / n, A[1] + ((B[1] - A[1]) * k) / n]; box(rail, q[0] - 0.05, q[0] + 0.05, y0 + 0.46, y1 - 0.2, q[1] - 0.05, q[1] + 0.05); }
       }
     }
   }
+  // (posts every 10 ft or so along its front, at `d`, from its floor or the ground up to `y`,
+  // clear of its steps; a beam on them)
+  const posts = (d: number, y: (sx: number) => number) => {
+    const trim = at("post"), n = Math.max(1, Math.ceil(a.width / 10));
+    for (let k = 0; k <= n; k++) {
+      const sx = -half + 0.35 + ((a.width - 0.7) * k) / n;
+      if (L.steps.some(e => e.sd.i === 1 && Math.abs(e.sx - sx) < L.STEP / 2 + 0.2)) continue;
+      box(trim, sx - 0.25, sx + 0.25, level ? top : gAt(sx, d), y(sx), d - 0.25, d + 0.25);
+    }
+  };
+  if (L.roof) {
+    // Its own roof: from under the eaves, out past the posts (3 in 12 where there's height for it,
+    // gentler over a deep one; 7 ft clear under its edge), a light ceiling under it, a fascia, a
+    // beam on the posts
+    const { yWall, over, pitch, yOut } = L;
+    const roof = at("proof"), ceil = at("pceil"), t = 0.35;
+    const p0 = P(-half - over, 0, yWall + t), p1 = P(half + over, 0, yWall + t), p2 = P(half + over, D + over, yOut + t), p3 = P(-half - over, D + over, yOut + t);
+    const slope = Math.hypot(D + over, (D + over) * pitch);
+    roof.quad(p0, p1, p2, p3, [[0, 0], [a.width + 2 * over, 0], [a.width + 2 * over, slope], [0, slope]], UP);
+    const b0 = P(-half - over, 0, yWall), b1 = P(half + over, 0, yWall), b2 = P(half + over, D + over, yOut), b3 = P(-half - over, D + over, yOut);
+    ceil.quad(b1, b0, b3, b2, [[0, 0], [1, 0], [1, 1], [0, 1]], UP.clone().negate());
+    const trim = at("post"), yAt = (d: number) => yWall - d * pitch;
+    trim.quad(p3, p2, b2, b3, [[0, 0], [1, 0], [1, 1], [0, 1]], out);
+    trim.quad(p0, p3, b3, b0, [[0, 0], [1, 0], [1, 1], [0, 1]], dir.clone().negate());
+    trim.quad(p2, p1, b1, b2, [[0, 0], [1, 0], [1, 1], [0, 1]], dir);
+    box(trim, -half, half, yAt(D - 0.4) - 0.9, yAt(D - 0.4) - 0.02, D - 0.65, D - 0.15);
+    posts(D - 0.4, () => yAt(D - 0.4) - 0.8);
+  } else if (setIn) {
+    // Set into the house: posts and a beam along the wall's line, a ceiling over it under the beam
+    const trim = at("post"), y = F.head;
+    box(trim, -half, half, y, F.eave - 0.05, -0.55, 0.05);
+    at("pceil").quad(P(half, -D, y), P(-half, -D, y), P(-half, 0, y), P(half, 0, y), [[0, 0], [1, 0], [1, 1], [0, 1]], UP.clone().negate());
+    posts(-0.3, () => y);
+    // (an end open round the corner: a beam along it under the wall there, posts every 10 ft or so
+    // back from the corner one, clear of steps on that side)
+    for (const [open, sgn, i] of [[L.open0, -1, 0], [L.open1, 1, 2]] as [boolean, number, number][]) {
+      if (!open) continue;
+      const sx = sgn * half, inner = sx - sgn * 0.55;
+      box(trim, Math.min(sx + sgn * 0.05, inner), Math.max(sx + sgn * 0.05, inner), y, y + BEAM - 0.05, -D, 0.05);
+      const n = Math.max(1, Math.ceil(D / 10));
+      for (let k = 1; k < n; k++) {
+        const d = -0.3 - ((D - 0.3) * k) / n, px = sx - sgn * 0.3;
+        if (L.steps.some(e => e.sd.i === i && Math.abs(e.d - d) < L.STEP / 2 + 0.2)) continue;
+        box(trim, px - 0.25, px + 0.25, level ? top : gAt(px, d), y, d - 0.25, d + 0.25);
+      }
+    }
+  }
+};
+
+const building = (st: StructureItem, g: Ground, parts: Parts) => {
+  if (outlineOf(st).length < 3) return;
+  const F = buildingFrame(st, g);
+  const { outline, gMin, floor, eave, roof, roofY } = F;
+  const C = buildingColors(st);
+  const at = (k: string) => (parts[k] ??= new Mesher());
+  const trim = at("trim"), found = at("found");
+  const style = windowStyleOf(st), siding = sidingOf(st);
+  // A foundation, a little proud of the walls (round any porch set into the house)
+  // (a corner a porch is open round taken off: the notch goes round it)
+  const n = outline.length;
+  const notched = F.recesses.length ? outline.flatMap((p, i) => [...(F.recesses.some(r => (r.wall === i && r.open0) || (r.wall === (i + n - 1) % n && r.open1)) ? [] : [p]), ...F.recesses.filter(r => r.wall === i).sort((x, y) => x.s0 - y.s0).flatMap(r => {
+    const w = F.walls[i], q = (s: number, d: number) => ({ x: w.a.x + w.dir.x * s + w.out.x * d, y: w.a.y + w.dir.y * s + w.out.y * d });
+    return [...(r.open0 ? [] : [q(r.s0, 0)]), q(r.s0, -r.D), q(r.s1, -r.D), ...(r.open1 ? [] : [q(r.s1, 0)])];
+  })]) : outline;
+  prism(found, offsetPolygon(notched, 0.18), gMin - 0.6, floor + 0.15, p => [p.x, p.y]);
+  const edges = F.walls.map(e => ({ ...e, dir: new V3(e.dir.x, 0, e.dir.y), out: new V3(e.out.x, 0, e.out.y) }));
+  const along = F.along;
+  let s0 = 0;
+  edges.forEach((e, w) => {
+    if (e.len < 1e-3) return;
+    // (a point on this wall: s ft along it, y up, d ft out from its face)
+    const pt = (s: number, y: number, d = 0) => { const p = along(w, s); return new V3(p.x, y, p.y).addScaledVector(e.out, d); };
+    const box = (m: Mesher, sa: number, sb: number, ya: number, yb: number, da: number, db: number) =>
+      m.box(pt((sa + sb) / 2, (ya + yb) / 2, (da + db) / 2), e.dir, UP, e.out, Math.abs(sb - sa) / 2, Math.abs(yb - ya) / 2, Math.abs(db - da) / 2);
+    // (a porch set into the house on this wall: the wall open there up to its beam, set back
+    // behind it, the doors and windows there on that back wall)
+    const recs = F.recesses.filter(r => r.wall === w);
+    const recOf = (s: number) => recs.find(r => s > r.s0 && s < r.s1);
+    const all = F.placed.filter(o => o.wall === w).map(o => ({ ...o, y0: o.bottom }));
+    const mine = all.filter(o => !recOf(o.at));
+    // The wall: up to the roof (a gable end's triangle too), its doors and windows cut out
+    const tops = F.tops(w);
+    const contour = [new THREE.Vector2(0, floor), new THREE.Vector2(e.len, floor), ...tops.reverse().map(t => new THREE.Vector2(t.s, t.y))];
+    const cut = F.cuts.filter(c => c.wall === w);
+    const doorsAtFloor = [...mine.filter(o => o.y0 <= floor + 0.01), ...cut.map(c => ({ x0: c.x0, x1: c.x1, y1: F.head }))];
+    // (a door opens the wall from the floor: its hole and the wall's foot are one, so the foot runs
+    // round it; open at a corner (a porch set in round it), the wall starts or ends at its top)
+    const gaps: { x0: number; x1: number; y1: number }[] = [];
+    for (const o of [...doorsAtFloor].sort((x, y) => x.x0 - y.x0)) {
+      const last = gaps[gaps.length - 1];
+      if (last && o.x0 <= last.x1 + 0.05) { last.x1 = Math.max(last.x1, o.x1); last.y1 = Math.max(last.y1, o.y1); } else gaps.push({ x0: Math.max(0, o.x0), x1: Math.min(e.len, o.x1), y1: o.y1 });
+    }
+    const atStart = gaps[0] && gaps[0].x0 <= 0.01 ? gaps[0] : null;
+    const atEnd = gaps.length && gaps[gaps.length - 1].x1 >= e.len - 0.01 ? gaps[gaps.length - 1] : null;
+    const foot = atStart ? [new THREE.Vector2(0, atStart.y1), ...(atStart === atEnd ? [new THREE.Vector2(e.len, atStart.y1)] : [new THREE.Vector2(atStart.x1, atStart.y1), new THREE.Vector2(atStart.x1, floor)])] : [new THREE.Vector2(0, floor)];
+    for (const o of gaps) if (o !== atStart && o !== atEnd) foot.push(new THREE.Vector2(o.x0, floor), new THREE.Vector2(o.x0, o.y1), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x1, floor));
+    if (atEnd && atEnd !== atStart) foot.push(new THREE.Vector2(atEnd.x0, floor), new THREE.Vector2(atEnd.x0, atEnd.y1), new THREE.Vector2(e.len, atEnd.y1));
+    const ring = [...foot, ...contour.slice(atEnd ? 2 : 1)];
+    const holes = mine.filter(o => !doorsAtFloor.includes(o)).map(o => [new THREE.Vector2(o.x0, o.y0), new THREE.Vector2(o.x1, o.y0), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x0, o.y1)]);
+    const pts = [...ring, ...holes.flat()];
+    const wallM = at(`walls|${st.wallColors?.[w] ?? C.walls ?? ""}`);
+    for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(ring, holes))
+      wallM.tri(pt(pts[i].x, pts[i].y), pt(pts[j].x, pts[j].y), pt(pts[k].x, pts[k].y), [[s0 + pts[i].x, pts[i].y], [s0 + pts[j].x, pts[j].y], [s0 + pts[k].x, pts[k].y]], e.out);
+    s0 += e.len;
+    // Corner boards (wood siding's)
+    if (siding === "lap" || siding === "board") {
+      box(trim, 0, 0.45, atStart ? atStart.y1 : floor, roofY(e.a) - 0.1, 0, 0.1);
+      box(trim, e.len - 0.45, e.len, atEnd ? atEnd.y1 : floor, roofY(e.b) - 0.1, 0, 0.1);
+    }
+    // The walls behind a porch set in: its back wall (doors and windows cut out) and its ends, the
+    // foundation under them
+    for (const r of recs) {
+      const back = all.filter(o => recOf(o.at) === r), atFloor = back.filter(o => o.y0 <= floor + 0.01);
+      const bp = (s: number, y: number) => pt(s, y, -r.D);
+      const foot = [new THREE.Vector2(r.s0, floor)];
+      for (const o of [...atFloor].sort((x, y) => x.x0 - y.x0)) foot.push(new THREE.Vector2(o.x0, floor), new THREE.Vector2(o.x0, o.y1), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x1, floor));
+      const ringB = [...foot, new THREE.Vector2(r.s1, floor), new THREE.Vector2(r.s1, F.head), new THREE.Vector2(r.s0, F.head)];
+      const holesB = back.filter(o => !atFloor.includes(o)).map(o => [new THREE.Vector2(o.x0, o.y0), new THREE.Vector2(o.x1, o.y0), new THREE.Vector2(o.x1, o.y1), new THREE.Vector2(o.x0, o.y1)]);
+      const ptsB = [...ringB, ...holesB.flat()];
+      for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(ringB, holesB))
+        wallM.tri(bp(ptsB[i].x, ptsB[i].y), bp(ptsB[j].x, ptsB[j].y), bp(ptsB[k].x, ptsB[k].y), [[s0 - e.len + ptsB[i].x, ptsB[i].y], [s0 - e.len + ptsB[j].x, ptsB[j].y], [s0 - e.len + ptsB[k].x, ptsB[k].y]], e.out);
+      for (const [sx, n] of ([[r.s0, e.dir, r.open0], [r.s1, e.dir.clone().negate(), r.open1]] as [number, V, boolean][]).filter(x => !x[2])) {
+        wallM.quad(pt(sx, floor, -r.D), pt(sx, floor, 0), pt(sx, F.head, 0), pt(sx, F.head, -r.D), [[0, floor], [r.D, floor], [r.D, F.head], [0, F.head]], n);
+        found.quad(pt(sx, gMin - 0.6, -r.D), pt(sx, gMin - 0.6, 0), pt(sx, floor + 0.15, 0), pt(sx, floor + 0.15, -r.D), [[0, 0], [r.D, 0], [r.D, 1], [0, 1]], n);
+      }
+      found.quad(pt(r.s0, gMin - 0.6, -r.D), pt(r.s1, gMin - 0.6, -r.D), pt(r.s1, floor + 0.15, -r.D), pt(r.s0, floor + 0.15, -r.D), [[r.s0, 0], [r.s1, 0], [r.s1, 1], [r.s0, 1]], e.out);
+    }
+    for (const o of all) {
+      const { x0, x1, y0, y1 } = o;
+      // (on the back wall of a porch set in here)
+      const rr = recOf(o.at), back = rr ? -rr.D : 0;
+      const pt = (s: number, y: number, d = 0) => { const p = along(w, s); return new V3(p.x, y, p.y).addScaledVector(e.out, d + back); };
+      const box = (m: Mesher, sa: number, sb: number, ya: number, yb: number, da: number, db: number) =>
+        m.box(pt((sa + sb) / 2, (ya + yb) / 2, (da + db) / 2), e.dir, UP, e.out, Math.abs(sb - sa) / 2, Math.abs(yb - ya) / 2, Math.abs(db - da) / 2);
+      const sides = (m: Mesher, d0: number, d1: number, bottom: boolean) => {
+        m.quad(pt(x0, y0, d0), pt(x0, y0, d1), pt(x0, y1, d1), pt(x0, y1, d0), [[0, 0], [1, 0], [1, 1], [0, 1]], e.dir);
+        m.quad(pt(x1, y0, d0), pt(x1, y0, d1), pt(x1, y1, d1), pt(x1, y1, d0), [[0, 0], [1, 0], [1, 1], [0, 1]], e.dir.clone().negate());
+        m.quad(pt(x0, y1, d0), pt(x1, y1, d0), pt(x1, y1, d1), pt(x0, y1, d1), [[0, 0], [1, 0], [1, 1], [0, 1]], UP.clone().negate());
+        if (bottom) m.quad(pt(x0, y0, d0), pt(x1, y0, d0), pt(x1, y0, d1), pt(x0, y0, d1), [[0, 0], [1, 0], [1, 1], [0, 1]], UP);
+      };
+      const tw = o.kind === "garage" ? 0.4 : 0.36;
+      // (its own style and colors, where it has them, over the building's)
+      const sty = o.style ?? style, frames = at(o.color && o.kind === "window" ? `frames|${o.color}` : "frames"), shutters = at(o.shutterColor ? `shutters|${o.shutterColor}` : "shutters");
+      // (its casing round it, a head over it)
+      box(trim, x0 - tw, x0, o.kind === "window" ? y0 - 0.05 : y0, y1 + tw, 0, 0.1);
+      box(trim, x1, x1 + tw, o.kind === "window" ? y0 - 0.05 : y0, y1 + tw, 0, 0.1);
+      box(trim, x0 - tw - 0.1, x1 + tw + 0.1, y1, y1 + tw + 0.06, 0, 0.15);
+      if (o.kind === "window") {
+        const d = 0.45, f = 0.16, mid = (y0 + y1) / 2;
+        sides(trim, 0, -d, true);
+        // (the room behind: its sides dark, its back one of the four rooms)
+        sides(at("dark"), -d, -d - 1.6, true);
+        const v = Math.floor(Math.abs(Math.sin(w * 12.9898 + o.at * 78.233) * 43758.5453)) % 4;
+        at("room").quad(pt(x0, y0, -d - 1.6), pt(x1, y0, -d - 1.6), pt(x1, y1, -d - 1.6), pt(x0, y1, -d - 1.6), [[v / 4, 0], [(v + 1) / 4, 0], [(v + 1) / 4, 1], [v / 4, 1]], e.out);
+        at("glass").quad(pt(x0, y0, -d + 0.08), pt(x1, y0, -d + 0.08), pt(x1, y1, -d + 0.08), pt(x0, y1, -d + 0.08), [[0, 0], [1, 0], [1, 1], [0, 1]], e.out);
+        // (two sashes: their frames and the rail where they meet; a grid of panes)
+        box(frames, x0, x0 + f, y0, y1, -d + 0.04, -d + 0.18);
+        box(frames, x1 - f, x1, y0, y1, -d + 0.04, -d + 0.18);
+        box(frames, x0, x1, y1 - f, y1, -d + 0.04, -d + 0.18);
+        box(frames, x0, x1, y0, y0 + f, -d + 0.04, -d + 0.18);
+        box(frames, x0, x1, mid - 0.08, mid + 0.08, -d + 0.04, -d + 0.22);
+        if (sty !== "plain") {
+          for (const k of [1, 2]) box(frames, x0 + ((x1 - x0) * k) / 3 - 0.03, x0 + ((x1 - x0) * k) / 3 + 0.03, y0, y1, -d + 0.18, -d + 0.22);
+          for (const yy of [y0 + (y1 - y0) / 4, y0 + (3 * (y1 - y0)) / 4]) box(frames, x0, x1, yy - 0.03, yy + 0.03, -d + 0.18, -d + 0.22);
+        }
+        // (its sill, out over the wall)
+        box(trim, x0 - tw - 0.15, x1 + tw + 0.15, y0 - 0.22, y0, -0.1, 0.3);
+        if (sty === "shutters") for (const [a, b] of [[x0 - tw - o.width / 2 - 0.05, x0 - tw - 0.05], [x1 + tw + 0.05, x1 + tw + o.width / 2 + 0.05]]) {
+          box(shutters, a, b, y0, y1, 0, 0.12);
+          box(shutters, a + 0.12, b - 0.12, (y0 + y1) / 2 - 0.12, (y0 + y1) / 2 + 0.12, 0.12, 0.17);
+        }
+      } else {
+        // A door, or a garage's: set in, panels on it
+        const d = 0.3, slab = at(`${o.kind === "garage" ? "garage" : "door"}${o.color ? `|${o.color}` : ""}`);
+        sides(trim, 0, -d, false);
+        box(slab, x0, x1, y0, y1, -d - 0.15, -d);
+        if (o.kind === "garage") for (let k = 1; k < 4; k++) box(slab, x0 + 0.1, x1 - 0.1, y0 + ((y1 - y0) * k) / 4 - 0.05, y0 + ((y1 - y0) * k) / 4 + 0.05, -d, -d + 0.05);
+        else for (const [a, b] of [[0.18, 0.47], [0.53, 0.82]]) for (const [c, dd] of [[0.08, 0.42], [0.5, 0.78]]) box(slab, x0 + o.width * a, x0 + o.width * b, y0 + o.height * c, y0 + o.height * dd, -d, -d + 0.05);
+        // Steps up to it where the floor stands over the ground: a landing, then steps down
+        const ground = g(pt(o.at, 0, 3).x, pt(o.at, 0, 3).z), rise = y0 - ground;
+        // (a porch or a deck in front of it: its own steps)
+        const covered = (st.addOns ?? []).some(a => a.wall === w && (a.kind === "porch" || a.kind === "deck" || (a.floor ?? 0) > 0.4) && Math.abs(a.at - o.at) < a.width / 2);
+        const n = covered ? 0 : stepsUp(rise);
+        if (n && o.kind !== "garage") {
+          const steps = at("steps"), wide = o.width / 2 + 1.1, land = 3.5, riser = rise / n;
+          box(steps, o.at - wide, o.at + wide, ground - 0.4, y0 - 0.05, 0, land);
+          for (let k = 1; k < n; k++) box(steps, o.at - wide, o.at + wide, ground - 0.4, y0 - 0.05 - k * riser, 0, land + k * 0.95);
+        } else if (o.kind === "garage" && rise > 0.15) {
+          // (a garage's: a concrete apron sloping down from its door to the ground)
+          const apron = at("steps"), run = Math.max(4, rise * 6), a0 = x0 - 0.5, a1 = x1 + 0.5, lo = ground - 0.3;
+          apron.quad(pt(a0, y0, 0), pt(a1, y0, 0), pt(a1, lo, run), pt(a0, lo, run), [[a0, 0], [a1, 0], [a1, run], [a0, run]], UP);
+          for (const [x, sgn] of [[a0, -1], [a1, 1]] as [number, number][]) apron.tri(pt(x, y0, 0), pt(x, lo, run), pt(x, lo, 0), [[0, y0], [run, lo], [0, lo]], e.dir.clone().multiplyScalar(sgn));
+        }
+      }
+    }
+  });
+  for (const a of st.addOns ?? []) addOnModel(a, F, g, at);
   if (structureRoof(st) === "flat") {
     // A flat roof: a membrane, and a low parapet round its edge
-    roofFaces(roof, eave, (parts.concrete ??= new Mesher()), trim);
-    sweep(stone, roof.eaves, roof.eaves.map(() => eave - 0.45), roof.eaves.map(() => eave + 1.1), 0, 0.28, true);
-  } else roofFaces(roof, eave, (parts.shingle ??= new Mesher()), trim);
+    roofFaces(roof, eave, at("flatroof"), trim);
+    sweep(found, roof.eaves, roof.eaves.map(() => eave - 0.45), roof.eaves.map(() => eave + 1.1), 0, 0.28, true);
+  } else roofFaces(roof, eave, at("roof"), trim);
   soffit(roof, outline, eave, 1.5, trim);
 };
 
@@ -658,7 +797,7 @@ const shelter = (st: StructureItem, g: Ground, parts: Parts) => {
   for (const p of alongEdges(inset, 10)) post(timber, p, floor, eave, 0.6);
   sweep(timber, inset, inset.map(() => eave - 1.05), inset.map(() => eave), 0, 0.3, true);
   const roof = roofFor(st, 2, 0.42, outline);
-  roofFaces(roof, eave + 0.2, (parts.metal ??= new Mesher()), timber);
+  roofFaces(roof, eave + 0.2, (parts.shelterRoof ??= new Mesher()), timber);
   // Picnic tables under it
   const box = orientedBox(outline);
   if (box.a >= 5 && box.b >= 4) {
@@ -700,6 +839,41 @@ const deckModel = (st: StructureItem, g: Ground, parts: Parts) => {
   }
 };
 
+/** A building's part's material: its walls (`walls|<color>`), roof, trim, doors and windows. */
+const buildingMaterial = (key: string, st: StructureItem): THREE.Material => {
+  const C = buildingColors(st);
+  if (key.startsWith("walls|")) return surface(SIDING_SCAN[sidingOf(st)], key.slice(6) || undefined);
+  // (a door's or window's own color)
+  const [base, own] = key.split("|");
+  if (own) switch (base) {
+    case "frames": return paintOf(own, 0.5);
+    case "door": return paintOf(own, 0.45);
+    case "garage": return paintOf(own, 0.5);
+    case "shutters": return paintOf(own, 0.6);
+  }
+  switch (key) {
+    case "roof": return surface(ROOFING_SCAN[roofingOf(st)], C.roof, true, C.roof ? ROOF_SHADE : 1);
+    case "flatroof": return surface("stucco", C.roof ?? "#8d8b86");
+    case "frames": return paintOf(C.frames, 0.5);
+    case "door": return paintOf(C.door, 0.45);
+    case "garage": return paintOf(C.trim, 0.5);
+    case "shutters": return paintOf(C.shutters, 0.6);
+    case "found": return surface("stone", C.foundation);
+    case "steps": return surface("stucco", "#bdb8ae");
+    case "pslab": return material("concrete");
+    case "pdeck": return material("deck");
+    case "ptimber": return material("timber");
+    case "proof": return surface(ROOFING_SCAN[roofingOf(st)], C.roof, true, C.roof ? ROOF_SHADE : 1);
+    case "pceil": return paintOf("#ece8df", 0.8);
+    case "pskirt": return material("timber");
+    case "post": case "rail": return paintOf(C.trim, 0.55);
+    case "glass": return glass();
+    case "room": return room();
+    case "dark": return paintOf("#2a2622", 1);
+    default: return paintOf(C.trim, 0.55);
+  }
+};
+
 /**
  * A built thing as a 3D model on the ground (`groundAt` gives the ground's height). The group is
  * named "structure:<id>"; its meshes cast and catch shadows.
@@ -711,13 +885,12 @@ export const createStructure = (st: StructureItem, groundAt: Ground) => {
   if (st.points.length < (isLineKind(st.kind) ? 2 : 3)) return group;
   const parts: Parts = {};
   ({ bridge, boardwalk, stairs, wall, building, shelter, deck: deckModel })[st.kind](st, groundAt, parts);
-  for (const [key, m] of Object.entries(parts) as [MatKey, Mesher][]) {
-    if (m.empty) continue;
-    // (its own roof and wall colors, where it has them)
-    const own = key === "shingle" || key === "metal" || (key === "concrete" && st.kind === "building") ? st.roofColor : key === "siding" ? st.wallColor : undefined;
-    const mesh = new THREE.Mesh(m.geometry(), own ? tinted(key, own) : material(key));
-    mesh.name = key;
-    mesh.castShadow = true;
+  for (const [key, m] of Object.entries(parts) as [string, Mesher][]) {
+    if (!m || m.empty) continue;
+    const mesh = new THREE.Mesh(m.geometry(), st.kind === "building" ? buildingMaterial(key, st) : key === "shelterRoof" ? surface("roofmetal", st.roofColor ?? STRUCTURE_INK.shelter, true, ROOF_SHADE) : material(key as MatKey));
+    mesh.name = key.split("|")[0];
+    // (glass and the rooms behind it cast no shadow)
+    mesh.castShadow = key !== "glass" && key !== "room";
     mesh.receiveShadow = true;
     group.add(mesh);
   }
@@ -889,7 +1062,7 @@ export const createFence = (points: P[], groundAt: Ground, height = 4, style: Fe
 // (the 3D view only draws when something changes: told when a part's picture arrives)
 const partLoaded = new Set<() => void>();
 /** Calls back when a part's real texture has loaded; returns the call to stop. */
-export const onPartLoaded = (f: () => void) => { partLoaded.add(f); return () => { partLoaded.delete(f); }; };
+export const onPartLoaded = (f: () => void) => { partLoaded.add(f); const off = onLookLoaded(f); return () => { partLoaded.delete(f); off(); }; };
 let chainMat: THREE.MeshStandardMaterial | null = null, chainShadow: THREE.MeshDepthMaterial | null = null, chainPostMat: THREE.Material | null = null;
 /** Galvanized posts and rails. */
 const chainPost = () => (chainPostMat ??= Object.assign(new THREE.MeshStandardMaterial({ color: "#8a9296", roughness: 0.5, metalness: 0.55 }), { userData: { shared: true } }));

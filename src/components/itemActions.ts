@@ -1,6 +1,9 @@
 // The map's menu for a hole or a thing on it, and for open ground (a right-click on a computer, a
 // finger held on a phone): one list, so both menus offer the same rows in the same words.
-import { ClipboardPaste, Copy, Eye, ListChecks, Lock, Maximize2, MessageSquarePlus, Plane, Ruler, Trash2, Unlock, type LucideIcon } from "lucide-react";
+import { AppWindow, CarFront, ClipboardPaste, Copy, DoorOpen, Eye, Fence, Grid2x2, Home, ListChecks, Lock, Maximize2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Plane, Plus, Ruler, Trash2, Unlock, Warehouse, type LucideIcon } from "lucide-react";
+import { addAddOnToWall, addToWall, clipped, copyAddOn, endsOf, laidOutKind, levelsOf, pasteAddOn, putSteps, removeLaidOut, removeSteps, setAddOnEnd, toggleRail } from "./BuildingPanel";
+import { ADDON_LABEL, OPENING_LABEL } from "../lib/buildingParts";
+import { removeAddOn, removeOpening } from "../state/actions";
 import { SERVER } from "../auth/api";
 import { startComment } from "../auth/Comments";
 import { useServerCourse } from "../auth/courses";
@@ -44,8 +47,9 @@ export const groupActions = (): ItemAction[] => {
 };
 
 /** A hole's or a thing's rows; `ground`: the spot under the pointer or finger, if any; `named`:
- * the thing's own rows say what it is ("Copy the woods"), when trees there have rows too. */
-export const itemActions = (itemId: string, ground: P | null, named = false): ItemAction[] => {
+ * the thing's own rows say what it is ("Copy the woods"), when trees there have rows too; `screen`:
+ * where on the screen (a building's wall there: a door or window added on it, there). */
+export const itemActions = (itemId: string, ground: P | null, named = false, screen?: { clientX: number; clientY: number }): ItemAction[] => {
   const doc = getDoc();
   const set = useEditor.getState().set;
   const readOnly = useCourse.getState().readOnly;
@@ -69,6 +73,58 @@ export const itemActions = (itemId: string, ground: P | null, named = false): It
   else a.push(...commentRow("Comment here", ground));
   // (view only: nothing that changes the course)
   if (readOnly) return a;
+  // (a building's wall: a window, a door or a garage door put there; the one there taken off)
+  if (item?.type === "structure" && item.kind === "building" && !item.locked && screen) {
+    const spot = getView()?.buildingSpot(item.id, screen.clientX, screen.clientY);
+    if (spot) {
+      const add = (kind: "window" | "door" | "garage") => () => {
+        select(item.id);
+        const st = getDoc().items.find(i => i.id === item.id);
+        if (st?.type === "structure" && !addToWall(st, spot.wall, kind, spot.along)) toast(`No room for a ${OPENING_LABEL[kind].toLowerCase()} on this wall.`, "info");
+      };
+      if (!spot.addOn) {
+        a.push({ label: "Add a window here", icon: AppWindow, run: add("window"), testid: "menu-add-window" });
+        a.push({ label: "Add a door here", icon: DoorOpen, run: add("door"), testid: "menu-add-door" });
+        a.push({ label: "Add a garage door here", icon: Warehouse, run: add("garage"), testid: "menu-add-garage" });
+      }
+      const built = (kind: "porch" | "carport" | "deck" | "patio") => () => {
+        select(item.id);
+        const st = getDoc().items.find(i => i.id === item.id);
+        if (st?.type === "structure" && !addAddOnToWall(st, spot.wall, kind, spot.along)) toast(`No room for a ${ADDON_LABEL[kind].toLowerCase()} on this wall.`, "info");
+      };
+      // (a porch set into the house: its end there opened round the corner, or closed again)
+      const endAd = spot.end && item.addOns?.find(x => x.id === spot.end!.addOn);
+      if (spot.end && endAd) {
+        const ends = endsOf(item, endAd), k = spot.end.end === 0 ? 0 : 1;
+        if (ends.open[k]) a.push({ label: "Close this side", icon: PanelLeftClose, run: () => { select(item.id); setAddOnEnd(getDoc().items.find(i => i.id === item.id) as typeof item, endAd.id, spot.end!.end, false); }, testid: "menu-close-side" });
+        else if (ends.can[k]) a.push({ label: "Open this side", icon: PanelLeftOpen, run: () => { select(item.id); setAddOnEnd(getDoc().items.find(i => i.id === item.id) as typeof item, endAd.id, spot.end!.end, true); }, testid: "menu-open-side" });
+      }
+      if (spot.addOn) {
+        const ad = item.addOns?.find(x => x.id === spot.addOn);
+        if (ad) {
+          const name = ADDON_LABEL[ad.kind].toLowerCase(), L = levelsOf(item, ad), cur = () => getDoc().items.find(i => i.id === item.id) as typeof item;
+          // (its steps there, or steps put there; its railing on that side)
+          if (spot.step !== undefined) a.push({ label: "Remove these steps", icon: Trash2, run: () => { select(item.id); removeSteps(cur(), ad.id, spot.step!); }, testid: "menu-remove-steps" });
+          else if (spot.side && L.level && L.up >= 0.5) a.push({ label: "Put steps here", icon: Plus, run: () => { select(item.id); putSteps(cur(), ad.id, spot.side!.side, spot.side!.at); }, testid: "menu-put-steps" });
+          if (spot.side && L.rail) a.push({ label: (ad.noRail ?? []).includes(spot.side.side) ? "Put the railing back on this side" : "No railing on this side", icon: Fence, run: () => { select(item.id); toggleRail(cur(), ad.id, spot.side!.side); }, testid: "menu-rail-side" });
+          a.push({ label: `Copy this ${name}`, icon: Copy, run: () => copyAddOn(ad), testid: "menu-copy-addon" });
+          a.push({ label: `Remove this ${name}`, icon: Trash2, danger: true, run: () => { select(item.id); removeAddOn(item.id, ad.id); }, testid: "menu-remove-addon" });
+        }
+      } else {
+        const cl = clipped();
+        if (cl) a.push({ label: `Paste the ${ADDON_LABEL[cl.kind].toLowerCase()} here`, icon: ClipboardPaste, run: () => { select(item.id); const st = getDoc().items.find(i => i.id === item.id); if (st?.type === "structure" && !pasteAddOn(st, spot.wall, spot.along)) toast(`No room for it on this wall.`, "info"); }, testid: "menu-paste-addon" });
+        a.push({ label: "Add a porch here", icon: Home, run: built("porch"), testid: "menu-add-porch" });
+        a.push({ label: "Add a carport here", icon: CarFront, run: built("carport"), testid: "menu-add-carport" });
+        a.push({ label: "Add a deck here", icon: Fence, run: built("deck"), testid: "menu-add-deck" });
+        a.push({ label: "Add a patio here", icon: Grid2x2, run: built("patio"), testid: "menu-add-patio" });
+      }
+      const there = spot.opening ? item.openings?.find(o => o.id === spot.opening) : undefined;
+      if (there) a.push({ label: `Remove this ${OPENING_LABEL[there.kind].toLowerCase()}`, icon: Trash2, danger: true, run: () => { select(item.id); removeOpening(item.id, there.id); }, testid: "menu-remove-opening" });
+      // (one laid out by itself: the same)
+      const laid = !there && spot.laidAt !== undefined ? laidOutKind(item, spot.wall, spot.laidAt) : undefined;
+      if (laid) a.push({ label: `Remove this ${OPENING_LABEL[laid].toLowerCase()}`, icon: Trash2, danger: true, run: () => { select(item.id); const st = getDoc().items.find(i => i.id === item.id); if (st?.type === "structure") removeLaidOut(st, spot.wall, spot.laidAt!); }, testid: "menu-remove-opening" });
+    }
+  }
   // (a thing the import brought in: all that came from the same source picked together, to
   // copy, lock or delete as one)
   // (an amenity: every one of its kind, to set them all at once)

@@ -50,7 +50,8 @@ export type OsmFeature = (
 
 /** What OpenStreetMap says about a building's shape: its height to the top of the roof and the
  * roof's own height (m, where mapped), its walls' height from its floors (m), and its roof. */
-export type OsmBuilding = { topM?: number; roofM?: number; heightM?: number; roof?: "gable" | "hip" | "flat" | "shed" | "pyramid" };
+/** (`type`, `use`: what the map calls it, its building and amenity tags) */
+export type OsmBuilding = { topM?: number; roofM?: number; heightM?: number; roof?: "gable" | "hip" | "flat" | "shed" | "pyramid"; type?: string; use?: string };
 
 const ROOF_SHAPES: Record<string, OsmBuilding["roof"]> = { gabled: "gable", hipped: "hip", half_hipped: "hip", flat: "flat", skillion: "shed", lean_to: "shed", pyramidal: "pyramid", dome: "pyramid", onion: "pyramid" };
 
@@ -70,7 +71,9 @@ export const osmBuilding = (tags: Record<string, string>): OsmBuilding => {
     topM: osmMeters(tags["building:height"] ?? tags.height),
     roofM: osmMeters(tags["roof:height"]),
     heightM: Number.isFinite(levels) && levels > 0 ? levels * 3 : undefined,
-    roof: ROOF_SHAPES[tags["roof:shape"] ?? ""] ?? undefined
+    roof: ROOF_SHAPES[tags["roof:shape"] ?? ""] ?? undefined,
+    type: tags.building,
+    use: tags.amenity
   };
 };
 

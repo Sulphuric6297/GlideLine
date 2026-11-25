@@ -24,11 +24,13 @@ import { withoutSlabs, tracedBuildings, withMeasuredHeights, type TracedBuilding
 import { createAmenity, createArea, createBasket, createLine, createStructure, createTee, createTree, newHole } from "./course";
 import { courtCount, createField, fieldKindOf, fieldWord } from "./fields";
 import { fieldOf } from "./geo/parkKinds";
-import { centroid, clipPathToRect, clipPolygonToRect, nearestOnSegment, pointInPolygon, polygonArea, simplify } from "./geom";
+import { centroid, clipPathToRect, clipPolygonToRect, distanceToPath, nearestOnSegment, pointInPolygon, polygonArea, simplify } from "./geom";
 import { lampLike } from "./lidar";
 import { fetchStructures, fetchWater, fetchWetlands, inUS } from "./geo/usgov";
 import { courtsFromPhoto } from "./geo/courtsFound";
 import { fittedToPhoto } from "./geo/photoFit";
+import { roofColorsFromPhoto } from "./geo/roofColors";
+import { dressBuilding, typeFromMap } from "./buildingParts";
 import type { PhotoSourceId } from "./geo/photoSources";
 import { reframe, toPlanXY, type GeoRef } from "./geoRef";
 import { boxOutline, orientedBox, roofOf } from "./structures";
@@ -393,6 +395,8 @@ export const osmFeatureItems = (features: OsmFeature[], ref: GeoBounds & { width
         // A building to edit like one drawn: walls, a roof, a height
         const b = createStructure(f.kind, pts);
         if (f.building?.roof) b.roof = f.building.roof;
+        const type = f.kind === "building" ? typeFromMap(f.building?.use, f.building?.type, f.park?.what) : undefined;
+        if (type && type !== "house") b.buildingType = type;
         const walls = wallsFt(f.building, f.kind, pts, b.roof);
         if (walls) b.height = walls;
         if (f.name) b.label = f.name;
@@ -489,9 +493,9 @@ const osmSummary = (counts: OsmCounts, traced: number, parks: ParkCounts = {}) =
     .filter(Boolean)
     .join(", ");
 
-/** How long a tee or pin word says it plays: 0 short, 1 in between or unsaid, 2 long. */
+/** How long a tee or pin word says it plays: -1 a junior's, 0 short, 1 in between or unsaid, 2 long. */
 const lengthRank = (tag?: string) =>
-  !tag ? 1 : /^(short|front|am|amateur|rec|recreational|novice)$/.test(tag) ? 0 : /^(long|back|pro|championship)$/.test(tag) ? 2 : 1;
+  !tag ? 1 : /^(jr|junior|kids|youth|beginner)$/.test(tag) ? -1 : /^(short|front|am|amateur|rec|recreational|novice)$/.test(tag) ? 0 : /^(long|back|pro|championship)$/.test(tag) ? 2 : 1;
 
 /** A hole's pin positions: a letter said keeps it, the rest take the letters left, short before
  * long, else in their order (null: past D, the last there is). */
@@ -592,6 +596,8 @@ export const tracedItems = (traced: TracedBuilding[], mapped: CourseItem[], ref:
     if (pts.some(p => p.x < 0 || p.y < 0 || p.x > ref.width || p.y > ref.height)) continue;
     if (taken.some(m => overlaps(pts, m.points)) || out.some(m => overlaps(pts, m.points))) continue;
     const b: StructureItem = createStructure("building", pts);
+    const type = typeFromMap(t.cls, t.subtype);
+    if (type && type !== "house") b.buildingType = type;
     const walls = wallsFt(t.heightM ? { topM: t.heightM } : undefined, "building", pts);
     if (walls) b.height = walls;
     out.push({ ...b, importSource: "traced" });
@@ -641,10 +647,16 @@ export const reframeDesign = (design: { holes: Hole[]; items: CourseItem[] }, fr
     const at = f({ x: i.x, y: i.y });
     const moved = { ...i, x: at.x, y: at.y } as CourseItem;
     if (moved.type === "area" || moved.type === "line" || moved.type === "structure") moved.points = moved.points.map(f);
+    // (a tee's own bends, too)
+    if (moved.type === "tee" && moved.doglegs) moved.doglegs = moved.doglegs.map(f);
     // (one as it came still is: only the frame moved under it)
     return i.importSig && asItCame(i) ? signed(moved) : moved;
   });
-  const holes = design.holes.map(h => ({ ...h, doglegs: h.doglegs.map(f) }));
+  // (and a hole's camera path: where it stands and what it looks at)
+  const holes = design.holes.map(h => ({
+    ...h, doglegs: h.doglegs.map(f),
+    ...(h.flyKeys ? { flyKeys: h.flyKeys.map(k => { const at = f({ x: k.x, y: k.y }), look = f({ x: k.lookX, y: k.lookY }); return { ...k, x: at.x, y: at.y, lookX: look.x, lookY: look.y }; }) } : {})
+  }));
   const outside = items.filter(i => i.x < 0 || i.y < 0 || i.x > to.width || i.y > to.height).length;
   return { holes, items, outside };
 };
@@ -1028,6 +1040,16 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
         all = fit.items;
         if (fit.moved) notes.push(`${fit.moved} ${fit.moved === 1 ? "building" : "buildings"} lined up with their roofs on the photo.`);
       }
+    }
+    // The buildings painted: each roof's color read from the photo, the walls a color scheme that
+    // goes with it (each its own pick, the same each time), its front door toward the nearest path,
+    // road or parking
+    {
+      const roofs = background && satellite ? await untilAborted(roofColorsFromPhoto(all, background, map?.nir, width, height), signal).catch(err => { if (signal?.aborted) throw err; console.info("Roof colors not read", err); return new Map<string, string>(); }) : new Map<string, string>();
+      const ways = all.filter((i): i is CourseItem & { points: P[] } => (i.type === "line" && (i.kind === "path" || i.kind === "road")) || (i.type === "area" && i.kind === "parking"));
+      const toward = ways.length ? (p: P) => Math.min(...ways.map(w => (w.type === "area" ? distanceToPath(p, [...w.points, w.points[0]]) : distanceToPath(p, w.points)))) : undefined;
+      all = all.map(i => (i.type === "structure" && i.kind === "building" && i.importSource ? dressBuilding(i, roofs.get(i.id), toward) : i));
+      if (roofs.size) notes.push(`${roofs.size} ${roofs.size === 1 ? "roof's" : "roofs'"} colors read from the photo.`);
     }
     // With trees measured from the air: each on its own, in place of the photo's (the same step as
     // Measure trees and ground on the Site step)

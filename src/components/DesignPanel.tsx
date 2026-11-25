@@ -5,9 +5,10 @@ import { BASKET_MARKS, basketMark, bestRotation } from "../lib/mapSvg";
 import { CARD_DEFAULTS, SIGN_LOOKS, SIGN_PARTS, SIGN_SPOTS, isSheet, signOf } from "../lib/teeSign";
 import { changeDoc, useCourse, useEditor } from "../state/course";
 import { toast } from "../state/toast";
-import { AREA_KINDS } from "../constants";
+import { AREA_KINDS, TEE_LEVELS } from "../constants";
 import { RESTRICTED } from "../lib/symbols";
 import { MapLookPanel } from "./MapLookPanel";
+import { MapLines } from "./MapLines";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { MapStyle, ReliefLook, SignLook, SignSettings, SignSpot } from "../types";
 import { Button, ChipPick, chipCls, Field, Fold, HelpLink, OnlyGroup, Section, Segmented, Slider, TextInput, Toggle, WholePanelOnly } from "./ui";
@@ -15,7 +16,7 @@ import { LOOK_LABEL, TREE_LOOKS, kindsOf, regionAt, sharesOf, type TreeLookId } 
 import { ChangeScope, HolePageLook, OwnHoles, PrintPanel, ScorecardSettings, Sponsors } from "./PrintPanel";
 import { boardSize } from "./printouts";
 import { FontPicker } from "./FontPicker";
-import { ColorField } from "./ColorSwatches";
+import { ColorInput } from "./ColorSwatches";
 import { SHOW_EVENT } from "./showSetting";
 import { fontsIn } from "../lib/fontLoad";
 
@@ -290,6 +291,7 @@ export function DesignPanel() {
         <Toggle label="Throw lines" checked={s.throwLines} onChange={v => setStyle({ throwLines: v })} />
         <Toggle label="Distances" checked={s.distances} onChange={v => setStyle({ distances: v })} />
         <Toggle label="Putting circle" checked={s.circle} onChange={v => setStyle({ circle: v })} />
+        <MapLines />
       </Section>
       <Section title="Amenity marks" help="amenities" testid="amenity-marks">
         <Segmented label="Amenity marks" value={s.amenityMarks ?? "comforts"} onChange={v => setStyle({ amenityMarks: v === "comforts" ? undefined : v })}
@@ -328,7 +330,7 @@ export function DesignPanel() {
       <Section title="Lettering and colors" testid="card-style" help="card-style" right={s.card ? <button className="text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1" onClick={() => setStyle({ card: undefined })}><RotateCcw size={12} /> Reset</button> : undefined}>
         <div className="grid grid-cols-2 gap-x-3">
           {([["header", "Header"], ["accent", "Header lettering"], ["paper", "Page color"], ["ink", "Text color"]] as const).map(([key, label]) => (
-            <ColorField key={key} label={label} value={s.card?.[key] ?? CARD_DEFAULTS[key]} onChange={(v, live) => setStyle({ card: { ...s.card, [key]: v } }, !live)} onDone={done} />
+            <ColorInput key={key} label={label} value={s.card?.[key] ?? CARD_DEFAULTS[key]} onChange={(v, live) => setStyle({ card: { ...s.card, [key]: v } }, !live)} onDone={done} />
           ))}
         </div>
         <Field label="Tagline">
@@ -340,6 +342,12 @@ export function DesignPanel() {
         <Field label="Headings font">
           <FontPicker label="Headings font" value={s.card?.font ?? CARD_DEFAULTS.font} onPick={f => setStyle({ card: { ...s.card, font: f ?? CARD_DEFAULTS.font } })} used={fontsIn(doc)} testid="card-font" />
         </Field>
+        {doc.layouts.length > 1 && (
+          <Field label="Tees named by">
+            <div data-testid="tee-names"><Segmented label="Tees named by" value={s.teeNames ?? "colors"} onChange={v => setStyle({ teeNames: v === "layouts" ? "layouts" : undefined })}
+              options={[{ value: "colors", label: "Color", title: [...new Set(doc.layouts.map(l => TEE_LEVELS[l.tee].label.toUpperCase()))].join(", ") }, { value: "layouts", label: "Layout", title: doc.layouts.map(l => l.name.toUpperCase()).join(", ") }]} /></div>
+          </Field>
+        )}
       </Section>
       <Section title="Marks" testid="markings" help="marks">
         {/* (which colors mark the areas first: PDGA colors set OB's own, so its swatch goes) */}
@@ -380,9 +388,9 @@ export function DesignPanel() {
           ))}
         </div>
         <div className="mt-2 grid grid-cols-2 gap-x-2">
-          <ColorField label="Basket color" value={s.basket} onChange={(v, live) => setStyle({ basket: v }, !live)} onDone={done} />
-          {s.markings !== "pdga" && <ColorField label="OB" value={s.ob} onChange={(v, live) => setStyle({ ob: v }, !live)} onDone={done} />}
-          <ColorField label="Hazard" value={s.hazard} onChange={(v, live) => setStyle({ hazard: v }, !live)} onDone={done} />
+          <ColorInput label="Basket color" value={s.basket} onChange={(v, live) => setStyle({ basket: v }, !live)} onDone={done} />
+          {s.markings !== "pdga" && <ColorInput label="OB" value={s.ob} onChange={(v, live) => setStyle({ ob: v }, !live)} onDone={done} />}
+          <ColorInput label="Hazard" value={s.hazard} onChange={(v, live) => setStyle({ hazard: v }, !live)} onDone={done} />
         </div>
       </Section>
       <Section title="Sponsors" testid="print-sponsors" help="sponsors">

@@ -261,7 +261,7 @@ plain("cutting lines and shapes to the site (pure logic)", () => {
   plainExpect(clipPolygonToRect(pond.map(q => ({ x: q.x + 500, y: q.y })), r)).toEqual([]);
 });
 
-test("making the site bigger keeps the design on the same ground", async ({ page }) => {
+test("making the site bigger keeps the design on the same ground, a tee's own bends too", async ({ page }) => {
   test.setTimeout(180_000);
   await importSite(page, { trees: false, osm: false });
   const first = await course(page);
@@ -273,6 +273,9 @@ test("making the site bigger keeps the design on the same ground", async ({ page
     s.set({ areaKind: "ob" });
     a.addDrawn("area", [{ x: w * 0.2, y: h * 0.2 }, { x: w * 0.3, y: h * 0.2 }, { x: w * 0.3, y: h * 0.3 }]);
     s.set({ tool: "select" });
+    // (the tee's own line, through a bend of its own)
+    const tee = (window as any).__dgCourse().items.find((i: any) => i.type === "tee");
+    a.updateItem(tee.id, { doglegs: [{ x: w * 0.45, y: h * 0.4 }] });
   }, [W, H]);
   // Where each thing drawn is on the ground (feet north and east of a fixed point)
   const ground = () => page.evaluate(() => {
@@ -281,7 +284,7 @@ test("making the site bigger keeps the design on the same ground", async ({ page
     // (from a fixed spot, at a fixed scale: the same for both frames)
     const ftLon = 364000 * Math.cos((39.78 * Math.PI) / 180);
     const geo = (p: { x: number; y: number }) => ({ n: (b.north - (p.y / h) * (b.north - b.south) - 39.78) * 364000, e: (b.west + (p.x / w) * (b.east - b.west) + 89.68) * ftLon });
-    return d.items.filter((i: any) => !i.importSource).map((i: any) => [geo(i), ...(i.points ?? []).map(geo)]);
+    return d.items.filter((i: any) => !i.importSource).map((i: any) => [geo(i), ...(i.points ?? []).map(geo), ...(i.doglegs ?? []).map(geo)]);
   });
   const was = await ground();
   expect(was.length).toBe(3);
@@ -329,6 +332,19 @@ plain("a smaller frame keeps everything on its ground and counts what is left ou
   plainExpect((out.items[2] as any).points[0].x).toBeCloseTo(3, 6);
   // The label west of the new frame
   plainExpect(out.outside).toBe(1);
+});
+
+plain("a new frame carries a tee's own bends and a hole's camera path along (pure logic)", () => {
+  const from = { north: 40.01, south: 40, west: -90.01, east: -90, width: 2794, height: 3640 };
+  const to = { ...from, west: -90.005, width: 1397 };
+  const hole = { id: "h", doglegs: [{ x: 2000, y: 100 }], fairwayWidth: 30, fairway: true, flyKeys: [{ x: 2100, y: 200, alt: 40, lookX: 2300, lookY: 400 }] };
+  const tee = { id: "t", type: "tee", holeId: "h", level: "blue", x: 1900, y: 50, rotation: 0, doglegs: [{ x: 2050, y: 150 }, { x: 2200, y: 300 }] };
+  const out = reframeDesign({ holes: [hole as any], items: [tee as any] }, from, to);
+  const t = out.items[0] as any, h = out.holes[0] as any;
+  plainExpect(t.x).toBeCloseTo(1900 - 1397, 6);
+  plainExpect(t.doglegs.map((p: any) => [Math.round(p.x), Math.round(p.y)])).toEqual([[2050 - 1397, 150], [2200 - 1397, 300]]);
+  plainExpect([h.flyKeys[0].x, h.flyKeys[0].lookX].map(Math.round)).toEqual([2100 - 1397, 2300 - 1397]);
+  plainExpect([h.flyKeys[0].y, h.flyKeys[0].lookY, h.flyKeys[0].alt].map(Math.round)).toEqual([200, 400, 40]);
 });
 
 plain("OpenStreetMap's woods, meadows, grassland, scrub and lawns come in as areas (pure logic)", () => {

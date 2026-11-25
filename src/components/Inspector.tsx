@@ -6,10 +6,10 @@ import { PlaceByGps } from "./PlaceByGps";
 import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, Unlock, X, Plus } from "lucide-react";
-import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, ROCK_KINDS } from "../constants";
+import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, ROCK_KINDS, WOODS_HEIGHTS, WOODS_HEIGHT_GAP, WOODS_HEIGHT_LIMITS } from "../constants";
 import { activeLayout, basketFor, bendOwner, turnsAhead, areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries, AMENITY_ROLE } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
-import { BUILDING_LOOKS, boxOutline, gazeboOutline, structureHeight, structurePath, structureRoof, structureWidth, turnShape } from "../lib/structures";
+import { boxOutline, gazeboOutline, structureHeight, structurePath, structureRoof, structureWidth, turnShape } from "../lib/structures";
 import { amenitySymbol, STRUCTURE_INK, structureLegend, symbolSvg } from "../lib/symbols";
 import { courseStats, holeStats } from "../lib/holeStats";
 import { COURT_FIELDS, FIELD_ORDER, MARKED_FIELDS, courtCount, fieldHome, fieldKindOf, isBallField } from "../lib/fields";
@@ -33,7 +33,10 @@ import { HoleChips } from "./ApplyToHoles";
 import { HoleSteps } from "./HoleSteps";
 import { getView } from "../state/view";
 import { useLayout } from "./useLayout";
-import { Button, ChipPick, chipCls, ColorInput, Field, FOCUS, HelpLink, NumberInput, Section, Segmented, Select, Slider, Stat, TextInput, Toggle } from "./ui";
+import { BuildingFields, paintedStyle } from "./BuildingPanel";
+import { ColorInput } from "./ColorSwatches";
+import { ROOF_COLORS } from "../lib/buildingParts";
+import { Button, ChipPick, chipCls, Field, FOCUS, HelpLink, NumberInput, Section, Segmented, Select, Slider, Stat, TextInput, Toggle } from "./ui";
 
 const shapeText = { straight: "Straight", left: "Turns left", right: "Turns right", "s-curve": "S-curve" };
 /** A small size to the half foot (or tenth of a meter): "2.5 ft". */
@@ -84,19 +87,40 @@ export function HoleNumberInput({ holeId, value }: { holeId: string; value: stri
   );
 }
 
+/** The course's switch: every hole's fairway cleared, or every hole's trees left standing (each
+ * hole's own switch goes back to following it). The same from a hole's panel and from Site's
+ * measured trees. */
+export const clearEveryFairway = (v: boolean) => {
+  changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, clearFairways: v ? (true as const) : undefined }, ...(d.holes.some(h => h.clearTrees !== undefined) ? { holes: d.holes.map(h => (h.clearTrees === undefined ? h : { ...h, clearTrees: undefined })) } : {}) } : {}));
+  toast(v ? "Trees on every hole's fairway, tees and basket are cut down. A hole's own switch leaves its trees standing." : "Trees on the fairways are standing again.", "info", true);
+};
+
+/** The holes whose own switch differs from the course's, and how they're said ("hole 3", "holes
+ * 3 and 7", "4 holes"); and every hole back in step with the course. */
+export const holesOwnClear = (doc: Pick<CourseDoc, "lidar" | "holes">) => {
+  const course = doc.lidar?.clearFairways === true;
+  const own = doc.holes.filter(h => h.clearTrees !== undefined && h.clearTrees !== course);
+  const label = (id: string) => holeLabel(useCourse.getState().doc, id);
+  return { own, said: own.length > 3 ? `${own.length} holes` : `hole${own.length === 1 ? "" : "s"} ${own.map(h => label(h.id)).join(", ").replace(/, ([^,]*)$/, " and $1")}` };
+};
+export const sameForEveryHole = () => changeDoc(d => (d.holes.some(h => h.clearTrees !== undefined) ? { holes: d.holes.map(h => (h.clearTrees === undefined ? h : { ...h, clearTrees: undefined })) } : {}));
+
 /** The measured trees on this hole's fairway (where it plays), and the hole's own switch for them:
  * cleared (cut down, but for any kept by hand) or left standing. It follows the course's switch
- * (Site's Clear trees from the fairways) until it's set here. Near the top of the hole's panel,
- * and a setting in a phone's bar. */
+ * until it's set here. Under it, the course's switch itself (Whole course: Clear trees from every
+ * fairway; holes added later take it too), saying which holes differ, so it's set where the
+ * fairways are worked on; Site's measured trees have it too. Near the top of the hole's panel, and a setting in a phone's bar. */
 export const useHoleTrees = (hole: Hole, line: P[] | null) => {
   const lidar = useCourse(s => s.doc.lidar);
   return useMemo(() => (lidar && line ? fairwayTrees({ lidar }, hole, line) : { cut: [], kept: [], standing: [] }), [lidar, hole, line]);
 };
 export function HoleTrees({ hole, line }: { hole: Hole; line: P[] }) {
   const lidar = useCourse(s => s.doc.lidar);
+  const holes = useCourse(s => s.doc.holes);
   const { cut, kept, standing } = useHoleTrees(hole, line);
   if (!lidar) return null;
   const on = holeClears({ lidar }, hole);
+  const course = lidar.clearFairways === true, differ = holesOwnClear({ lidar, holes });
   const setLidar = (patch: { kept?: number[]; removed?: number[] }) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {}));
   const list = (v: number[]) => (v.length ? [...new Set(v)].sort((a, b) => a - b) : undefined);
   const name = () => holeLabel(useCourse.getState().doc, hole.id);
@@ -128,6 +152,22 @@ export function HoleTrees({ hole, line }: { hole: Hole; line: P[] }) {
         {none ? "No measured trees on this fairway"
           : on ? <>{trees(cut.length)} cut down on this hole{kept.length > 0 && <> · {kept.length.toLocaleString()} kept · <button type="button" className={link} onClick={() => setLidar({ kept: list((lidar.kept ?? []).filter(k => !kept.includes(k))) })} data-testid="trees-down">Cut {kept.length === 1 ? "it" : "them"} down</button></>}</>
           : <>{trees(standing.length)} stand{standing.length === 1 ? "s" : ""} on this fairway{cut.length > 0 && <> · {cut.length.toLocaleString()} cut down by hand · <button type="button" className={link} onClick={back} data-testid="trees-back">Bring {cut.length === 1 ? "it" : "them"} back</button></>}</>}
+      </div>
+      {/* (the course's switch, where the fairways are worked on: marked as the whole course's, and
+          saying which holes differ from it, as Site's does) */}
+      <div className="border-t border-white/[0.08] mt-0.5 pt-2">
+        <div className="text-[11px] touch:text-[12.5px] font-semibold text-zinc-400">Whole course</div>
+        <label className="dg-toggle flex items-start gap-2.5 pt-1 touch:pt-2 cursor-pointer select-none">
+          <input type="checkbox" className={`switch mt-0.5 ${FOCUS}`} checked={course} onChange={e => clearEveryFairway(e.target.checked)} data-testid="every-hole-clear" />
+          <span className="text-[13.5px] touch:text-sm text-zinc-200 whitespace-nowrap">Clear trees from every fairway</span>
+        </label>
+        {(course || differ.own.length > 0) && (
+          <div className="text-xs text-zinc-400 mt-[3px] pl-[44px]" data-testid="every-hole-said">
+            {differ.own.length ? <>{course ? "Not on" : "Only on"} {differ.said} · <button type="button" className={link} onClick={sameForEveryHole} data-testid="every-hole-same">Same for every hole</button></>
+              : holes.length > 1 ? `All ${holes.length} holes, and any you add` : "This hole, and any you add"}
+          </div>
+        )}
+        <div className="pb-1 touch:pb-2.5" />
       </div>
     </div>
   );
@@ -227,6 +267,8 @@ function TeeOwnFields({ tee }: { tee: TeeItem }) {
       <Field label="Par from this tee" help="tee-own-line">
         <Segmented label="Par from this tee" value={tee.par ?? 0} onChange={o.setPar} options={o.parOptions} />
       </Field>
+      {/* (this tee's line on this hole alone: a tee color's line on every hole is in the map's Lines) */}
+      <div className="mb-3" data-testid="tee-map-line"><Toggle label="Throw line on the course map" checked={!tee.noLine} onChange={v => updateItem(tee.id, { noLine: v ? undefined : true } as Partial<CourseItem>)} /></div>
     </>
   );
 }
@@ -405,6 +447,21 @@ type Thick = (typeof THICK)[number]["value"];
 export const thickOf = (a: Pick<AreaItem, "density">): Thick => ((a.density ?? 1) < 0.75 ? "sparse" : (a.density ?? 1) > 1.4 ? "thick" : "usual");
 export const densityFor = (t: Thick) => (t === "sparse" ? 0.5 : t === "thick" ? 2 : undefined);
 
+/** A wood's tree heights, the shortest and the tallest (ft): its own, or as woods grow. */
+export const heightsOf = (a: Pick<AreaItem, "heights">): [number, number] => a.heights ?? WOODS_HEIGHTS;
+/** One end set (0 the shortest, 1 the tallest): the other moves to stay clear of it; as woods grow
+ * anyway, nothing is kept. Set here, they hold for every tree in the wood (`heightsAll`). */
+export const heightsWith = (a: Pick<AreaItem, "heights">, end: 0 | 1, v: number): Pick<AreaItem, "heights" | "heightsAll"> => {
+  const [lo, hi] = heightsOf(a);
+  const next: [number, number] = end ? [Math.min(lo, v - WOODS_HEIGHT_GAP), v] : [v, Math.max(hi, v + WOODS_HEIGHT_GAP)];
+  return next[0] === WOODS_HEIGHTS[0] && next[1] === WOODS_HEIGHTS[1] ? { heights: undefined, heightsAll: undefined } : { heights: next, heightsAll: true };
+};
+/** The shortest's and the tallest's own ranges (each leaves room for the other). */
+export const HEIGHT_ENDS = [
+  { end: 0, id: "min", label: "Minimum", min: WOODS_HEIGHT_LIMITS[0], max: WOODS_HEIGHT_LIMITS[1] - WOODS_HEIGHT_GAP },
+  { end: 1, id: "max", label: "Maximum", min: WOODS_HEIGHT_LIMITS[0] + WOODS_HEIGHT_GAP, max: WOODS_HEIGHT_LIMITS[1] }
+] as const;
+
 /** What a wood grows: leafy trees, pines, bushes (any of them, in equal shares). */
 export type Grows = { leafy: boolean; pine: boolean; bush: boolean };
 export const growsOf = (a: Pick<AreaItem, "pines" | "bushes">, style: CourseDoc["style"]): Grows => {
@@ -452,7 +509,9 @@ export function StandSpecies({ item }: { item: AreaItem }) {
  * those inside stay. Tall grass has the underbrush only. */
 function WoodsSettings({ item }: { item: AreaItem }) {
   const measured = useCourse(s => !!s.doc.lidar?.trees.length);
-  const set = (patch: Partial<AreaItem>) => updateItem(item.id, patch as Partial<CourseItem>);
+  const u = useCourse(s => s.doc.units);
+  const set = (patch: Partial<AreaItem>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
+  const tall = heightsOf(item);
   const woods = item.kind === "woods";
   const brushOnly = woods && (item.bushes ?? 0) >= 1;
   return (
@@ -463,6 +522,19 @@ function WoodsSettings({ item }: { item: AreaItem }) {
           <StandSpecies item={item} />
           <Field label="How thick"><Segmented label="How thick" value={thickOf(item)} onChange={v => set({ density: densityFor(v) })} options={[...THICK]} /></Field>
         </>
+      )}
+      {woods && !brushOnly && (
+        <Field label="Tree height" help="woods">
+          <div data-testid="woods-heights" className="[&>div]:mb-1.5">
+            {HEIGHT_ENDS.map(e => <Slider key={e.id} label={e.label} min={e.min} max={e.max} step={1} value={tall[e.end]} onChange={v => set(heightsWith(item, e.end, v), false)} onDone={commit} format={v => fmtSize(v, u)} />)}
+          </div>
+          {/* (one line, always there, so nothing below moves: the usual heights said, or the way back to them) */}
+          <div className="h-5 touch:h-[44px] flex items-center text-[11px] touch:text-[12.5px] text-zinc-500" data-testid="woods-heights-said">
+            {item.heights
+              ? <button type="button" className="text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1" onClick={() => set({ heights: undefined, heightsAll: undefined })} data-testid="woods-heights-reset"><RotateCcw size={12} /> Reset height</button>
+              : "The usual heights"}
+          </div>
+        </Field>
       )}
       {!brushOnly && (
         <Field label="Underbrush" help={woods ? "woods" : "areas"}>
@@ -743,48 +815,20 @@ export function TurnButtons({ item }: { item: CourseItem }) {
   );
 }
 
-/** How a building or a shelter looks: its look, a shelter's shape, the roof and its colors (its
- * panel and a phone's strip). */
+/** How a shelter looks: its shape, its roof and the roof's color (its panel and a phone's strip). */
 export function StructureLook({ item }: { item: StructureItem }) {
   const set = (patch: Record<string, unknown>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
-  const roofInk = item.kind === "shelter" ? STRUCTURE_INK.shelter : STRUCTURE_INK.roof;
   return (
     <>
-      {item.kind === "building" && (
-        <Field label="Looks like">
-          <div className="grid grid-cols-3 gap-1" role="radiogroup" aria-label="Looks like" data-testid="building-looks">
-            {BUILDING_LOOKS.map(l => {
-              const on = structureRoof(item) === l.roof && item.wallColor === l.wallColor && item.roofColor === l.roofColor;
-              return (
-                <button key={l.id} role="radio" aria-checked={on} data-testid={`building-look-${l.id}`} onClick={() => set({ roof: l.roof as RoofKind, wallColor: l.wallColor, roofColor: l.roofColor })} className={`rounded-md border px-1.5 py-1 flex items-center gap-1.5 text-[11px] font-semibold ${on ? "border-orange-500 bg-orange-500/10 text-zinc-100" : "border-white/[0.12] text-zinc-300 hover:border-zinc-500"}`}>
-                  <span className="w-3 h-3 rounded-sm" style={{ background: `linear-gradient(135deg, ${l.roofColor} 50%, ${l.wallColor} 50%)` }} />
-                  {l.label}
-                </button>
-              );
-            })}
-          </div>
-        </Field>
-      )}
-      {item.kind === "shelter" && (
-        <Field label="Shape">
-          {/* (its shape is its outline's: eight sides, a gazebo; whatever its roof) */}
-          <IconPick label="Shelter shape" value={item.points.length === 8 ? "gazebo" : "rectangle"} onChange={v => set(v === "gazebo" ? { points: gazeboOutline(item.points), roof: "pyramid" } : { points: boxOutline(item.points), roof: "hip" })} options={[{ value: "rectangle", label: "Pavilion" }, { value: "gazebo", label: "Gazebo" }]} />
-        </Field>
-      )}
-      {(item.kind === "building" || item.kind === "shelter") && (
-        <>
-          <Field label="Roof">
-            <IconPick label="Roof" value={structureRoof(item)} onChange={v => set({ roof: v as RoofKind })} options={[{ value: "gable", label: "Gable" }, { value: "hip", label: "Hip" }, { value: "pyramid", label: "Pyramid" }, { value: "shed", label: "Shed" }, { value: "flat", label: "Flat" }]} />
-          </Field>
-          <div className="grid grid-cols-2 gap-x-3">
-            <ColorInput label="Roof color" value={item.roofColor ?? roofInk} onChange={(v: string) => set({ roofColor: v }, false)} onDone={commit} />
-            {item.kind === "building" && <ColorInput label="Wall color" value={item.wallColor ?? "#6e5036"} onChange={(v: string) => set({ wallColor: v }, false)} onDone={commit} />}
-          </div>
-          {(item.roofColor !== undefined || item.wallColor !== undefined) && (
-            <div className="mb-2"><Button small tone="ghost" onClick={() => set({ roofColor: undefined, wallColor: undefined })} testid="structure-colors-reset" title="The usual colors for its kind again"><RotateCcw size={13} /> Reset the colors</Button></div>
-          )}
-        </>
-      )}
+      <Field label="Shape">
+        {/* (its shape is its outline's: eight sides, a gazebo; whatever its roof) */}
+        <IconPick label="Shelter shape" value={item.points.length === 8 ? "gazebo" : "rectangle"} onChange={v => set(v === "gazebo" ? { points: gazeboOutline(item.points), roof: "pyramid" } : { points: boxOutline(item.points), roof: "hip" })} options={[{ value: "rectangle", label: "Pavilion" }, { value: "gazebo", label: "Gazebo" }]} />
+      </Field>
+      <Field label="Roof">
+        <IconPick label="Roof" value={structureRoof(item)} onChange={v => set({ roof: v as RoofKind })} options={[{ value: "gable", label: "Gable" }, { value: "hip", label: "Hip" }, { value: "pyramid", label: "Pyramid" }, { value: "shed", label: "Shed" }, { value: "flat", label: "Flat" }]} />
+      </Field>
+      <ColorInput label="Roof color" value={item.roofColor} name={item.roofColor ? undefined : "Usual"} onChange={(v, live) => set({ roofColor: v }, !live)} onDone={commit}
+        palettes={[{ title: "Roof colors", list: ROOF_COLORS }]} swatch={paintedStyle("roofmetal")} natural={{ on: () => set({ roofColor: undefined }), style: paintedStyle("roofmetal")(STRUCTURE_INK.shelter) }} />
     </>
   );
 }
@@ -805,7 +849,7 @@ const ROOF_ICONS: Record<string, string> = {
   gazebo: "M3 8 L12 2.5 L21 8 Z M6 8 V15 M18 8 V15"
 };
 /** One of a few, each a small picture with its name under it (roofs, a shelter's shape). */
-function IconPick<T extends string>({ value, options, onChange, label }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; label: string }) {
+export function IconPick<T extends string>({ value, options, onChange, label }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; label: string }) {
   return (
     <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }} role="radiogroup" aria-label={label}>
       {options.map(o => {
@@ -1006,8 +1050,9 @@ function ItemInspector({ item, bare = false }: { item: CourseItem; bare?: boolea
           </Field>
           {item.kind === "wall" && <OldWall id={item.id} level={false} locked={item.locked} />}
           {line && <Slider label={item.kind === "wall" ? "Thickness" : "Width"} min={meta.widths[0]} max={Math.max(meta.widths[1], width)} step={0.5} value={width} onChange={v => set({ width: v }, false)} onDone={commit} format={v => fmtSize(v, u)} />}
-          {meta.heightLabel && <Slider label={meta.heightLabel} min={meta.heights[0]} max={Math.max(meta.heights[1], height)} step={0.5} value={height} onChange={v => set({ height: v }, false)} onDone={commit} format={v => fmtSize(v, u)} />}
-          {(item.kind === "building" || item.kind === "shelter") && <StructureLook item={item} />}
+          {meta.heightLabel && item.kind !== "building" && <Slider label={meta.heightLabel} min={meta.heights[0]} max={Math.max(meta.heights[1], height)} step={0.5} value={height} onChange={v => set({ height: v }, false)} onDone={commit} format={v => fmtSize(v, u)} />}
+          {item.kind === "building" && <BuildingFields item={item} />}
+          {item.kind === "shelter" && <StructureLook item={item} />}
           <Field label="Name on the map (optional)"><TextInput label="Structure name" value={item.label ?? ""} placeholder={item.kind === "building" ? "e.g. Clubhouse" : item.kind === "bridge" ? "e.g. Mill Creek Bridge" : ""} onChange={v => set({ label: v || undefined }, false)} onDone={commit} /></Field>
           {holePicker("Belongs to", "Whole course")}
           <TurnButtons item={item} />
