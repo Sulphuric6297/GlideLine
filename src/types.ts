@@ -37,6 +37,9 @@ export interface TeeItem extends BaseItem {
   doglegs?: P[];
   /** Its own par (unset: the hole's). */
   par?: number;
+  /** Its throw line left off the course map (this tee on this hole alone; a tee color's line on
+   * every hole is hidden in the map's Lines). */
+  noLine?: true;
 }
 
 /** A basket (target). A hole can have several pin positions (A, B, C...). */
@@ -776,6 +779,18 @@ export interface MapStyle {
   lineStyles?: Partial<Record<TeeLevel, LineStyle>>;
   /** Where another tee's line meets the main one: it joins it (unset) or runs alongside it. */
   linesMeet?: "alongside";
+  /** Every throw line's width, times the line look's own (unset: 1). */
+  lineWeight?: number;
+  /** The arrowheads: their shape (unset: the look's own, a leaf in the painted looks and a triangle
+   * in Classic) and their size, times the look's own (unset: 1). */
+  arrowLook?: "leaf" | "triangle" | "open" | "none";
+  arrowSize?: number;
+  /** Where a line toward the basket stops in the painted looks: at its putting circle (unset) or
+   * by the basket itself. */
+  lineEnd?: "basket";
+  /** A line's bends in the painted looks: swept wide, as a disc flies them (unset), or exactly
+   * through each bend as it was plotted. */
+  lineBends?: "plotted";
   texts?: PageText[];
   images?: PageImage[];
   /** Hills: how strongly the ground's relief shows on the map, times the automatic (0: flat). */

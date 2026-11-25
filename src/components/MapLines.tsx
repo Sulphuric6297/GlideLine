@@ -11,7 +11,7 @@ import { EARTH, LINE_CREAM, lineLookOf, lineStyleOf, mainLevelOf, teeColorOf } f
 import { changeDoc, useCourse } from "../state/course";
 import type { LineStyle, MapStyle, TeeLevel } from "../types";
 import { ColorInput } from "./ColorSwatches";
-import { setStyle } from "./DesignPanel";
+import { setStyle, StyleSlider } from "./DesignPanel";
 import { Thumbs } from "./MapLookPanel";
 import { ChipPick, Field, Segmented, Slider, Toggle, useKeepInPlace } from "./ui";
 
@@ -36,7 +36,7 @@ const setLine = (level: TeeLevel, patch: Partial<LineStyle>, history = true) =>
 function LineSample({ s, level, main, multi }: { s: MapStyle; level: TeeLevel; main: boolean; multi: boolean }) {
   const ls = lineStyleOf(s, level, main, multi), d = "M5 22 C11 9 19 20 24 6";
   const dash = ls.dash === "dashed" ? "4.2 2.6" : ls.dash === "dotted" ? "0 4" : undefined;
-  const w = 2.6 * ls.width;
+  const w = 2.6 * ls.width * (s.lineWeight ?? 1);
   return (
     <svg width="28" height="28" viewBox="0 0 28 28" className="rounded-[8px] ring-1 ring-white/10 shrink-0" aria-hidden>
       <rect width="28" height="28" fill="#33502a" />
@@ -70,6 +70,27 @@ export function MapLines() {
     <div className="mt-3" data-testid="map-lines">
       <div className="text-xs touch:text-[13px] text-zinc-400 mb-1.5">Line look</div>
       <Thumbs label="Line look" testid="line-look" cols={3} items={LOOKS.map(l => ({ id: l.id, label: l.label, img: `${base}parts/lines-${l.id}.jpg`, on: look === l.id, pick: () => setStyle({ lineLook: l.id === "classic" ? undefined : l.id }) }))} />
+      {/* (every line at once: its weight, its arrowhead, where it stops and how its bends are drawn) */}
+      <div data-testid="lines-all">
+        <StyleSlider k="lineWeight" label="Line weight" min={0.6} max={1.8} step={0.05} value={s.lineWeight ?? 1} format={v => `${Math.round(v * 100)}%`} live />
+        <Field label="Arrowheads">
+          <Segmented label="Arrowheads" value={s.arrowLook ?? (look === "classic" ? "triangle" : "leaf")} onChange={v => setStyle({ arrowLook: v === (look === "classic" ? "triangle" : "leaf") ? undefined : v })}
+            options={[{ value: "leaf", label: "Leaf", title: "A painted head, shaped like a leaf" }, { value: "triangle", label: "Triangle", title: "A plain filled head" }, { value: "open", label: "Open", title: "Two strokes from the tip" }, { value: "none", label: "None", title: "No arrowheads: each line ends plain" }]} />
+        </Field>
+        {s.arrowLook !== "none" && <StyleSlider k="arrowSize" label="Arrowhead size" min={0.5} max={2} step={0.05} value={s.arrowSize ?? 1} format={v => `${Math.round(v * 100)}%`} live />}
+        {look !== "classic" && (
+          <>
+            <Field label="Lines end">
+              <Segmented label="Lines end" value={s.lineEnd ?? "circle"} onChange={v => setStyle({ lineEnd: v === "basket" ? "basket" : undefined })}
+                options={[{ value: "circle", label: "At the putting circle", title: "Every line stops at the basket's circle, aimed at the basket" }, { value: "basket", label: "At the basket", title: "Every line runs on to the basket" }]} />
+            </Field>
+            <Field label="Bends">
+              <Segmented label="Line bends" value={s.lineBends ?? "swept"} onChange={v => setStyle({ lineBends: v === "plotted" ? "plotted" : undefined })}
+                options={[{ value: "swept", label: "Sweeping", title: "Bends drawn wide, as a disc flies them, staying on the fairway" }, { value: "plotted", label: "As plotted", title: "Through each bend exactly where it was put" }]} />
+            </Field>
+          </>
+        )}
+      </div>
       {doc.layouts.length > 1 && (
         <Field label="Main layout" hint="Drawn on top, with the distances. The other tees' lines join it.">
           <ChipPick label="Main layout" testid="map-layout" value={mapLayout.id} onChange={v => setStyle({ mapLayout: v })}
@@ -124,7 +145,7 @@ export function MapLines() {
                     <Segmented label="Outline" value={ls.outline} onChange={v => set({ outline: v })} options={[{ value: "soft", label: "Soft", title: "A warm edge and a soft light round it" }, { value: "dark", label: "Dark", title: "A dark outline, as Classic has" }, { value: "none", label: "None" }]} />
                   </Field>
                   <Toggle label="Shadow" checked={ls.shadow} onChange={v => set({ shadow: v })} />
-                  <Toggle label="Arrowhead" checked={ls.arrow} onChange={v => set({ arrow: v })} />
+                  {s.arrowLook !== "none" && <Toggle label="Arrowhead" checked={ls.arrow} onChange={v => set({ arrow: v })} hint={main ? undefined : "Where its line reaches the basket by itself"} />}
                   {/* (the main line's length is Distances, above; another's shows where Distances is on) */}
                   {!main && <Toggle label="Distance" checked={ls.distance} onChange={v => set({ distance: v })} hint={s.distances ? undefined : "Shows with Distances on"} />}
                   {changed && <button className="mt-2 text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1 touch:py-2.5" onClick={() => setLine(l, { color: undefined, dash: undefined, width: undefined, opacity: undefined, outline: undefined, shadow: undefined, arrow: undefined, distance: undefined, hidden: undefined })} title="The line look's own again" data-testid="line-reset"><RotateCcw size={12} /> Reset</button>}

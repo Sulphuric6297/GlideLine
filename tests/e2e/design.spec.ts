@@ -6,6 +6,7 @@ import { contoursOf, reliefExaggeration } from "../../src/lib/relief";
 import { dist, distanceToPath } from "../../src/lib/geom";
 import { BASKET_MARKS, EARTH, LINE_CREAM, PRINT_EARTH, basketMark, bestRotation, lineStyleOf, renderMapLayers, renderPoster } from "../../src/lib/mapSvg";
 import { holeStats } from "../../src/lib/holeStats";
+import { CIRCLE_ONE_FT } from "../../src/constants";
 import { renderScorecard, renderTeeSign } from "../../src/lib/teeSign";
 import { renderHolePage } from "../../src/lib/holePage";
 import { tallGrassOf } from "../../src/lib/landscapes";
@@ -449,6 +450,80 @@ test("the Lines tool: Line look, each tee's line set its own way, and where line
   // Other tees' lines
   await lines.getByRole("radio", { name: "Run beside it" }).click();
   await expect.poll(async () => (await course(page)).style.linesMeet).toBe("alongside");
+  // Every line at once: its weight, the arrowheads' shape and size, where lines end, how bends are drawn
+  const all = lines.getByTestId("lines-all"), style = async () => (await course(page)).style;
+  await expect(all.getByRole("radio", { name: "Leaf" })).toBeChecked();
+  await all.getByRole("radio", { name: "Open" }).click();
+  await expect.poll(async () => (await style()).arrowLook).toBe("open");
+  await all.getByLabel("Arrowhead size").fill("1.5");
+  await all.getByLabel("Arrowhead size").blur();
+  await all.getByLabel("Line weight").fill("1.3");
+  await all.getByLabel("Line weight").blur();
+  await expect.poll(async () => { const s = await style(); return [s.arrowSize, s.lineWeight]; }).toEqual([1.5, 1.3]);
+  // (None: no arrowheads, so no size for them, and no Arrowhead switch on a tee's line)
+  await all.getByRole("radio", { name: "None" }).click();
+  await expect.poll(async () => (await style()).arrowLook).toBe("none");
+  await expect(all.getByLabel("Arrowhead size")).toHaveCount(0);
+  await expect(red.getByText("Arrowhead", { exact: true })).toHaveCount(0);
+  // (the look's own: nothing kept)
+  await all.getByRole("radio", { name: "Leaf" }).click();
+  await expect.poll(async () => (await style()).arrowLook).toBeUndefined();
+  await expect(red.getByText("Arrowhead", { exact: true })).toBeVisible();
+  await all.getByRole("radio", { name: "At the basket" }).click();
+  await all.getByRole("radio", { name: "As plotted" }).click();
+  await expect.poll(async () => { const s = await style(); return [s.lineEnd, s.lineBends]; }).toEqual(["basket", "plotted"]);
+  await all.getByRole("radio", { name: "At the putting circle" }).click();
+  await all.getByRole("radio", { name: "Sweeping" }).click();
+  await expect.poll(async () => { const s = await style(); return [s.lineEnd, s.lineBends]; }).toEqual([undefined, undefined]);
+  // (Classic draws its lines as it always did: no Lines end or Bends for it)
+  await lines.getByTestId("line-look-classic").click();
+  await expect(all.getByRole("radio", { name: "At the basket" })).toHaveCount(0);
+  await expect(all.getByRole("radio", { name: "Triangle" })).toBeChecked();
+  // One tee's line off one hole: the tee's own switch in Design
+  await page.getByRole("button", { name: "2 Design" }).click();
+  const redTee = (await course(page)).items.find((i: any) => i.type === "tee" && i.level === "red");
+  await page.evaluate(id => (window as any).__dgActions.select(id), redTee.id);
+  await page.getByTestId("tee-map-line").getByRole("checkbox").uncheck();
+  await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === redTee.id).noLine).toBe(true);
+  await page.getByTestId("tee-map-line").getByRole("checkbox").check();
+  await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === redTee.id).noLine).toBeUndefined();
+});
+
+plain("painted throw lines: each stops at its putting circle aimed at the basket; arrowheads, weight, where lines end and one tee's line off a hole change the drawing; Classic takes none of it unasked", () => {
+  const doc = sample();
+  const [h1] = doc.holes;
+  doc.style.theme = "forest";
+  doc.style.throwLines = true;
+  doc.style.circle = true;
+  doc.style.lineLook = "painted";
+  // (hole 1 from (100, 500) to (450, 500), with a bend off its line, and a red tee with its own way in)
+  h1.doglegs = [{ x: 300, y: 430 }];
+  const red = { ...createTee(h1.id, { x: 330, y: 600 }, "red"), doglegs: [] };
+  const base = { ...doc, items: [...doc.items, red] };
+  const view = { cx: 300, cy: 450, rotation: 0, scale: 1.5, width: 900, height: 700 };
+  const draw = (d: typeof doc, s: Partial<typeof doc.style> = {}) => { const dd = { ...d, style: { ...d.style, ...s } }; return renderMapLayers(dd, view, { stats: dd.holes.map(h => holeStats(dd, h)), contours: null, hillshade: null, textScale: 1, fontFamily: dd.style.font, labelAt: {} }, "t").svg; };
+  const painted = draw(base);
+  // (two leaf arrowheads: the main line's and the red tee's, which reaches the basket by itself)
+  const heads = (svg: string) => [...svg.matchAll(/<path d="M([-\d.]+) ([-\d.]+)Q[^"]*Z" fill="#[0-9a-fA-F]{6}"(?: stroke|\/>)/g)].map(m => ({ x: +m[1], y: +m[2] }));
+  const tips = heads(painted), basket = { x: 450, y: 500 };
+  plainExpect(tips).toHaveLength(2);
+  // (each tip on the putting circle, 33 ft out and 3 px more, not past it at the basket)
+  for (const t of tips) plainExpect(Math.abs(dist(t, basket) - (CIRCLE_ONE_FT + 2)) ).toBeLessThan(1.5);
+  // (and well apart round it)
+  plainExpect(dist(tips[0], tips[1]) * 1.5).toBeGreaterThan(12);
+  // At the basket: the tips run on to it
+  for (const t of heads(draw(base, { lineEnd: "basket" }))) plainExpect(dist(t, basket)).toBeLessThan(8);
+  // No arrowheads; other shapes; a heavier weight; bends as plotted: each its own drawing
+  plainExpect(heads(draw(base, { arrowLook: "none" }))).toHaveLength(0);
+  const made = [painted, draw(base, { arrowLook: "open" }), draw(base, { arrowLook: "triangle" }), draw(base, { arrowSize: 1.5 }), draw(base, { lineWeight: 1.4 }), draw(base, { lineBends: "plotted" })];
+  plainExpect(new Set(made).size).toBe(made.length);
+  // The red tee's line off this hole: only the main arrowhead left; the map without that tee's line
+  const off = { ...base, items: base.items.map(i => (i.id === red.id ? { ...i, noLine: true as const } : i)) };
+  plainExpect(heads(draw(off))).toHaveLength(1);
+  // Classic: as it was with none of these set, whatever Lines end and Bends say
+  const classic = draw(base, { lineLook: undefined });
+  plainExpect(draw(base, { lineLook: undefined, lineEnd: "basket", lineBends: "plotted" })).toBe(classic);
+  plainExpect(draw(base, { lineLook: undefined, arrowSize: 1.5 })).not.toBe(classic);
 });
 
 plain("the course map plays its own layout, kept from Design's when saved before; signs and pages match the painted tee colors", () => {

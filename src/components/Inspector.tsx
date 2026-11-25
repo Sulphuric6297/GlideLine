@@ -267,6 +267,8 @@ function TeeOwnFields({ tee }: { tee: TeeItem }) {
       <Field label="Par from this tee" help="tee-own-line">
         <Segmented label="Par from this tee" value={tee.par ?? 0} onChange={o.setPar} options={o.parOptions} />
       </Field>
+      {/* (this tee's line on this hole alone: a tee color's line on every hole is in the map's Lines) */}
+      <div className="mb-3" data-testid="tee-map-line"><Toggle label="Throw line on the course map" checked={!tee.noLine} onChange={v => updateItem(tee.id, { noLine: v ? undefined : true } as Partial<CourseItem>)} /></div>
     </>
   );
 }

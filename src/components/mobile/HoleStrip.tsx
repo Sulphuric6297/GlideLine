@@ -216,6 +216,8 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     out.push({ id: "surface", name: "Surface", value: TEE_SURFACES[t.surface].label, control: <ChipPick label="Tee surface" value={t.surface} onChange={(v: TeeSurface) => set({ surface: v })} options={(Object.keys(TEE_SURFACES) as TeeSurface[]).map(k => ({ value: k, label: TEE_SURFACES[k].label, color: TEE_SURFACES[k].color }))} /> });
     if (own) {
       out.push({ id: "bends", name: "Bends", value: own.own ? "Its own" : "The hole's", control: <Segmented label="Bends" value={own.own ? "own" : "hole"} onChange={v => own.setOwn(v === "own")} options={own.bendOptions} /> });
+      // (its line on the course map, this tee on this hole alone: a switch)
+      out.push({ id: "mapline", name: "Map line", value: (item as TeeItem).noLine ? "Hidden" : "Shown", on: !(item as TeeItem).noLine, run: () => set({ noLine: (item as TeeItem).noLine ? undefined : true }) });
       out.push({ id: "teepar", name: "Par", value: t.par ?? own.parSaid, control: <Segmented label="Par from this tee" value={t.par ?? 0} onChange={own.setPar} options={own.parOptions} /> });
     }
     if (t.aimFixed) out.push({ id: "aim", name: "Facing", value: "Down the hole", icon: <Navigation size={16} />, run: () => set({ aimFixed: false }) });
