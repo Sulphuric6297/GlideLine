@@ -157,6 +157,9 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
   const rowRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [past, setPast] = useState(0);
+  // (whether the row slides at all: +N keeps its place while it does, shown or not, so the settings
+  // never jump sideways under a finger as the row reaches its end)
+  const [slides, setSlides] = useState(false);
   const pillRef = useRef<HTMLDivElement>(null);
   // (come up out of the button tapped: the pill from its place, the settings from the right)
   useLayoutEffect(() => {
@@ -222,6 +225,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
     let n = 0;
     r.querySelectorAll<HTMLElement>("[data-setting]").forEach(b => { const box = b.getBoundingClientRect(); if ((side ? box.bottom : box.right) > edge + 2) n++; });
     setPast(n);
+    setSlides((side ? r.scrollHeight - r.clientHeight : r.scrollWidth - r.clientWidth) > 2);
     leftAt.set(remember, side ? r.scrollTop : r.scrollLeft);
   }, [remember, side]);
   useLayoutEffect(() => {
@@ -320,7 +324,7 @@ export function GlassBar({ pill, pillMenu, pillWide = false, settings, onDone, d
           );
         })}
       </div>
-      {past > 0 && <button className="shrink-0 h-[30px] min-w-[34px] px-2 rounded-full bg-white/[0.13] text-[13px] font-bold text-zinc-100 tabular-nums" aria-label={`${past} more settings`} onClick={more} data-testid="bar-more">+{past}</button>}
+      {(past > 0 || slides) && <button className={`shrink-0 h-[30px] min-w-[34px] px-2 rounded-full bg-white/[0.13] text-[13px] font-bold text-zinc-100 tabular-nums ${past ? "" : "invisible"}`} aria-label={`${past} more settings`} aria-hidden={!past} tabIndex={past ? undefined : -1} onClick={more} data-testid="bar-more">+{past || 1}</button>}
       {doneEl}
     </div>
   );
