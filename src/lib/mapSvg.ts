@@ -1011,8 +1011,10 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
         // (its own way to the basket: its own arrowhead; one that joins a line has none, unless asked for)
         const joined = { ...ls, arrow: s.lineStyles?.[tee.level]?.arrow === true };
         // (one that ends on the main line: less the end of it that lies hidden under that line)
-        // (under the main line while within its width; under another tee's line, drawn over this one, once it's half on it)
-        if (!alone && !classicLook && onto >= 0 && trunks[onto]) along = lessHidden(along, Math.max((widths[onto] - W2) / 2, onto === 0 && !mainTee?.noLine ? 0 : W2 * 0.5), trunks[onto]);
+        // (under another tee's line, drawn over this one, once it's half on it)
+        // (the main line: from where its middle goes under that line's edge, so none of it runs on beside
+        // it as a rim; a dashed line onto another tee's: from where the two touch, so no dash lies on a dash)
+        if (!alone && !classicLook && onto >= 0 && trunks[onto]) along = lessHidden(along, onto === 0 && !mainTee?.noLine ? widths[0] / 2 : ls.dash !== "solid" ? (widths[onto] + W2) / 2 : Math.max((widths[onto] - W2) / 2, W2 * 0.5), trunks[onto]);
         if (alone) drawLine(along, ls, false, o, basket, true);
         else if (look === "classic" && !s.lineStyles?.[tee.level] && s.linesMeet !== "alongside" && weight === 1) {
           const c = TEE_LEVELS[tee.level].color === "#f8fafc" ? "#eef0f2" : TEE_LEVELS[tee.level].color;
