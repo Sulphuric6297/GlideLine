@@ -1,6 +1,7 @@
 import { decode as decodePng } from "fast-png";
 import { clamp } from "../../constants";
 import { ELEVATION_MAX_TILES, ELEVATION_MAX_ZOOM, ELEVATION_TILE_SIZE, GeoBounds, SiteLocation, elevationTileUrl, getGeoBounds, getTileRange, latToPixel, lonToPixel, mercatorBbox } from "./core";
+import { dhmElevationGrid, dkToken, inDenmark } from "./denmark";
 
 
 // Downloads a Terrarium elevation tile and decodes it to meters. Decoded from the PNG bytes directly —
@@ -217,7 +218,8 @@ export const usgsGroundLabel = async (bounds: GeoBounds) => {
   return "USGS 3DEP ground";
 };
 
-// Best available elevation: USGS 3DEP (US, high detail), else global terrain tiles.
+// Best available elevation: Danmarks Højdemodel (Denmark, with a token), USGS 3DEP (US, high
+// detail), else global terrain tiles.
 export const fetchBestElevationGrid = async (
   location: SiteLocation,
   widthFt: number,
@@ -225,8 +227,17 @@ export const fetchBestElevationGrid = async (
   samplesX: number,
   samplesY: number
 ) => {
+  const bounds = getGeoBounds(location, widthFt, heightFt);
+  // (Denmark's own height model, with a token for it)
+  if (inDenmark(bounds) && dkToken()) {
+    try {
+      return await dhmElevationGrid({ ...bounds, width: widthFt, height: heightFt }, samplesX, samplesY);
+    } catch (err) {
+      console.warn("Danmarks Højdemodel unavailable, using global terrain tiles:", err);
+    }
+  }
   try {
-    const usgs = await fetchUsgsElevationGrid(getGeoBounds(location, widthFt, heightFt), samplesX, samplesY);
+    const usgs = await fetchUsgsElevationGrid(bounds, samplesX, samplesY);
     return { ...usgs, source: "USGS 3DEP (high detail)" };
   } catch (err) {
     console.warn("USGS 3DEP elevation unavailable, using global terrain tiles:", err);

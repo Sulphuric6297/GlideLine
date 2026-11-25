@@ -231,6 +231,12 @@ Later requests (in the order asked)
 - [ ] **A stretch of a road (or any line) can be taken out**, marked with two clicks like an OB
   stretch.
 
+- [ ] **A site in Denmark comes in on Denmark's own open maps** (Dataforsyningen, free, with a
+  free token kept in the browser): the ground from Danmarks Højdemodel (0.4 m), the trees standing
+  on it measured from its surface, and the spring orthophoto; open source only, nothing paid.
+- [ ] **European trees and bushes**: beech, and hazel and hawthorn bushes, with Denmark's most
+  common kinds (spruce, beech, oak) recommended for a course there.
+
 ## Your own server (GlideLine Studio)
 
 The owner's requests for the self-hosted version, in the order they came. Checked once seen

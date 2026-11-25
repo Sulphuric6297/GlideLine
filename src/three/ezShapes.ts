@@ -25,7 +25,7 @@ const PRESETS: Record<TreeShape, string[]> = {
   // (after the first six: the region's species, picked by the county's mix: lib/treeMix's LOOK_VARIANTS
   // names these by place, so a new one goes at the end)
   broadleaf: ["Oak Medium", "Ash Medium", "Oak Large", "Ash Large", "Oak Small", "Ash Small",
-    "Aspen Medium", "Aspen Large", "Birch Medium", "Birch Large", "Maple Medium", "Maple Large", "Willow Medium", "Bradford pear Medium", "Bradford pear Small"],
+    "Aspen Medium", "Aspen Large", "Birch Medium", "Birch Large", "Maple Medium", "Maple Large", "Willow Medium", "Bradford pear Medium", "Bradford pear Small", "Beech Medium", "Beech Large"],
   conifer: ["Pine Medium", "Pine Large", "Pine Small", "Pine Large", "Spruce Medium", "Spruce Large", "Cedar Medium", "Cedar Small", "Tall pine Medium", "Tall pine Large"],
   // (the first six: bushes; then the underbrush's own: briars, weeds, thicket shrubs, two each)
   bush: ["Bush 1", "Bush 3", "Bush 1", "Bush 3", "Bush 2", "Bush 2", "Briars", "Briars", "Weeds", "Ferns", "Thicket", "Thicket"]
@@ -165,6 +165,23 @@ regional("Maple", { Small: "Oak Small", Medium: "Oak Medium", Large: "Oak Large"
   o.leaves.type = "oak";
   o.leaves.count = Math.round(o.leaves.count * 1.35);
   o.leaves.size *= 1.1;
+});
+// Beech (European beech): the oak with a smooth grey trunk, straight limbs reaching up and out to
+// a tall dome, and a dense, even crown of leaves
+regional("Beech", { Small: "Oak Small", Medium: "Oak Medium", Large: "Oak Large" }, o => {
+  const b = o.branch;
+  o.bark.type = "birch";
+  o.bark.tint = 0x8c8a84;
+  b.angle[1] = 40;
+  b.gnarliness[0] *= 0.3;
+  b.gnarliness[1] *= 0.4;
+  b.gnarliness[2] *= 0.5;
+  b.length[0] *= 1.1;
+  b.start[1] = Math.max(0.3, b.start[1]);
+  b.children[1] = Math.round(b.children[1] * 1.2);
+  o.leaves.type = "oak";
+  o.leaves.count = Math.round(o.leaves.count * 1.5);
+  o.leaves.size *= 0.85;
 });
 // Weeping willow: the ash with willow bark, long thin branches pulled down
 regional("Willow", { Small: "Ash Small", Medium: "Ash Medium", Large: "Ash Large" }, o => {
@@ -306,6 +323,31 @@ regional("Cedar", { Small: "Pine Small", Medium: "Pine Medium", Large: "Pine Lar
   o.leaves.count = Math.round(o.leaves.count * 1.4);
 });
 
+// Hazel: many straight stems from the ground, leaning out like a vase, broad leaves
+CUSTOM.Hazel = {
+  base: "Bush 2",
+  shape: o => {
+    const b = o.branch;
+    b.children[0] = Math.round(b.children[0] * 1.4);
+    b.angle[1] = 25;
+    b.length[1] *= 1.4;
+    b.gnarliness[1] *= 0.4;
+    o.bark.tint = 0x9a8a78;
+    o.leaves.size *= 1.25;
+  }
+};
+// Hawthorn: a dense, twiggy, rounded crown on a short stem, small leaves
+CUSTOM.Hawthorn = {
+  base: "Bush 3",
+  shape: o => {
+    const b = o.branch;
+    b.gnarliness[1] *= 1.6;
+    b.children[1] = Math.round(b.children[1] * 1.3);
+    o.leaves.size *= 0.7;
+    o.leaves.count = Math.round(o.leaves.count * 1.4);
+  }
+};
+
 /** Loads a preset (ez-tree's, or one of ours) into a tree's options. */
 const loadInto = (t: EzTree, preset: string) => {
   const own = CUSTOM[preset];
@@ -326,7 +368,8 @@ export const SPECIES: Record<TreeShape, { id: string; label: string; presets: [s
     { id: "aspen", label: "Aspen", presets: ["Aspen Small", "Aspen Medium", "Aspen Large"] },
     { id: "birch", label: "Birch", presets: ["Birch Small", "Birch Medium", "Birch Large"] },
     { id: "willow", label: "Weeping willow", presets: ["Willow Small", "Willow Medium", "Willow Large"] },
-    { id: "pear", label: "Bradford pear", presets: ["Bradford pear Small", "Bradford pear Medium", "Bradford pear Large"] }
+    { id: "pear", label: "Bradford pear", presets: ["Bradford pear Small", "Bradford pear Medium", "Bradford pear Large"] },
+    { id: "beech", label: "Beech", presets: ["Beech Small", "Beech Medium", "Beech Large"] }
   ],
   conifer: [
     { id: "pine", label: "Pine", presets: ["Pine Small", "Pine Medium", "Pine Large"] },
@@ -340,7 +383,9 @@ export const SPECIES: Record<TreeShape, { id: string; label: string; presets: [s
     { id: "airy", label: "Airy", presets: ["Bush 2", "Bush 2", "Bush 2"] },
     { id: "briars", label: "Briars", presets: ["Briars", "Briars", "Briars"] },
     { id: "weeds", label: "Weeds", presets: ["Weeds", "Weeds", "Ferns"] },
-    { id: "thicket", label: "Thicket", presets: ["Thicket", "Thicket", "Thicket"] }
+    { id: "thicket", label: "Thicket", presets: ["Thicket", "Thicket", "Thicket"] },
+    { id: "hazel", label: "Hazel", presets: ["Hazel", "Hazel", "Hazel"] },
+    { id: "hawthorn", label: "Hawthorn", presets: ["Hawthorn", "Hawthorn", "Hawthorn"] }
   ]
 };
 /** A species' preset for a tree of this height (a young tree, a grown one, an old one). */

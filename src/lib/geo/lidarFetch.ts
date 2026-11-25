@@ -163,6 +163,17 @@ const workers = () => {
   };
 };
 
+/** Gathered points measured in a background worker (the ground, the canopy and the trees), or
+ * here where there is none: the Danish height model's grids come through this too. */
+export const measureGathered = async (g: Gathered, outlines: P[][], leafOn: boolean | null) => {
+  const pool = workers();
+  try {
+    return await pool.measure(g, null, outlines, leafOn);
+  } finally {
+    pool.close();
+  }
+};
+
 // ---------------------------------------------------------------- a site measured
 
 /** The surveys over a site worth trying, newest first (their boxes reach it). */
