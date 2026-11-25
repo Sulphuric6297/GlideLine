@@ -504,8 +504,9 @@ plain("painted throw lines: each stops at its putting circle aimed at the basket
   const draw = (d: typeof doc, s: Partial<typeof doc.style> = {}) => { const dd = { ...d, style: { ...d.style, ...s } }; return renderMapLayers(dd, view, { stats: dd.holes.map(h => holeStats(dd, h)), contours: null, hillshade: null, textScale: 1, fontFamily: dd.style.font, labelAt: {} }, "t").svg; };
   const painted = draw(base);
   // (two leaf arrowheads: the main line's and the red tee's, which reaches the basket by itself)
-  const heads = (svg: string) => [...svg.matchAll(/<path d="M([-\d.]+) ([-\d.]+)Q[^"]*Z" fill="#[0-9a-fA-F]{6}"(?: stroke|\/>)/g)].map(m => ({ x: +m[1], y: +m[2] }));
-  const tips = heads(painted), basket = { x: 450, y: 500 };
+  const everyHead = (svg: string) => [...svg.matchAll(/<path d="M([-\d.]+) ([-\d.]+)Q[^"]*Z" fill="#[0-9a-fA-F]{6}"(?: stroke|\/>)/g)].map(m => ({ x: +m[1], y: +m[2] }));
+  // (hole 1's: the other holes have their own)
+  const basket = { x: 450, y: 500 }, heads = (svg: string) => everyHead(svg).filter(t => dist(t, basket) < 60), tips = heads(painted);
   plainExpect(tips).toHaveLength(2);
   // (each tip on the putting circle, 33 ft out and 3 px more, not past it at the basket)
   for (const t of tips) plainExpect(Math.abs(dist(t, basket) - (CIRCLE_ONE_FT + 2)) ).toBeLessThan(1.5);
@@ -514,7 +515,7 @@ plain("painted throw lines: each stops at its putting circle aimed at the basket
   // At the basket: the tips run on to it
   for (const t of heads(draw(base, { lineEnd: "basket" }))) plainExpect(dist(t, basket)).toBeLessThan(8);
   // No arrowheads; other shapes; a heavier weight; bends as plotted: each its own drawing
-  plainExpect(heads(draw(base, { arrowLook: "none" }))).toHaveLength(0);
+  plainExpect(everyHead(draw(base, { arrowLook: "none" }))).toHaveLength(0);
   const made = [painted, draw(base, { arrowLook: "open" }), draw(base, { arrowLook: "triangle" }), draw(base, { arrowSize: 1.5 }), draw(base, { lineWeight: 1.4 }), draw(base, { lineBends: "plotted" })];
   plainExpect(new Set(made).size).toBe(made.length);
   // The red tee's line off this hole: only the main arrowhead left; the map without that tee's line
