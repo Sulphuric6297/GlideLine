@@ -11,6 +11,7 @@ import type { MapImagerySource } from "../lib/geo/imagery";
 import { findSiteOutline, type SiteOutline } from "../lib/geo/parks";
 import { lidarCoverage } from "../lib/geo/lidarFetch";
 import { inUS } from "../lib/geo/usgov";
+import { DK_TOKEN_PAGE, dkToken, dkTokenLike, inDenmark, onDkToken, setDkToken } from "../lib/geo/denmark";
 import { photoChoices, photoDateText, photoFeetPerPx, type PhotoChoice } from "../lib/geo/photoSources";
 import { importSite, signOf, type ImportedSite, type ImportLayer, type SourceId, type SourceStatus } from "../lib/importSite";
 import { GROUPS, KINDED, SOURCES, kindCounts, reviewedSite, sharedBuildings, sourceCounts, sourceOf, startsOn, withoutLeft, type LeftOut, type ReviewOpts, type SourceKey } from "../lib/importReview";
@@ -145,6 +146,41 @@ const cardSwitch: SwitchRow = o => (
   </div>
 );
 
+/** Denmark's maps' token (Dataforsyningen): a field until one is saved, then Saved · Change ·
+ * Remove. Only text that could be a token is saved (a sentence or a link pasted by mistake isn't,
+ * and says so). */
+function DkTokenRow({ token, touch }: { token: string; touch: boolean }) {
+  const [editing, setEditing] = useState(!token);
+  const [text, setText] = useState("");
+  useEffect(() => { if (!token) setEditing(true); }, [token]);
+  const [bad, setBad] = useState(false);
+  const save = (v: string) => {
+    if (!v.trim()) return;
+    if (!dkTokenLike(v)) { setBad(true); return; }
+    setBad(false); setDkToken(v); setText(""); setEditing(false);
+  };
+  const link = touch ? "min-h-[44px] inline-flex items-center" : "";
+  return (
+    <div className="w-full flex flex-col gap-1.5 rounded-[13px] bg-white/[0.06] ring-1 ring-white/[0.08] p-2.5" data-testid="dk-token">
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-[12px] font-semibold text-zinc-300" htmlFor="dk-token-input">Dataforsyningen token</label>
+        {editing
+          ? <a className={`text-[12.5px] text-[#a2cf6a] hover:text-[#b3db80] ${link}`} href={DK_TOKEN_PAGE} target="_blank" rel="noreferrer">Get a free token</a>
+          : <span className="inline-flex items-center gap-3"><span className="text-[12.5px] text-zinc-400">Saved</span><button type="button" className={`text-[12.5px] text-[#a2cf6a] hover:text-[#b3db80] ${link}`} onClick={() => setEditing(true)} data-testid="dk-token-change">Change</button><button type="button" className={`text-[12.5px] text-zinc-400 hover:text-zinc-200 ${link}`} onClick={() => setDkToken("")} data-testid="dk-token-remove">Remove</button></span>}
+      </div>
+      {editing && (
+        <div className="flex gap-1.5">
+          <input id="dk-token-input" value={text} onChange={e => { setText(e.target.value); setBad(false); }} aria-invalid={bad} aria-describedby={bad ? "dk-token-bad" : undefined} onKeyDown={e => { if (e.key === "Enter") save(text); if (e.key === "Escape" && token) { setText(""); setEditing(false); } }} onBlur={() => save(text)}
+            placeholder="Token" autoComplete="off" spellCheck={false}
+            className="flex-1 min-w-0 h-9 touch:h-11 text-[13px] touch:text-[16px] rounded-[10px] bg-black/30 ring-1 ring-white/10 px-3 text-zinc-100 placeholder:text-zinc-500 outline-none focus:ring-[#a2cf6a]/60" />
+          {touch && <button type="button" className="h-11 px-4 rounded-[10px] bg-white/[0.1] text-[14px] font-semibold text-zinc-100" onClick={() => void navigator.clipboard?.readText().then(save).catch(() => {})} data-testid="dk-token-paste">Paste</button>}
+        </div>
+      )}
+      {editing && bad && <div id="dk-token-bad" role="alert" className="text-[12px] touch:text-[13px] text-amber-300" data-testid="dk-token-bad">That isn't a token. Copy it from your Dataforsyningen account.</div>}
+    </div>
+  );
+}
+
 export function SiteImportDialog({ onClose, onImported, onPreview, near }: { near?: GeoBounds; onClose: () => void; onImported: (site: ImportedSite, opts: BringOpts) => void;
   /** The site as it would come in, shown in the course (as it was: `d0`) while it's looked over in 3D. */
   onPreview?: (d0: CourseDoc, site: ImportedSite, opts: BringOpts) => CourseDoc }) {
@@ -242,7 +278,10 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   // How much brush and how thick (as the course last had it), and the patches set by a tap
   const [tune, setTune] = useState<BrushTune>(() => ({ ...BEST_GUESS, ...(getDoc().site.brushTune ?? {}) }));
   const [tuneOpen, setTuneOpen] = useState(false);
-  const [here, setHere] = useState<{ photo?: PhotoChoice; photos?: PhotoChoice[]; photoIds?: string[]; survey?: { year: number; covered: "full" | "partial" | "none" } } | null>(null);
+  const [here, setHere] = useState<{ photo?: PhotoChoice; photos?: PhotoChoice[]; photoIds?: string[]; survey?: { year: number; covered: "full" | "partial" | "none"; dhm?: boolean } } | null>(null);
+  // (Denmark's height model: with the visitor's own token)
+  const [dkTok, setDkTok] = useState(dkToken);
+  useEffect(() => onDkToken(() => setDkTok(dkToken())), []);
   const [status, setStatus] = useState<{ state: "idle" | "searching" | "loading" | "error"; text: string; progress?: { fraction: number } }>({ state: "idle", text: "" });
   const [sources, setSources] = useState<Partial<Record<SourceId, SourceStatus>>>({});
   const [arrived, setArrived] = useState<Arrived | null>(null);
@@ -291,11 +330,12 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
         within(photoChoices(selection, { signal: stop.signal, timeoutMs: 6000 }), [] as PhotoChoice[])
       ]).then(([cov, photos]) => {
         if (stop.signal.aborted) return;
-        setHere({ photo: photos[0], photos, photoIds: photos.map(p => p.id), survey: cov ? { year: cov.surveys[0]?.year ?? 0, covered: cov.covered } : undefined });
+        const dhm = inDenmark(selection) && !!dkTok;
+        setHere({ photo: photos[0], photos, photoIds: photos.map(p => p.id), survey: dhm ? { year: 0, covered: "full", dhm } : cov ? { year: cov.surveys[0]?.year ?? 0, covered: cov.covered } : undefined });
       });
     }, 400);
     return () => { window.clearTimeout(t); stop.abort(); };
-  }, [selection]);
+  }, [selection, dkTok]);
 
   const go = async (s?: PlaceSuggestion) => {
     if (!s && !query.trim()) return;
@@ -354,6 +394,8 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // (Escape in the token field, with one saved: only the field closes)
+      if ((e.target as HTMLElement | null)?.id === "dk-token-input" && dkToken()) return;
       e.stopPropagation();
       e.preventDefault();
       if (stopping) setStopping(false);
@@ -576,8 +618,9 @@ export function SiteImportDialog({ onClose, onImported, onPreview, near }: { nea
   const photoValue = here?.photo ? [photoDateText(here.photo), `${photoFeetPerPx(here.photo)} ft`].filter(Boolean).join(" · ") : undefined;
   const pills = [
     pill({ id: "photo", icon: <ImageIcon size={15} />, label: photo ? "Photo" : "Street map", value: photo ? photoValue : undefined, on: true, set: () => setImagery(photo ? "streets" : "satellite") }),
-    <fieldset key="ground" disabled className="contents" data-testid="import-elevation">{pill({ id: "ground", icon: <Mountain size={15} />, label: "Ground", value: survey ? `${survey.year} survey` : undefined, on: true, fixed: true })}</fieldset>,
-    survey ? pill({ id: "lidar", icon: <Trees size={15} />, label: "Measured trees", value: `${survey.year}${survey.covered === "partial" ? " · part" : ""}`, on: lidar, set: setLidar }) : null,
+    selection && inDenmark(selection) ? <DkTokenRow key="dk-token" touch={touch} token={dkTok} /> : null,
+    <fieldset key="ground" disabled className="contents" data-testid="import-elevation">{pill({ id: "ground", icon: <Mountain size={15} />, label: "Ground", value: survey?.dhm ? "DHM 0.4 m" : survey ? `${survey.year} survey` : undefined, on: true, fixed: true })}</fieldset>,
+    survey ? pill({ id: "lidar", icon: <Trees size={15} />, label: "Measured trees", value: survey.dhm ? "DHM" : `${survey.year}${survey.covered === "partial" ? " · part" : ""}`, on: lidar, set: setLidar }) : null,
     // (only where no survey covers the site: where one does, its measured trees are the ones)
     !survey && photo ? pill({ id: "photo-trees", icon: <TreeDeciduous size={15} />, label: "Trees from the photo", on: trees, set: setTrees }) : null,
     // (and where one does: the trees it missed, filled in from the photo)

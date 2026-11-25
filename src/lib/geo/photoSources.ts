@@ -4,8 +4,9 @@
 // statewide: services that only cover their own state. All are free, need no key and allow any
 // website (CORS). Only quick metadata calls here; the photo itself is downloaded in imagery.ts.
 import { FEET_PER_METER, METERS_PER_DEG_LAT, mercatorBbox, type GeoBounds } from "./core";
+import { DATAFORSYNINGEN, DK_REGIONS, ORTO_CREDIT, dkToken } from "./denmark";
 
-export type PhotoSourceId = "naip" | "ky" | "nc" | "in" | "oh" | "pa" | "va" | "tn" | "wi" | "ny" | "nj" | "ct" | "md" | "mo" | "esri";
+export type PhotoSourceId = "naip" | "ky" | "nc" | "in" | "oh" | "pa" | "va" | "tn" | "wi" | "ny" | "nj" | "ct" | "md" | "mo" | "dk" | "esri";
 /** In leaf (late spring to early fall), bare (late fall to early spring), or between. */
 export type PhotoSeason = "leaf-on" | "leaf-off" | "mixed";
 
@@ -55,6 +56,8 @@ export type ImageService = {
   /** A map service (export, no catalog to ask): whether it has a picture here is seen on a small
    * one of the frame, and its year is the flight's (`year`). */
   map?: boolean;
+  /** A WMS (GetMap, in web mercator) instead: its layer, and whether it needs the Danish token. */
+  wms?: { layer: string; dkToken?: boolean };
   year?: number;
   /** What the catalog says of the picture at a spot: its date, year, pixel size. */
   read: (a: Record<string, unknown>) => { date?: string; year?: number; metersPerPx?: number };
@@ -68,6 +71,22 @@ const dateInName = (v: unknown) => {
 };
 
 export const IMAGE_SERVICES: ImageService[] = [
+  {
+    // (Denmark's spring photo, with a Dataforsyningen token)
+    id: "dk",
+    label: "GeoDanmark orthophoto",
+    credit: ORTO_CREDIT,
+    kind: "aerial",
+    regions: DK_REGIONS,
+    urls: [`${DATAFORSYNINGEN}/orto_foraar_DAF`],
+    metersPerPx: 0.125,
+    maxPx: 4000,
+    // (flown in spring before the leaves are out, as the states' own are: no canopy is read off it)
+    season: "leaf-off",
+    map: true,
+    wms: { layer: "orto_foraar", dkToken: true },
+    read: () => ({})
+  },
   {
     id: "naip",
     label: "NAIP aerial photo",
@@ -168,7 +187,18 @@ export const ESRI = {
 
 /** Whether a box and a region overlap. */
 const overlaps = (a: GeoBounds, b: GeoBounds) => a.west < b.east && a.east > b.west && a.south < b.north && a.north > b.south;
-const inRegion = (s: ImageService, b: GeoBounds) => s.regions.some(r => overlaps(r, b));
+const inRegion = (s: ImageService, b: GeoBounds) => s.regions.some(r => overlaps(r, b)) && (!s.wms?.dkToken || !!dkToken());
+
+/** A service's picture of a box (web mercator, as mercatorBbox gives it), `w` by `h` pixels: an
+ * ArcGIS map service's export, an image service's exportImage, or a WMS's GetMap. */
+export const serviceImageUrl = (url: string, s: { map?: boolean; wms?: ImageService["wms"] }, bbox3857: string, w: number, h: number, o: { png?: boolean; bands?: string } = {}) => {
+  if (s.wms) {
+    const q = new URLSearchParams({ service: "WMS", version: "1.3.0", request: "GetMap", layers: s.wms.layer, styles: "", crs: "EPSG:3857", bbox: bbox3857, width: String(w), height: String(h), format: o.png ? "image/png" : "image/jpeg", ...(o.png ? { transparent: "true" } : {}), ...(s.wms.dkToken ? { token: dkToken() } : {}) });
+    return `${url}?${q}`;
+  }
+  if (s.map) return `${url}/export?${new URLSearchParams({ bbox: bbox3857, bboxSR: "3857", imageSR: "3857", size: `${w},${h}`, format: o.png ? "png" : "jpg", transparent: o.png ? "true" : "false", f: "image" })}`;
+  return `${url}/exportImage?${new URLSearchParams({ bbox: bbox3857, bboxSR: "3857", imageSR: "3857", size: `${w},${h}`, adjustAspectRatio: "false", format: o.png ? "png" : "jpg", interpolation: "RSP_BilinearInterpolation", ...(o.bands ? { bandIds: o.bands } : {}), ...(o.png ? { transparent: "true" } : {}), f: "image" })}`;
+};
 
 /** The pixel size (m) a frame's photo is wanted at: about 4096 pixels across its longer side. */
 export const targetMetersPerPx = (b: GeoBounds, targetPx = 4096) => {
@@ -263,14 +293,13 @@ const serviceChoice = async (s: ImageService, b: GeoBounds, wantedMpp: number, t
 };
 
 /** A map service's picture of a frame, small: whether it has one there (not blank, black or white). */
-const hasPicture = async (url: string, b: GeoBounds, timeoutMs: number, signal?: AbortSignal) => {
+const hasPicture = async (url: string, svc: ImageService, b: GeoBounds, timeoutMs: number, signal?: AbortSignal) => {
   const ctrl = new AbortController();
   const stop = () => ctrl.abort();
   signal?.addEventListener("abort", stop, { once: true });
   const timer = setTimeout(stop, timeoutMs);
   try {
-    const q = new URLSearchParams({ bbox: mercatorBbox(b), bboxSR: "3857", imageSR: "3857", size: "64,64", format: "jpg", transparent: "false", f: "image" });
-    const res = await fetch(`${url}/export?${q}`, { signal: ctrl.signal });
+    const res = await fetch(serviceImageUrl(url, svc, mercatorBbox(b), 64, 64), { signal: ctrl.signal });
     const blob = res.ok ? await res.blob() : null;
     if (!blob || !blob.type.startsWith("image/")) return false;
     const img = await createImageBitmap(blob);
@@ -292,7 +321,7 @@ const hasPicture = async (url: string, b: GeoBounds, timeoutMs: number, signal?:
 const mapChoice = async (s: ImageService, b: GeoBounds, wantedMpp: number, timeoutMs: number, signal?: AbortSignal): Promise<PhotoChoice | null> => {
   for (const url of s.urls) {
     try {
-      if (!(await hasPicture(url, b, timeoutMs, signal))) return null;
+      if (!(await hasPicture(url, s, b, timeoutMs, signal))) return null;
       const c = { id: s.id, label: s.label, credit: s.credit, kind: s.kind, date: s.year ? String(s.year) : undefined, year: s.year, season: s.season, metersPerPx: s.metersPerPx, nir: false };
       return { ...c, score: photoScore(c, wantedMpp) };
     } catch (err) {
@@ -389,9 +418,8 @@ export const photoPreview = (b: GeoBounds, source: PhotoSourceId, sizePx = 256) 
   const box = { bbox: mercatorBbox(b), bboxSR: "3857", imageSR: "3857", size: `${w},${h}`, format: "jpg", f: "image" };
   if (source === "esri") return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?${new URLSearchParams(box)}`;
   const m = IMAGE_SERVICES.find(x => x.id === source);
-  if (m?.map) return `${m.urls[0]}/export?${new URLSearchParams(box)}`;
-  const s = IMAGE_SERVICES.find(x => x.id === source)!;
-  return `${s.urls[0]}/exportImage?${new URLSearchParams({ ...box, adjustAspectRatio: "false", ...(s.rgbBands ? { bandIds: s.rgbBands } : {}) })}`;
+  if (!m) return "";
+  return serviceImageUrl(m.urls[0], m, box.bbox, w, h, { bands: m.rgbBands });
 };
 
 /** A choice's date in words for the app: "Aug 2023", "2024", "Jun 2022 to Jul 2022". */

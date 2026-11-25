@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { GeoBounds, SITE_MIN_WIDTH_FT, selectionFromBounds } from "../lib/geo/core";
 import { MAP_IMAGERY_SOURCES, MapImagerySource, PICKER_LAYERS, STATE_ORTHO_SOURCES } from "../lib/geo/imagery";
+import { serviceImageUrl } from "../lib/geo/photoSources";
 import { fmtDist } from "../lib/units";
 import type { Units } from "../types";
 
@@ -213,7 +214,7 @@ export function SitePickerMap({
             const size = 256;
             const nw = L.CRS.EPSG3857.project(map.unproject(L.point(coords.x * size, coords.y * size), coords.z));
             const se = L.CRS.EPSG3857.project(map.unproject(L.point((coords.x + 1) * size, (coords.y + 1) * size), coords.z));
-            return `${src.services[0]}/${src.map ? "export" : "exportImage"}?bbox=${nw.x},${se.y},${se.x},${nw.y}&bboxSR=3857&imageSR=3857&size=${size},${size}&format=png&transparent=true&f=image`;
+            return serviceImageUrl(src.services[0], src, `${nw.x},${se.y},${se.x},${nw.y}`, size, size, { png: true });
           }
         });
         return new (OrthoLayer as any)("", {
