@@ -27,6 +27,9 @@ export const dkToken = (): string => {
     return "";
   }
 };
+/** Whether text could be a token (letters, digits, - and _, no spaces; 8 to 128 of them): what's
+ * typed or pasted is saved, and sent to Dataforsyningen, only then. */
+export const dkTokenLike = (text: string) => /^[A-Za-z0-9_-]{8,128}$/.test(text.trim());
 export const setDkToken = (token: string) => {
   try {
     if (token.trim()) localStorage.setItem(TOKEN_KEY, token.trim());

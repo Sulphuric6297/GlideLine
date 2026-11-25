@@ -3,7 +3,7 @@
 // is made up and lies off the coast; the height model is stubbed.
 import { type Page } from "@playwright/test";
 import { test, expect, course, importSite } from "./fixtures";
-import { inDenmark, toUtm32 } from "../../src/lib/geo/denmark";
+import { dkTokenLike, inDenmark, toUtm32 } from "../../src/lib/geo/denmark";
 import { serviceImageUrl } from "../../src/lib/geo/photoSources";
 import { LOOK_VARIANTS, regionAt } from "../../src/lib/treeMix";
 
@@ -58,6 +58,15 @@ const inDenmarkHere = async (page: Page, opts: { token?: boolean; busyFirst?: bo
 test("Denmark: where it is, UTM 32, the spring photo's WMS and the Danish kinds of trees (pure logic)", async () => {
   expect(inDenmark({ north: 55.7, south: 55.6, west: 12.5, east: 12.6 })).toBe(true);
   expect(inDenmark({ north: 39.8, south: 39.7, west: -89.7, east: -89.6 })).toBe(false);
+  // (by its outline, not a box: the towns just over each border are outside it)
+  const at = (lat: number, lon: number) => inDenmark({ north: lat + 0.004, south: lat - 0.004, west: lon - 0.007, east: lon + 0.007 });
+  const danish: [string, number, number][] = [["Aarhus", 56.16, 10.2], ["Skagen", 57.72, 10.59], ["Helsingør", 56.03, 12.61], ["Gedser", 54.57, 11.93], ["Tønder", 54.93, 8.86], ["Rømø", 55.09, 8.57], ["Sønderborg", 54.91, 9.79], ["Ærø", 54.85, 10.52], ["Læsø", 57.27, 11.0], ["Anholt", 56.7, 11.57], ["Rønne, Bornholm", 55.1, 14.7], ["Blåvand", 55.56, 8.1]];
+  const abroad: [string, number, number][] = [["Gothenburg", 57.7, 11.97], ["Varberg", 57.1, 12.25], ["Helsingborg", 56.05, 12.69], ["Malmö", 55.6, 13.0], ["Flensburg", 54.78, 9.43], ["Sylt", 55.02, 8.43], ["Fehmarn", 54.5, 11.1], ["Kiel", 54.32, 10.14], ["Ystad", 55.43, 13.82]];
+  for (const [name, lat, lon] of danish) expect(at(lat, lon), name).toBe(true);
+  for (const [name, lat, lon] of abroad) expect(at(lat, lon), name).toBe(false);
+  // (what could be a token, and what's typed or pasted by mistake)
+  for (const t of ["test-token", "0123456789abcdef0123456789abcdef", " abcd1234EFGH "]) expect(dkTokenLike(t), t).toBe(true);
+  for (const t of ["", "short", "my password is hunter2", "https://dataforsyningen.dk/", "a b c d e f g h"]) expect(dkTokenLike(t), t).toBe(false);
   // (on the zone's middle meridian: 500 km east; either side of it, mirrored)
   expect(toUtm32(56, 9).x).toBeCloseTo(500000, 3);
   const e = toUtm32(56, 10).x - 500000, w = 500000 - toUtm32(56, 8).x;
@@ -85,7 +94,13 @@ test("in Denmark the import asks for a Dataforsyningen token; saved, it shows Sa
   // (no token: the ground as anywhere, no measured trees)
   await expect(page.getByTestId("bring-ground")).not.toContainText("DHM");
   await expect(page.getByTestId("bring-lidar")).toHaveCount(0);
+  // (a sentence pasted by mistake is no token: nothing saved, and it says so)
+  await row.getByPlaceholder("Token").fill("not a token, a sentence");
+  await row.getByPlaceholder("Token").press("Enter");
+  await expect(row.getByTestId("dk-token-bad")).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("glideline-dk-token"))).toBeNull();
   await row.getByPlaceholder("Token").fill("test-token");
+  await expect(row.getByTestId("dk-token-bad")).toHaveCount(0);
   await row.getByPlaceholder("Token").press("Enter");
   await expect(row).toContainText("Saved");
   expect(await page.evaluate(() => localStorage.getItem("glideline-dk-token"))).toBe("test-token");
@@ -96,6 +111,12 @@ test("in Denmark the import asks for a Dataforsyningen token; saved, it shows Sa
   await expect(row.getByPlaceholder("Token")).toBeVisible();
   await row.getByPlaceholder("Token").press("Escape");
   await expect(row).toContainText("Saved");
+  // Remove: the token gone from the browser, the field back, the ground as anywhere again
+  await row.getByTestId("dk-token-remove").click();
+  await expect(row.getByPlaceholder("Token")).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("glideline-dk-token"))).toBeNull();
+  await expect(page.getByTestId("bring-ground")).not.toContainText("DHM");
+  await expect(page.getByTestId("bring-lidar")).toHaveCount(0);
 });
 
 test("a site in Denmark comes in on Danmarks Højdemodel: its ground, and the trees standing on it (asked for in pieces, a timed-out one asked again)", async ({ page }) => {

@@ -81,7 +81,8 @@ export const IMAGE_SERVICES: ImageService[] = [
     urls: [`${DATAFORSYNINGEN}/orto_foraar_DAF`],
     metersPerPx: 0.125,
     maxPx: 4000,
-    season: "mixed",
+    // (flown in spring before the leaves are out, as the states' own are: no canopy is read off it)
+    season: "leaf-off",
     map: true,
     wms: { layer: "orto_foraar", dkToken: true },
     read: () => ({})

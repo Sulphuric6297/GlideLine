@@ -11,7 +11,7 @@ import type { MapImagerySource } from "../lib/geo/imagery";
 import { findSiteOutline, type SiteOutline } from "../lib/geo/parks";
 import { lidarCoverage } from "../lib/geo/lidarFetch";
 import { inUS } from "../lib/geo/usgov";
-import { DK_TOKEN_PAGE, dkToken, inDenmark, onDkToken, setDkToken } from "../lib/geo/denmark";
+import { DK_TOKEN_PAGE, dkToken, dkTokenLike, inDenmark, onDkToken, setDkToken } from "../lib/geo/denmark";
 import { photoChoices, photoDateText, photoFeetPerPx, type PhotoChoice } from "../lib/geo/photoSources";
 import { importSite, signOf, type ImportedSite, type ImportLayer, type SourceId, type SourceStatus } from "../lib/importSite";
 import { GROUPS, KINDED, SOURCES, kindCounts, reviewedSite, sharedBuildings, sourceCounts, sourceOf, startsOn, withoutLeft, type LeftOut, type ReviewOpts, type SourceKey } from "../lib/importReview";
@@ -146,12 +146,19 @@ const cardSwitch: SwitchRow = o => (
   </div>
 );
 
-/** Denmark's maps' token (Dataforsyningen): a field until one is saved, then Saved · Change. */
+/** Denmark's maps' token (Dataforsyningen): a field until one is saved, then Saved · Change ·
+ * Remove. Only text that could be a token is saved (a sentence or a link pasted by mistake isn't,
+ * and says so). */
 function DkTokenRow({ token, touch }: { token: string; touch: boolean }) {
   const [editing, setEditing] = useState(!token);
   const [text, setText] = useState("");
   useEffect(() => { if (!token) setEditing(true); }, [token]);
-  const save = (v: string) => { if (!v.trim()) return; setDkToken(v); setText(""); setEditing(false); };
+  const [bad, setBad] = useState(false);
+  const save = (v: string) => {
+    if (!v.trim()) return;
+    if (!dkTokenLike(v)) { setBad(true); return; }
+    setBad(false); setDkToken(v); setText(""); setEditing(false);
+  };
   const link = touch ? "min-h-[44px] inline-flex items-center" : "";
   return (
     <div className="w-full flex flex-col gap-1.5 rounded-[13px] bg-white/[0.06] ring-1 ring-white/[0.08] p-2.5" data-testid="dk-token">
@@ -159,16 +166,17 @@ function DkTokenRow({ token, touch }: { token: string; touch: boolean }) {
         <label className="text-[12px] font-semibold text-zinc-300" htmlFor="dk-token-input">Dataforsyningen token</label>
         {editing
           ? <a className={`text-[12.5px] text-[#a2cf6a] hover:text-[#b3db80] ${link}`} href={DK_TOKEN_PAGE} target="_blank" rel="noreferrer">Get a free token</a>
-          : <span className="inline-flex items-center gap-3"><span className="text-[12.5px] text-zinc-400">Saved</span><button type="button" className={`text-[12.5px] text-[#a2cf6a] hover:text-[#b3db80] ${link}`} onClick={() => setEditing(true)} data-testid="dk-token-change">Change</button></span>}
+          : <span className="inline-flex items-center gap-3"><span className="text-[12.5px] text-zinc-400">Saved</span><button type="button" className={`text-[12.5px] text-[#a2cf6a] hover:text-[#b3db80] ${link}`} onClick={() => setEditing(true)} data-testid="dk-token-change">Change</button><button type="button" className={`text-[12.5px] text-zinc-400 hover:text-zinc-200 ${link}`} onClick={() => setDkToken("")} data-testid="dk-token-remove">Remove</button></span>}
       </div>
       {editing && (
         <div className="flex gap-1.5">
-          <input id="dk-token-input" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") save(text); if (e.key === "Escape" && token) { setText(""); setEditing(false); } }} onBlur={() => save(text)}
+          <input id="dk-token-input" value={text} onChange={e => { setText(e.target.value); setBad(false); }} aria-invalid={bad} aria-describedby={bad ? "dk-token-bad" : undefined} onKeyDown={e => { if (e.key === "Enter") save(text); if (e.key === "Escape" && token) { setText(""); setEditing(false); } }} onBlur={() => save(text)}
             placeholder="Token" autoComplete="off" spellCheck={false}
             className="flex-1 min-w-0 h-9 touch:h-11 text-[13px] touch:text-[16px] rounded-[10px] bg-black/30 ring-1 ring-white/10 px-3 text-zinc-100 placeholder:text-zinc-500 outline-none focus:ring-[#a2cf6a]/60" />
           {touch && <button type="button" className="h-11 px-4 rounded-[10px] bg-white/[0.1] text-[14px] font-semibold text-zinc-100" onClick={() => void navigator.clipboard?.readText().then(save).catch(() => {})} data-testid="dk-token-paste">Paste</button>}
         </div>
       )}
+      {editing && bad && <div id="dk-token-bad" role="alert" className="text-[12px] touch:text-[13px] text-amber-300" data-testid="dk-token-bad">That isn't a token. Copy it from your Dataforsyningen account.</div>}
     </div>
   );
 }

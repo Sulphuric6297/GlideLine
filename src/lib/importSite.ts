@@ -834,7 +834,8 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     const groundLabel = cached("groundLabel", boundsKey(bounds), () => usgsGroundLabel(bounds)).value.catch(() => null);
     const elevationJob = soft("elevation", async () => {
       progress.set("elevation", { state: "coming" });
-      const got = cached("elevation", `${here}|${samplesX}x${samplesY}`, () => fetchBestElevationGrid(location, width, height, samplesX, samplesY), { signal });
+      // (kept apart with a Danish token and without: the ground is then the height model's)
+      const got = cached("elevation", `${inDenmark(bounds) && dkToken() ? "dhm|" : ""}${here}|${samplesX}x${samplesY}`, () => fetchBestElevationGrid(location, width, height, samplesX, samplesY), { signal });
       const elev = await untilAborted(got.value, signal);
       const heights = heightsFromSamples(elev.values, samplesX, samplesY, elev.min, width, height, grid);
       const label = elev.source.startsWith("USGS") ? await Promise.race([groundLabel, new Promise<null>(r => setTimeout(() => r(null), 2000))]) : null;
@@ -878,7 +879,10 @@ export const importSite = async (selection: SiteSelection, opts: ImportOptions):
     const natureJob = !wantsPhotoTrees ? Promise.resolve(null) : (async () => {
       const [map, measured] = await Promise.all([photoJob, lidarJob]);
       if (!map || !satellite || /OpenStreetMap/.test(map.sourceLabel)) { progress.set("photoTrees", { state: "not-here" }); return null; }
-      const waterOnly = !!measured?.lidar.trees.length || !!opts.surveyed;
+      // (Denmark's height model asked for and not answering (a token it refuses, a site just past its
+      // edge): nothing was measured, so the photo's trees come in as they would with no survey)
+      const dhmMissed = !measured && inDenmark(bounds) && !!dkToken();
+      const waterOnly = !!measured?.lidar.trees.length || (!!opts.surveyed && !dhmMissed);
       // (a survey flown bare, a photo taken in leaf: its canopy too, for the trees the survey missed;
       // under a bare photo, the best one of the site's taken in leaf, only to find them on)
       const bare = !!measured?.lidar.trees.length && measured.lidar.measured.leafOn !== true;
