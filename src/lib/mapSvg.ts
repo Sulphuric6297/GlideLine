@@ -773,7 +773,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const len = pathLength(line);
       // (the classic main line ends as it did; the painted ones, and any line run to the basket, at its putting circle)
       // (`alone`: another tee's line that goes to the basket by itself, its tip clear of the main line's arrowhead)
-      const toBasket = main || alone || (!classic && s.linesMeet === "alongside" && dist(line[line.length - 1], basket) < short + px(4));
+      const toBasket = main || alone;
       // (a line of its own stops at the putting circle, clear of the main line's arrowhead; `aimed` has it come in aimed at the basket)
       // (the painted looks' arrowhead goes with its line's width, a little bigger for it on a thin line)
       const al = (classic ? (9 / k) * Math.sqrt(ls.width * weight) * (alone ? 0.65 : 1) : (9.5 / k) * Math.sqrt(ls.width * weight) * (main ? 1 : 0.78)) * headSize;
@@ -846,7 +846,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     // as drawn, as far along it)
     // (`taken`: where lines joined this hole's lines already; another joins a little before or
     // after, never on the same spot, which would knot)
-    const joinOnto = (truth: P[], trunks: P[][], clear: number, shows?: P[][], taken?: P[]): { path: P[]; alone: boolean; rest?: P[]; host?: number } | null => {
+    const joinOnto = (truth: P[], trunks: P[][], clear: number, shows?: P[][], taken?: P[], anyAngle = false): { path: P[]; alone: boolean; rest?: P[]; host?: number } | null => {
       const nearOn = (t: P[], q: P) => { let best = { point: q, distance: Infinity, i: 1 }; for (let i = 1; i < t.length; i++) { const m = nearestOnSegment(q, t[i - 1], t[i]); if (m.distance < best.distance) best = { ...m, i }; } return best; };
       const all = truth.map(q => trunks.map(t => nearOn(t, q).distance)), last = truth.length - 1;
       if (all.every(ds => Math.min(...ds) < px(9))) return null;
@@ -897,7 +897,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const tb = { x: Math.cos(B.angle), y: Math.sin(B.angle) }, b = B.point, h = dist(A, b) * 0.4;
       // (the painted looks: only where it comes in along the line, within 22 degrees of its own way and
       // of the line's, 34 in all; a line that would have to turn to it goes its own way to the basket, as it plays)
-      if (!classicLook) {
+      if (!classicLook && !anyAngle) {
         const chord = Math.atan2(b.y - A.y, b.x - A.x);
         if (Math.abs(turn(Math.atan2(ta.y, ta.x), chord)) > 0.38 || Math.abs(turn(chord, B.angle)) > 0.38 || Math.abs(turn(Math.atan2(ta.y, ta.x), B.angle)) > 0.6) return { path: truth, alone: true };
       }
@@ -943,6 +943,8 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const trunks: P[][] = mainTee?.noLine ? [] : [line];
       // (how wide each is drawn; and each other tee's line's color, to lay the lines down the last first)
       const widths: number[] = mainTee?.noLine ? [] : [mainW], laid: string[][] = [];
+      // (run beside the main line: how many lanes are taken on each side of it)
+      const lanes: Record<number, number> = {};
       // (each of them as plotted: what tells where another line gets onto it)
       const plots: P[][] = mainTee?.noLine ? [] : [plotted];
       const joins: P[] = [];
@@ -959,7 +961,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
         let along = Array.from({ length: Math.ceil(ownLen / step) + 1 }, (_, i) => pointAlong(own, Math.min(ownLen, i * step)).point);
         let alone = false, onto = -1;
         const W2 = px((classicLook ? 2 : 2.2) * ls.width * weight), from = fills.length;
-        if (s.linesMeet === "alongside") {
+        if (s.linesMeet === "alongside" && classicLook) {
           // (pushed off the hole's line to lie beside it, on the side it comes from)
           const off = mainW / 2 + px((look === "classic" ? 2 : 2.6) * ls.width) / 2 + px(1.8);
           const nearest = (q: P) => { let best = { point: line[0], distance: Infinity, i: 0 }; for (let i = 1; i < line.length; i++) { const m = nearestOnSegment(q, line[i - 1], line[i]); if (m.distance < best.distance) best = { ...m, i }; } return best; };
@@ -977,8 +979,40 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
           if (along.length < 2 || pathLength(along) < px(6)) continue;
         } else {
           // (joined outside the putting circle and short of the arrowhead: inside it, only arrowheads)
-          const j = classicLook ? joinOnto(along, trunks, clearOf) : joinOnto(along, plots, clearOf, trunks, joins);
+          // Run beside it (the painted looks): the line it plays, as plotted, till it gets onto the main
+          // line; from there in a lane of its own beside that line, on the side it came from, never
+          // across it, a second tee's in the next lane out; ending together just short of the main
+          // line's arrowhead. A tee with its own way to the basket keeps it, as when lines join.
+          const beside = s.linesMeet === "alongside" && !classicLook && !mainTee?.noLine;
+          let track: P[] | null = null, side = 1, lane = 1;
+          if (beside) {
+            const offOf = (t: P[], q: P) => { let m = Infinity; for (let i = 1; i < t.length; i++) m = Math.min(m, nearestOnSegment(q, t[i - 1], t[i]).distance); return m; };
+            const sideAt = (q: P) => { let best = Infinity, sg = 1; for (let i = 1; i < line.length; i++) { const m = nearestOnSegment(q, line[i - 1], line[i]); if (m.distance < best) { best = m.distance; const a = line[i - 1], b2 = line[i]; sg = Math.sign((b2.x - a.x) * (q.y - a.y) - (b2.y - a.y) * (q.x - a.x)) || 1; } } return sg; };
+            // (the side it comes from: where it is a little before it gets onto the line, clear of it)
+            let t = along.length;
+            while (t > 0 && offOf(plotted, along[t - 1]) <= px(6)) t--;
+            let i0 = Math.max(0, t - 1), back = 0;
+            while (i0 > 0 && back < px(160) && (back < px(50) || offOf(line, along[i0]) < px(4))) { back += dist(along[i0], along[i0 - 1]); i0--; }
+            side = sideAt(along[i0]);
+            lane = (lanes[side] ?? 0) + 1;
+            const gap = px(1.7), offLane = mainW / 2 + gap + W2 / 2 + (lane - 1) * (W2 + gap);
+            track = offsetPath(densify(line, px(3)), () => side * offLane);
+          }
+          const j = classicLook ? joinOnto(along, trunks, clearOf) : track ? joinOnto(along, [plotted], clearOf, [track], undefined, true) : joinOnto(along, plots, clearOf, trunks, joins);
           if (!j || j.path.length < 2 || pathLength(j.path) < px(6)) continue;
+          if (track && !j.alone) {
+            lanes[side] = lane;
+            // (level with where the main line's arrowhead starts; with none, where the main line ends)
+            const L = pathLength(line), head = mainLs.arrow && s.arrowLook !== "none" ? (9.5 / k) * Math.sqrt(mainLs.width * weight) * headSize * 1.15 : 0;
+            const endAt = head ? L - ownEnd - head : atBasket ? L - 4 / k : L - ownEnd;
+            const rest = j.rest ?? [], keep = pathLength(rest) - pathLength(track) * (1 - endAt / (L || 1));
+            along = [...j.path, ...(keep > 0 ? trimPath(rest, 0, keep) : [])];
+            drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path: along, half: W2 / 2 });
+            drawLine(along, { ...ls, arrow: false }, false, o, basket);
+            if (ls.distance && s.distances && !(focus && st.holeId !== focus)) ownDistances.push({ id: `dist:${st.holeId}:${tee.id}`, path: along, text: `${fmtDist(pathLength(played), doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, color: ls.color, o });
+            laid.push(fills.splice(from));
+            continue;
+          }
           alone = j.alone;
           onto = j.host ?? -1;
           const mine = alone ? swept(j.path, sweep) : j.path;

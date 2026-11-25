@@ -490,6 +490,37 @@ test("the Lines tool: Line look, each tee's line set its own way, and where line
   await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === redTee.id).noLine).toBeUndefined();
 });
 
+plain("Run beside it, painted: another tee's line follows its own route, then keeps a steady lane on the side it came from, never across the main line, and ends just short of its arrowhead", () => {
+  const doc = sample();
+  const [h1] = doc.holes;
+  doc.style.theme = "forest";
+  doc.style.throwLines = true;
+  doc.style.circle = true;
+  doc.style.lineLook = "painted";
+  doc.style.linesMeet = "alongside";
+  // (hole 1 along y = 500 from (100, 500) to (450, 500), a turn at (300, 500); a red tee 40 ft
+  // below it plays through that turn, so from there it shares the main line's route)
+  h1.doglegs = [{ x: 300, y: 500 }];
+  const base = { ...doc, items: [...doc.items, createTee(h1.id, { x: 160, y: 540 }, "red")] };
+  const view = { cx: 300, cy: 450, rotation: 0, scale: 1.5, width: 900, height: 700 };
+  const svg = renderMapLayers(base, view, { stats: base.holes.map(h => holeStats(base, h)), contours: null, hillshade: null, textScale: 1, fontFamily: base.style.font, labelAt: {} }, "t").svg;
+  const red = [...svg.matchAll(new RegExp(`<path d="([^"]+)" fill="none" stroke="${EARTH.red}" stroke-width`, "g"))].map(m => m[1].split(/[ML]/).filter(Boolean).map(q => { const [x, y] = q.split(" ").map(Number); return { x, y }; }))[0];
+  plainExpect(red.length).toBeGreaterThan(20);
+  // (it starts at its tee, heading for the turn)
+  plainExpect(dist(red[0], { x: 160, y: 540 })).toBeLessThan(1);
+  // (never across the main line: always on the side it came from)
+  plainExpect(Math.min(...red.map(q => q.y))).toBeGreaterThan(500.5);
+  // (in its lane past the turn: the same few px off the main line all the way, 4.4 px at this scale)
+  const lane = red.filter(q => q.x > 345).map(q => q.y - 500);
+  plainExpect(lane.length).toBeGreaterThan(8);
+  plainExpect(Math.min(...lane)).toBeGreaterThan(2.5);
+  plainExpect(Math.max(...lane)).toBeLessThan(3.4);
+  // (and it ends short of the main line's arrowhead, which starts at the putting circle)
+  const end = red[red.length - 1];
+  plainExpect(450 - end.x).toBeGreaterThan(CIRCLE_ONE_FT + 4);
+  plainExpect(450 - end.x).toBeLessThan(CIRCLE_ONE_FT + 16);
+});
+
 plain("painted throw lines: each stops at its putting circle aimed at the basket; arrowheads, weight, where lines end and one tee's line off a hole change the drawing; Classic takes none of it unasked", () => {
   const doc = sample();
   const [h1] = doc.holes;
