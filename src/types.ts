@@ -235,6 +235,10 @@ export interface AreaItem extends BaseItem {
   bushes?: number;
   density?: number;
   heights?: [number, number];
+  /** Its heights hold for every tree in it: the measured ones it keeps too, and its treetops on
+   * the painted map (set along with them from its panel). Unset on a wood whose heights are from
+   * before that: only the trees it grows in 3D, as it was drawn then. */
+  heightsAll?: true;
   /** Underbrush beneath its trees: bushes and young trees, light to heavy (unset: none). */
   underbrush?: "light" | "medium" | "heavy";
   /** What the underbrush is: a mix (unset), thicket shrubs, briars and thorns, or weeds. */

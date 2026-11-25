@@ -1059,11 +1059,11 @@ export const playClearing = (doc: Pick<CourseDoc, "lidar" | "holes">) => {
 /** Whether a hole's trees are cleared for play: its own switch, or the course's. */
 export const holeClears = (doc: Pick<CourseDoc, "lidar">, hole: Pick<Hole, "clearTrees">) => hole.clearTrees ?? doc.lidar?.clearFairways === true;
 
-/** The woods that set their trees' heights (shortest and tallest, ft), each with its outline as
- * drawn; and what tells one course's from another's. */
+/** The woods that set every tree's height in them (shortest and tallest, ft; `heightsAll`), each
+ * with its outline as drawn; and what tells one course's from another's. */
 export type HeightWoods = { pts: P[]; box: ReturnType<typeof boundsOf>; heights: [number, number] }[];
 export const heightWoods = (items: CourseItem[]): HeightWoods =>
-  (items.filter(i => i.type === "area" && i.kind === "woods" && !!i.heights && i.points.length >= 3) as AreaItem[]).map(a => {
+  (items.filter(i => i.type === "area" && i.kind === "woods" && !!i.heights && i.heightsAll === true && i.points.length >= 3) as AreaItem[]).map(a => {
     const pts = drawnAreas([a])[0].points;
     return { pts, box: boundsOf(pts), heights: a.heights! };
   });

@@ -436,11 +436,11 @@ export const densityFor = (t: Thick) => (t === "sparse" ? 0.5 : t === "thick" ? 
 /** A wood's tree heights, the shortest and the tallest (ft): its own, or as woods grow. */
 export const heightsOf = (a: Pick<AreaItem, "heights">): [number, number] => a.heights ?? WOODS_HEIGHTS;
 /** One end set (0 the shortest, 1 the tallest): the other moves to stay clear of it; as woods grow
- * anyway, nothing is kept. */
-export const heightsWith = (a: Pick<AreaItem, "heights">, end: 0 | 1, v: number): Pick<AreaItem, "heights"> => {
+ * anyway, nothing is kept. Set here, they hold for every tree in the wood (`heightsAll`). */
+export const heightsWith = (a: Pick<AreaItem, "heights">, end: 0 | 1, v: number): Pick<AreaItem, "heights" | "heightsAll"> => {
   const [lo, hi] = heightsOf(a);
   const next: [number, number] = end ? [Math.min(lo, v - WOODS_HEIGHT_GAP), v] : [v, Math.max(hi, v + WOODS_HEIGHT_GAP)];
-  return { heights: next[0] === WOODS_HEIGHTS[0] && next[1] === WOODS_HEIGHTS[1] ? undefined : next };
+  return next[0] === WOODS_HEIGHTS[0] && next[1] === WOODS_HEIGHTS[1] ? { heights: undefined, heightsAll: undefined } : { heights: next, heightsAll: true };
 };
 /** The shortest's and the tallest's own ranges (each leaves room for the other). */
 export const HEIGHT_ENDS = [
@@ -514,7 +514,7 @@ function WoodsSettings({ item }: { item: AreaItem }) {
           <div data-testid="woods-heights" className="[&>div:last-of-type]:mb-0">
             {HEIGHT_ENDS.map(e => <Slider key={e.id} label={e.label} min={e.min} max={e.max} step={1} value={tall[e.end]} onChange={v => set(heightsWith(item, e.end, v), false)} onDone={commit} format={v => fmtSize(v, u)} />)}
           </div>
-          {item.heights && <button type="button" className="mt-1 text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1 touch:min-h-[44px]" onClick={() => set({ heights: undefined })} data-testid="woods-heights-reset"><RotateCcw size={12} /> Reset</button>}
+          {item.heights && <button type="button" className="mt-1 text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1 touch:min-h-[44px]" onClick={() => set({ heights: undefined, heightsAll: undefined })} data-testid="woods-heights-reset"><RotateCcw size={12} /> Reset</button>}
         </Field>
       )}
       {!brushOnly && (

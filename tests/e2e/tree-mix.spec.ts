@@ -48,6 +48,7 @@ test("a wood's Tree height: Minimum and Maximum in its panel keep every tree it 
     return out;
   });
   const own = async () => (await course(page)).items.find((i: any) => i.id === id).heights;
+  const all = async () => (await course(page)).items.find((i: any) => i.id === id).heightsAll;
   // As woods grow: 16 to 80 ft, nothing kept on the wood, no Reset
   await expect.poll(async () => (await tops()).length, { timeout: 30_000 }).toBeGreaterThan(50);
   const usual = await tops();
@@ -62,6 +63,8 @@ test("a wood's Tree height: Minimum and Maximum in its panel keep every tree it 
   await min.fill("20");
   await min.blur();
   await expect.poll(own).toEqual([20, 35]);
+  // (and they hold for every tree in it, the measured ones too)
+  expect(await all()).toBe(true);
   await expect.poll(async () => { const h = await tops(); return h.length > 50 && Math.min(...h) >= 20 && Math.max(...h) <= 35 && Math.min(...h) < 24 && Math.max(...h) > 31; }, { timeout: 30_000 }).toBe(true);
   // Never crossing: the minimum taken past the maximum takes it along, 5 ft over
   await min.fill("60");
@@ -75,6 +78,7 @@ test("a wood's Tree height: Minimum and Maximum in its panel keep every tree it 
   await expect.poll(own).toEqual([60, 65]);
   await panel.getByTestId("woods-heights-reset").click();
   await expect.poll(own).toBeUndefined();
+  expect(await all()).toBeUndefined();
   await expect(min).toHaveValue("16");
   await expect.poll(async () => { const h = await tops(); return h.length > 50 && Math.max(...h) > 66; }, { timeout: 30_000 }).toBe(true);
   // (set back to the usual by hand: nothing kept on the wood either)
@@ -85,9 +89,11 @@ test("a wood's Tree height: Minimum and Maximum in its panel keep every tree it 
 });
 
 plain("measured trees in a wood with tree heights of its own come within them: a taller one down to the tallest, a shorter one up to the shortest, its crown with it; the rest as measured", () => {
-  const wood = { id: "w", type: "area", kind: "woods", x: 50, y: 50, rotation: 0, points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }], heights: [20, 40] } as unknown as CourseItem;
-  const woods = heightWoods([wood, { ...wood, id: "plain", heights: undefined } as unknown as CourseItem]);
+  const wood = { id: "w", type: "area", kind: "woods", x: 50, y: 50, rotation: 0, points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }], heights: [20, 40], heightsAll: true } as unknown as CourseItem;
+  // (a wood with none, and one whose heights are from before they held for measured trees: left as they were)
+  const woods = heightWoods([wood, { ...wood, id: "plain", heights: undefined } as unknown as CourseItem, { ...wood, id: "before", heights: [5, 10], heightsAll: undefined } as unknown as CourseItem]);
   plainExpect(woods).toHaveLength(1);
+  plainExpect(woods[0].heights).toEqual([20, 40]);
   const tall: LidarTree = [50, 50, 70, 12, 0], short: LidarTree = [30, 60, 8, 4, 1], fits: LidarTree = [60, 40, 30, 8, 0], outside: LidarTree = [150, 50, 70, 12, 0];
   const down = inHeights(tall, woods), up = inHeights(short, woods);
   plainExpect(down[2]).toBeGreaterThan(36.9);
