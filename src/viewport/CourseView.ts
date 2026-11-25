@@ -4020,9 +4020,9 @@ export class CourseView {
           return g;
         }
         if (a.kind === "water") {
-          // Water lies flat at the level of its banks nearby (a pond level, a river sloping down its
-          // length), worked out from the ground as measured; under it the ground is a bed shelving
-          // from the bank (lib/waterBed), so no tall spot the survey guessed at breaks it
+          // Still water lies flat, at one level all over (a river at the level of its banks nearby,
+          // sloping down its length), worked out from the ground as measured; under it the ground is
+          // a bed shelving from the bank (lib/waterBed), so no tall spot the survey guessed at breaks it
           const cell = doc.gridSize || 20;
           // (only on the site: a lake's outline the maps hand over can run past its edges)
           const pts = waterOutline(a.points, doc.canvas);
