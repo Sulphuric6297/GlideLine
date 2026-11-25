@@ -473,7 +473,7 @@ test("the Lines tool: Line look, each tee's line set its own way, and where line
   await all.getByRole("radio", { name: "As plotted" }).click();
   await expect.poll(async () => { const s = await style(); return [s.lineEnd, s.lineBends]; }).toEqual(["basket", "plotted"]);
   await all.getByRole("radio", { name: "At the putting circle" }).click();
-  await all.getByRole("radio", { name: "Sweeping" }).click();
+  await all.getByRole("radio", { name: "Smoothed" }).click();
   await expect.poll(async () => { const s = await style(); return [s.lineEnd, s.lineBends]; }).toEqual([undefined, undefined]);
   // (Classic draws its lines as it always did: no Lines end or Bends for it)
   await lines.getByTestId("line-look-classic").click();

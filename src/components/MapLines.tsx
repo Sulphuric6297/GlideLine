@@ -70,27 +70,6 @@ export function MapLines() {
     <div className="mt-3" data-testid="map-lines">
       <div className="text-xs touch:text-[13px] text-zinc-400 mb-1.5">Line look</div>
       <Thumbs label="Line look" testid="line-look" cols={3} items={LOOKS.map(l => ({ id: l.id, label: l.label, img: `${base}parts/lines-${l.id}.jpg`, on: look === l.id, pick: () => setStyle({ lineLook: l.id === "classic" ? undefined : l.id }) }))} />
-      {/* (every line at once: its weight, its arrowhead, where it stops and how its bends are drawn) */}
-      <div data-testid="lines-all">
-        <StyleSlider k="lineWeight" label="Line weight" min={0.6} max={1.8} step={0.05} value={s.lineWeight ?? 1} format={v => `${Math.round(v * 100)}%`} live />
-        <Field label="Arrowheads">
-          <Segmented label="Arrowheads" value={s.arrowLook ?? (look === "classic" ? "triangle" : "leaf")} onChange={v => setStyle({ arrowLook: v === (look === "classic" ? "triangle" : "leaf") ? undefined : v })}
-            options={[{ value: "leaf", label: "Leaf", title: "A painted head, shaped like a leaf" }, { value: "triangle", label: "Triangle", title: "A plain filled head" }, { value: "open", label: "Open", title: "Two strokes from the tip" }, { value: "none", label: "None", title: "No arrowheads: each line ends plain" }]} />
-        </Field>
-        {s.arrowLook !== "none" && <StyleSlider k="arrowSize" label="Arrowhead size" min={0.5} max={2} step={0.05} value={s.arrowSize ?? 1} format={v => `${Math.round(v * 100)}%`} live />}
-        {look !== "classic" && (
-          <>
-            <Field label="Lines end">
-              <Segmented label="Lines end" value={s.lineEnd ?? "circle"} onChange={v => setStyle({ lineEnd: v === "basket" ? "basket" : undefined })}
-                options={[{ value: "circle", label: "At the putting circle", title: "Every line stops at the basket's circle, aimed at the basket" }, { value: "basket", label: "At the basket", title: "Every line runs on to the basket" }]} />
-            </Field>
-            <Field label="Bends">
-              <Segmented label="Line bends" value={s.lineBends ?? "swept"} onChange={v => setStyle({ lineBends: v === "plotted" ? "plotted" : undefined })}
-                options={[{ value: "swept", label: "Sweeping", title: "Bends drawn wide, as a disc flies them, staying on the fairway" }, { value: "plotted", label: "As plotted", title: "Through each bend exactly where it was put" }]} />
-            </Field>
-          </>
-        )}
-      </div>
       {doc.layouts.length > 1 && (
         <Field label="Main layout" hint="Drawn on top, with the distances. The other tees' lines join it.">
           <ChipPick label="Main layout" testid="map-layout" value={mapLayout.id} onChange={v => setStyle({ mapLayout: v })}
@@ -103,6 +82,27 @@ export function MapLines() {
             options={[{ value: "join", label: "Join the main line", title: "Each stops where it meets the main line" }, { value: "alongside", label: "Run beside it", title: "Each runs beside the main line to the basket" }]} />
         </Field>
       )}
+      {/* (every line at once: where it stops and how its bends are drawn, then its weight and its arrowhead) */}
+      <div data-testid="lines-all">
+        {look !== "classic" && (
+          <>
+            <Field label="Lines end">
+              <Segmented label="Lines end" value={s.lineEnd ?? "circle"} onChange={v => setStyle({ lineEnd: v === "basket" ? "basket" : undefined })}
+                options={[{ value: "circle", label: "At the putting circle", title: "Every line stops at the basket's circle, aimed at the basket" }, { value: "basket", label: "At the basket", title: "Every line runs on to the basket" }]} />
+            </Field>
+            <Field label="Bends">
+              <Segmented label="Line bends" value={s.lineBends ?? "swept"} onChange={v => setStyle({ lineBends: v === "plotted" ? "plotted" : undefined })}
+                options={[{ value: "swept", label: "Smoothed", title: "Bends drawn wide, as a disc flies them, staying on the fairway" }, { value: "plotted", label: "As plotted", title: "Through each bend exactly where it was put" }]} />
+            </Field>
+          </>
+        )}
+        <StyleSlider k="lineWeight" label="Line weight" min={0.6} max={1.8} step={0.05} value={s.lineWeight ?? 1} format={v => `${Math.round(v * 100)}%`} live />
+        <Field label="Arrowheads">
+          <Segmented label="Arrowheads" value={s.arrowLook ?? (look === "classic" ? "triangle" : "leaf")} onChange={v => setStyle({ arrowLook: v === (look === "classic" ? "triangle" : "leaf") ? undefined : v })}
+            options={[{ value: "leaf", label: "Leaf", title: "A painted head, shaped like a leaf" }, { value: "triangle", label: "Triangle", title: "A plain filled head" }, { value: "open", label: "Open", title: "Two strokes from the tip" }, { value: "none", label: "None", title: "No arrowheads: each line ends plain" }]} />
+        </Field>
+        {s.arrowLook !== "none" && <StyleSlider k="arrowSize" label="Arrowhead size" min={0.5} max={2} step={0.05} value={s.arrowSize ?? 1} format={v => `${Math.round(v * 100)}%`} live />}
+      </div>
       <div className="text-xs touch:text-[13px] text-zinc-400 mb-1.5">Each tee's line</div>
       <div className="rounded-[16px] bg-white/[0.06] overflow-hidden mb-3">
         {levels.map(l => {
