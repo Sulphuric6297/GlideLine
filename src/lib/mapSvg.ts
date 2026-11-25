@@ -739,8 +739,32 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     };
     /** One line, every setting of it: `main` with its arrowhead and the map's own trims. Its shadow
      * and outline into `unders`, its color into `fills`. */
-    // (`tuck`: its end under another line's arrowhead, with none of its own)
-    const drawLine = (line: P[], ls0: ReturnType<typeof lineStyleOf>, main: boolean, o: number, basket: P, alone = false, tuck = false) => {
+    /** A line that comes to the basket where `host` does: over its last stretch it runs into that
+     * line at the base of its arrowhead, in one shallow curve, and ends there under it (no stub
+     * left beside the arrowhead). `gap`: how far apart the two come in. */
+    const tuckInto = (truth: P[], host: P[], gap: number): { path: P[]; rest: P[] } => {
+      const hostLen = pathLength(host), len = pathLength(truth), headLen = (9.5 / k) * Math.sqrt(weight) * headSize;
+      const hostAt = Math.max(hostLen * 0.3, hostLen - ownEnd - headLen * 0.7);
+      const from = Math.max(0, len - ownEnd - Math.min(len * 0.6, Math.max(px(45), gap * 9)));
+      const A = pointAlong(truth, from), B = pointAlong(host, hostAt), a = A.point, b = B.point, h = dist(a, b) * 0.4;
+      const c1 = { x: a.x + Math.cos(A.angle) * h, y: a.y + Math.sin(A.angle) * h }, c2 = { x: b.x - Math.cos(B.angle) * h, y: b.y - Math.sin(B.angle) * h };
+      const bend = Array.from({ length: 32 }, (_, i) => {
+        const t = (i + 1) / 32, u = 1 - t;
+        return { x: u * u * u * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x, y: u * u * u * a.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * b.y };
+      });
+      return { path: [...(from > 0 ? trimPath(truth, 0, from) : [a]), ...bend], rest: trimPath(host, hostAt, hostLen) };
+    };
+    /** A line that ends on the main line, less the end of it that lies wholly under the main line
+     * (narrower than it, so hidden: a dash or an edge of it would only peek out). */
+    const lessHidden = (path: P[], W: number, over: P[], overW: number): P[] => {
+      const hide = (overW - W) / 2;
+      if (hide <= 0 || over.length < 2 || path.length < 3) return path;
+      const off = (q: P) => { let m = Infinity; for (let i = 1; i < over.length; i++) m = Math.min(m, nearestOnSegment(q, over[i - 1], over[i]).distance); return m; };
+      let end = path.length - 1;
+      while (end > 1 && off(path[end - 1]) < hide) end--;
+      return end < path.length - 1 ? path.slice(0, end + 1) : path;
+    };
+    const drawLine = (line: P[], ls0: ReturnType<typeof lineStyleOf>, main: boolean, o: number, basket: P, alone = false) => {
       let ls = ls0;
       const classic = look === "classic";
       const W = px((main ? (classic ? 2.4 : 3.2) : classic ? 2 : 2.2) * ls.width * weight);
@@ -757,8 +781,8 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const edge = Math.max(len * 0.5, len - ownEnd);
       // (the classic arrowhead reaches past the spot it's set at: set back, so its tip is where the painted one's is)
       // (the painted looks: at where the hole's lines stop; with no arrowhead, right at the basket's mark
-      // where they run on to it; tucked under another's arrowhead, a little back under its wide part)
-      const tipAt = classic ? (main ? len - Math.max(12 / k, 6) : alone ? edge - al * 0.6 : len) : !toBasket ? len : tuck && !atBasket ? edge - al * 0.6 : atBasket && !ls.arrow ? Math.max(len * 0.5, len - 4 / k) : edge;
+      // where they run on to it)
+      const tipAt = classic ? (main ? len - Math.max(12 / k, 6) : alone ? edge - al * 0.6 : len) : !toBasket ? len : atBasket && !ls.arrow ? Math.max(len * 0.5, len - 4 / k) : edge;
       // (how far short of its tip the line itself ends, under its arrowhead; an open one's tip a little short of the circle)
       const under0 = headLook === "open" ? 2 / k + W * 0.3 : headLook === "triangle" ? al * 0.5 : al * 0.9;
       const body = main ? trimPath(line, 6 / k, classic ? len - Math.max(2.2 / k * 6, 8) : ls.arrow ? tipAt - under0 : tipAt) : toBasket ? trimPath(line, 0, ls.arrow ? tipAt - (classic ? 1.2 / k : under0) : tipAt) : line;
@@ -859,10 +883,13 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       let atHost = Math.max(met, Math.min(met + Math.max(px(stub ? 30 : 12), (arc[to] - arc[a]) * 0.5), hostLen - clear));
       if (taken?.length) {
         const apart = px(16), free = (d: number) => taken.every(q => dist(pointAlong(host, d).point, q) >= apart);
+        let found = false;
         for (const step of [0, 1, -1, 2, -2, 3]) {
           const d = atHost + step * apart;
-          if (d >= met - apart && d <= hostLen - clear && d > 0 && free(d)) { atHost = d; break; }
+          if (d >= met - apart && d <= hostLen - clear && d > 0 && free(d)) { atHost = d; found = true; break; }
         }
+        // (no room on it clear of the other join: its own way to the basket)
+        if (!found) return { path: truth, alone: true };
       }
       const shown = shows?.[k0], shownLen = shown ? pathLength(shown) : 0, atShown = shown ? (atHost / (hostLen || 1)) * shownLen : 0;
       const B = shown ? pointAlong(shown, atShown) : pointAlong(host, atHost);
@@ -929,7 +956,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
         const own = smoothPath(played, 10);
         const ownLen = pathLength(own), step = Math.max(px(2), 0.5);
         let along = Array.from({ length: Math.ceil(ownLen / step) + 1 }, (_, i) => pointAlong(own, Math.min(ownLen, i * step)).point);
-        let alone = false, bare = false;
+        let alone = false;
         if (s.linesMeet === "alongside") {
           // (pushed off the hole's line to lie beside it, on the side it comes from)
           const off = mainW / 2 + px((look === "classic" ? 2 : 2.6) * ls.width) / 2 + px(1.8);
@@ -953,34 +980,35 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
           alone = j.alone;
           const mine = alone ? swept(j.path, sweep) : j.path;
           along = alone ? aimed(mine, basket) : mine;
-          const rest = j.rest;
-          // (its own way to the basket, but coming to the circle beside a line already there, the two
-          // arrowheads on each other: it joins that line just before the circle)
-          // Where the lines run on to the basket they meet there, and only the first has the arrowhead.
-          // Coming to the circle where another does (within half an arrowhead): its end tucked under
-          // that one's arrowhead. Otherwise a little round from it, each with room for its own.
+          let rest = j.rest;
+          // Coming to the basket where another line does (at the circle within half an arrowhead; run
+          // on to the basket, within 30 degrees of its way in): it runs into the base of that line's
+          // arrowhead. At the circle a little apart: fanned out, each with room for its own.
           if (alone && !classicLook) {
+            const heading = (t: P[]) => pointAlong(t, Math.max(0, pathLength(t) - ownEnd - 1 / k)).angle;
             const E = arrives(along), by = trunks.map(t => ({ t, at: arrives(t), d: dist(arrives(t), E) })).sort((p, q) => p.d - q.d)[0];
-            if (by && by.d < headRoom) {
-              if (atBasket) bare = true;
-              else if (by.d < headRoom * 0.55) {
-                // (it comes in where that line does: its end under that line's arrowhead, on its own way there)
-                bare = true;
-              } else {
-                const a0 = Math.atan2(E.y - basket.y, E.x - basket.x), ah = Math.atan2(by.at.y - basket.y, by.at.x - basket.x);
-                const off = Math.atan2(Math.sin(a0 - ah), Math.cos(a0 - ah)), want = 2 * Math.asin(Math.min(0.7, headRoom / (2 * ownEnd)));
-                const a1 = ah + (off < 0 ? -1 : 1) * want;
-                along = aimed(mine, basket, { x: basket.x + Math.cos(a1) * ownEnd, y: basket.y + Math.sin(a1) * ownEnd });
-              }
+            // (coming in where that line does, and much its way: into the base of its arrowhead)
+            const same = by && (atBasket ? Math.abs(turn(heading(along), heading(by.t))) < 0.5 : by.d < headRoom * 0.55);
+            if (by && same) {
+              const m = tuckInto(mine, by.t, by.d);
+              along = m.path; rest = m.rest; alone = false;
+              joins.push(along[along.length - 1]);
+            } else if (by && !atBasket && by.d < headRoom) {
+              const a0 = Math.atan2(E.y - basket.y, E.x - basket.x), ah = Math.atan2(by.at.y - basket.y, by.at.x - basket.x);
+              const off = Math.atan2(Math.sin(a0 - ah), Math.cos(a0 - ah)), want = 2 * Math.asin(Math.min(0.7, headRoom / (2 * ownEnd)));
+              const a1 = ah + (off < 0 ? -1 : 1) * want;
+              along = aimed(mine, basket, { x: basket.x + Math.cos(a1) * ownEnd, y: basket.y + Math.sin(a1) * ownEnd });
             }
           }
           trunks.push(rest ? [...along, ...rest] : along);
           plots.push(rest ? [...along, ...rest] : j.path);
         }
-        drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path: along, half: px((look === "classic" ? 2 : 2.2) * ls.width * weight) / 2, arrow: alone && !bare && ls.arrow });
+        drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path: along, half: px((look === "classic" ? 2 : 2.2) * ls.width * weight) / 2, arrow: alone && ls.arrow });
         // (its own way to the basket: its own arrowhead; one that joins a line has none, unless asked for)
         const joined = { ...ls, arrow: s.lineStyles?.[tee.level]?.arrow === true };
-        if (alone) drawLine(along, bare ? { ...ls, arrow: false } : ls, false, o, basket, true, bare);
+        // (one that ends on the main line: less the end of it that lies hidden under that line)
+        if (!alone && !classicLook && s.linesMeet !== "alongside" && !mainTee?.noLine) along = lessHidden(along, px(2.2 * ls.width * weight), line, mainW);
+        if (alone) drawLine(along, ls, false, o, basket, true);
         else if (look === "classic" && !s.lineStyles?.[tee.level] && s.linesMeet !== "alongside" && weight === 1) {
           const c = TEE_LEVELS[tee.level].color === "#f8fafc" ? "#eef0f2" : TEE_LEVELS[tee.level].color;
           (o < 1 ? fills : unders).push(`<path d="${pathD(along)}" fill="none" stroke="${pal.lineCasing}" stroke-width="${n(px(3.8))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
