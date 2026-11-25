@@ -745,7 +745,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     const tuckInto = (truth: P[], host: P[], gap: number): { path: P[]; rest: P[] } => {
       const hostLen = pathLength(host), len = pathLength(truth), headLen = (9.5 / k) * Math.sqrt(weight) * headSize;
       const hostAt = Math.max(hostLen * 0.3, hostLen - ownEnd - headLen * 0.7);
-      const from = Math.max(0, len - ownEnd - Math.min(len * 0.6, Math.max(px(45), gap * 9)));
+      const from = Math.max(0, len - ownEnd - Math.min(len * 0.6, Math.max(px(75), gap * 12)));
       const A = pointAlong(truth, from), B = pointAlong(host, hostAt), a = A.point, b = B.point, h = dist(a, b) * 0.4;
       const c1 = { x: a.x + Math.cos(A.angle) * h, y: a.y + Math.sin(A.angle) * h }, c2 = { x: b.x - Math.cos(B.angle) * h, y: b.y - Math.sin(B.angle) * h };
       const bend = Array.from({ length: 32 }, (_, i) => {
@@ -754,10 +754,9 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       });
       return { path: [...(from > 0 ? trimPath(truth, 0, from) : [a]), ...bend], rest: trimPath(host, hostAt, hostLen) };
     };
-    /** A line that ends on the main line, less the end of it that lies wholly under the main line
-     * (narrower than it, so hidden: a dash or an edge of it would only peek out). */
-    const lessHidden = (path: P[], W: number, over: P[], overW: number): P[] => {
-      const hide = (overW - W) / 2;
+    /** A line that ends on another, less the end of it that lies under that one (within `hide` of
+     * its middle: a dash or an edge of it would only peek out from under it). */
+    const lessHidden = (path: P[], hide: number, over: P[]): P[] => {
       if (hide <= 0 || over.length < 2 || path.length < 3) return path;
       const off = (q: P) => { let m = Infinity; for (let i = 1; i < over.length; i++) m = Math.min(m, nearestOnSegment(q, over[i - 1], over[i]).distance); return m; };
       let end = path.length - 1;
@@ -847,7 +846,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     // as drawn, as far along it)
     // (`taken`: where lines joined this hole's lines already; another joins a little before or
     // after, never on the same spot, which would knot)
-    const joinOnto = (truth: P[], trunks: P[][], clear: number, shows?: P[][], taken?: P[]): { path: P[]; alone: boolean; rest?: P[] } | null => {
+    const joinOnto = (truth: P[], trunks: P[][], clear: number, shows?: P[][], taken?: P[]): { path: P[]; alone: boolean; rest?: P[]; host?: number } | null => {
       const nearOn = (t: P[], q: P) => { let best = { point: q, distance: Infinity, i: 1 }; for (let i = 1; i < t.length; i++) { const m = nearestOnSegment(q, t[i - 1], t[i]); if (m.distance < best.distance) best = { ...m, i }; } return best; };
       const all = truth.map(q => trunks.map(t => nearOn(t, q).distance)), last = truth.length - 1;
       if (all.every(ds => Math.min(...ds) < px(9))) return null;
@@ -897,10 +896,10 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const ta0 = { x: n1.x - n0.x, y: n1.y - n0.y }, tl = Math.hypot(ta0.x, ta0.y) || 1, ta = { x: ta0.x / tl, y: ta0.y / tl };
       const tb = { x: Math.cos(B.angle), y: Math.sin(B.angle) }, b = B.point, h = dist(A, b) * 0.4;
       // (the painted looks: only where it comes in along the line, within 22 degrees of its own way and
-      // of the line's; a line that would have to turn to it goes its own way to the basket, as it plays)
+      // of the line's, 34 in all; a line that would have to turn to it goes its own way to the basket, as it plays)
       if (!classicLook) {
         const chord = Math.atan2(b.y - A.y, b.x - A.x);
-        if (Math.abs(turn(Math.atan2(ta.y, ta.x), chord)) > 0.38 || Math.abs(turn(chord, B.angle)) > 0.38) return { path: truth, alone: true };
+        if (Math.abs(turn(Math.atan2(ta.y, ta.x), chord)) > 0.38 || Math.abs(turn(chord, B.angle)) > 0.38 || Math.abs(turn(Math.atan2(ta.y, ta.x), B.angle)) > 0.6) return { path: truth, alone: true };
       }
       const c1 = { x: A.x + ta.x * h, y: A.y + ta.y * h }, c2 = { x: b.x - tb.x * h, y: b.y - tb.y * h };
       const bend = Array.from({ length: 32 }, (_, i) => {
@@ -910,7 +909,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       // (and on along the line it joined, to the basket: what a later tee's line joins)
       const at = nearOn(host, b);
       taken?.push(pointAlong(host, atHost).point);
-      return { path: [...truth.slice(0, a + 1), ...bend], alone: false, rest: shown ? trimPath(shown, atShown, shownLen) : host.slice(at.i) };
+      return { path: [...truth.slice(0, a + 1), ...bend], alone: false, rest: shown ? trimPath(shown, atShown, shownLen) : host.slice(at.i), host: k0 };
     };
     for (const st of layers.stats) {
       if (!st.complete) continue;
@@ -942,6 +941,8 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       // hole's line to the basket. The longest first: a shorter one may join it.
       // (the main tee's line left off this hole: the others go their own ways)
       const trunks: P[][] = mainTee?.noLine ? [] : [line];
+      // (how wide each is drawn; and each other tee's line's color, to lay the lines down the last first)
+      const widths: number[] = mainTee?.noLine ? [] : [mainW], laid: string[][] = [];
       // (each of them as plotted: what tells where another line gets onto it)
       const plots: P[][] = mainTee?.noLine ? [] : [plotted];
       const joins: P[] = [];
@@ -956,7 +957,8 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
         const own = smoothPath(played, 10);
         const ownLen = pathLength(own), step = Math.max(px(2), 0.5);
         let along = Array.from({ length: Math.ceil(ownLen / step) + 1 }, (_, i) => pointAlong(own, Math.min(ownLen, i * step)).point);
-        let alone = false;
+        let alone = false, onto = -1;
+        const W2 = px((classicLook ? 2 : 2.2) * ls.width * weight), from = fills.length;
         if (s.linesMeet === "alongside") {
           // (pushed off the hole's line to lie beside it, on the side it comes from)
           const off = mainW / 2 + px((look === "classic" ? 2 : 2.6) * ls.width) / 2 + px(1.8);
@@ -978,6 +980,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
           const j = classicLook ? joinOnto(along, trunks, clearOf) : joinOnto(along, plots, clearOf, trunks, joins);
           if (!j || j.path.length < 2 || pathLength(j.path) < px(6)) continue;
           alone = j.alone;
+          onto = j.host ?? -1;
           const mine = alone ? swept(j.path, sweep) : j.path;
           along = alone ? aimed(mine, basket) : mine;
           let rest = j.rest;
@@ -988,10 +991,10 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
             const heading = (t: P[]) => pointAlong(t, Math.max(0, pathLength(t) - ownEnd - 1 / k)).angle;
             const E = arrives(along), by = trunks.map(t => ({ t, at: arrives(t), d: dist(arrives(t), E) })).sort((p, q) => p.d - q.d)[0];
             // (coming in where that line does, and much its way: into the base of its arrowhead)
-            const same = by && (atBasket ? Math.abs(turn(heading(along), heading(by.t))) < 0.5 : by.d < headRoom * 0.55);
+            const same = by && Math.abs(turn(heading(along), heading(by.t))) < 0.5 && (atBasket || by.d < headRoom * 0.55);
             if (by && same) {
               const m = tuckInto(mine, by.t, by.d);
-              along = m.path; rest = m.rest; alone = false;
+              along = m.path; rest = m.rest; alone = false; onto = trunks.indexOf(by.t);
               joins.push(along[along.length - 1]);
             } else if (by && !atBasket && by.d < headRoom) {
               const a0 = Math.atan2(E.y - basket.y, E.x - basket.x), ah = Math.atan2(by.at.y - basket.y, by.at.x - basket.x);
@@ -1001,22 +1004,28 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
             }
           }
           trunks.push(rest ? [...along, ...rest] : along);
+          widths.push(W2);
           plots.push(rest ? [...along, ...rest] : j.path);
         }
         drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path: along, half: px((look === "classic" ? 2 : 2.2) * ls.width * weight) / 2, arrow: alone && ls.arrow });
         // (its own way to the basket: its own arrowhead; one that joins a line has none, unless asked for)
         const joined = { ...ls, arrow: s.lineStyles?.[tee.level]?.arrow === true };
         // (one that ends on the main line: less the end of it that lies hidden under that line)
-        if (!alone && !classicLook && s.linesMeet !== "alongside" && !mainTee?.noLine) along = lessHidden(along, px(2.2 * ls.width * weight), line, mainW);
+        // (under the main line while within its width; under another tee's line, drawn over this one, once it's half on it)
+        if (!alone && !classicLook && onto >= 0 && trunks[onto]) along = lessHidden(along, Math.max((widths[onto] - W2) / 2, onto === 0 && !mainTee?.noLine ? 0 : W2 * 0.5), trunks[onto]);
         if (alone) drawLine(along, ls, false, o, basket, true);
         else if (look === "classic" && !s.lineStyles?.[tee.level] && s.linesMeet !== "alongside" && weight === 1) {
           const c = TEE_LEVELS[tee.level].color === "#f8fafc" ? "#eef0f2" : TEE_LEVELS[tee.level].color;
           (o < 1 ? fills : unders).push(`<path d="${pathD(along)}" fill="none" stroke="${pal.lineCasing}" stroke-width="${n(px(3.8))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
           fills.push(`<path d="${pathD(along)}" fill="none" stroke="${c}" stroke-width="${n(px(2))}" stroke-linecap="round" stroke-linejoin="round" opacity="${o}"/>`);
         } else drawLine(along, joined, false, o, basket);
+        // (the painted looks: a line that joins another lies under it, so its end never sits on that one)
+        if (!classicLook) laid.push(fills.splice(from));
         // (its own length, where the map shows lengths: as the signs give it)
         if (ls.distance && s.distances && !(focus && st.holeId !== focus)) ownDistances.push({ id: `dist:${st.holeId}:${tee.id}`, path: along, text: `${fmtDist(pathLength(played), doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, color: ls.color, o });
       }
+      // (the last drawn lowest: each lies under the line it joined, the main line over them all)
+      for (const l of laid.reverse()) fills.push(...l);
       if (look === "classic" && !multi && !s.lineStyles?.[mainTee?.level ?? "blue"] && !mainTee?.noLine && weight === 1 && headSize === 1 && !s.arrowLook) {
         // (Classic, as maps first had it)
         const len = pathLength(line);
