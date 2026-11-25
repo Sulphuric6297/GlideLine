@@ -6,7 +6,7 @@ import { PlaceByGps } from "./PlaceByGps";
 import { OnSiteButton } from "./OnSite";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brush, ChevronDown, ChevronLeft, Copy, Eye, EyeOff, Lock, Maximize2, RotateCcw, RotateCw, Trash2, Unlock, X, Plus } from "lucide-react";
-import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, ROCK_KINDS } from "../constants";
+import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, CIRCLE_ONE_FT, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, ROCK_KINDS, WOODS_HEIGHTS, WOODS_HEIGHT_GAP, WOODS_HEIGHT_LIMITS } from "../constants";
 import { activeLayout, basketFor, bendOwner, turnsAhead, areaPath, areaRing, obFor, obSides, sideCompass, holeBaskets, holeLabel, holeNumber, holeTees, ITEM_LABELS, linePath, obPicked, parseHoleNumbers, teeAim, wholeHoles, widthFactors, widthVaries, AMENITY_ROLE } from "../lib/course";
 import { pathLength, polygonArea } from "../lib/geom";
 import { boxOutline, gazeboOutline, structureHeight, structurePath, structureRoof, structureWidth, turnShape } from "../lib/structures";
@@ -87,19 +87,30 @@ export function HoleNumberInput({ holeId, value }: { holeId: string; value: stri
   );
 }
 
+/** The course's switch: every hole's fairway cleared, or every hole's trees left standing (each
+ * hole's own switch goes back to following it). The same from a hole's panel and from Site's
+ * measured trees. */
+export const clearEveryFairway = (v: boolean) => {
+  changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, clearFairways: v ? (true as const) : undefined }, ...(d.holes.some(h => h.clearTrees !== undefined) ? { holes: d.holes.map(h => (h.clearTrees === undefined ? h : { ...h, clearTrees: undefined })) } : {}) } : {}));
+  toast(v ? "Trees on every hole's fairway, tees and basket are cut down. A hole's own switch leaves its trees standing." : "Trees on the fairways are standing again.", "info", true);
+};
+
 /** The measured trees on this hole's fairway (where it plays), and the hole's own switch for them:
  * cleared (cut down, but for any kept by hand) or left standing. It follows the course's switch
- * (Site's Clear trees from the fairways) until it's set here. Near the top of the hole's panel,
- * and a setting in a phone's bar. */
+ * until it's set here. Under it, the course's switch itself (Clear every hole's fairway: on when
+ * the course clears and no hole says otherwise; holes added later take it too), so it's set where
+ * the fairways are worked on; Site's measured trees have it too. Near the top of the hole's panel, and a setting in a phone's bar. */
 export const useHoleTrees = (hole: Hole, line: P[] | null) => {
   const lidar = useCourse(s => s.doc.lidar);
   return useMemo(() => (lidar && line ? fairwayTrees({ lidar }, hole, line) : { cut: [], kept: [], standing: [] }), [lidar, hole, line]);
 };
 export function HoleTrees({ hole, line }: { hole: Hole; line: P[] }) {
   const lidar = useCourse(s => s.doc.lidar);
+  const holes = useCourse(s => s.doc.holes);
   const { cut, kept, standing } = useHoleTrees(hole, line);
   if (!lidar) return null;
   const on = holeClears({ lidar }, hole);
+  const clearedN = holes.filter(h => holeClears({ lidar }, h)).length, every = lidar.clearFairways === true && clearedN === holes.length;
   const setLidar = (patch: { kept?: number[]; removed?: number[] }) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {}));
   const list = (v: number[]) => (v.length ? [...new Set(v)].sort((a, b) => a - b) : undefined);
   const name = () => holeLabel(useCourse.getState().doc, hole.id);
@@ -131,6 +142,20 @@ export function HoleTrees({ hole, line }: { hole: Hole; line: P[] }) {
         {none ? "No measured trees on this fairway"
           : on ? <>{trees(cut.length)} cut down on this hole{kept.length > 0 && <> · {kept.length.toLocaleString()} kept · <button type="button" className={link} onClick={() => setLidar({ kept: list((lidar.kept ?? []).filter(k => !kept.includes(k))) })} data-testid="trees-down">Cut {kept.length === 1 ? "it" : "them"} down</button></>}</>
           : <>{trees(standing.length)} stand{standing.length === 1 ? "s" : ""} on this fairway{cut.length > 0 && <> · {cut.length.toLocaleString()} cut down by hand · <button type="button" className={link} onClick={back} data-testid="trees-back">Bring {cut.length === 1 ? "it" : "them"} back</button></>}</>}
+      </div>
+      {/* (the course's switch, where the fairways are worked on: on when the course clears and no
+          hole says otherwise) */}
+      <div className="border-t border-white/[0.08] mt-0.5">
+        <label className="dg-toggle flex items-start gap-2.5 pt-2 touch:pt-2.5 cursor-pointer select-none">
+          <input type="checkbox" className={`switch mt-0.5 ${FOCUS}`} checked={every} onChange={e => clearEveryFairway(e.target.checked)} data-testid="every-hole-clear" />
+          <span className="text-[13.5px] touch:text-sm text-zinc-200 whitespace-nowrap">Clear every hole's fairway</span>
+        </label>
+        {(every || (clearedN > 0 && holes.length > 1)) && (
+          <div className="text-xs text-zinc-400 mt-[3px] pl-[44px]" data-testid="every-hole-said">
+            {every ? (holes.length > 1 ? `All ${holes.length} holes, and any you add` : "This hole, and any you add") : `${clearedN} of ${holes.length} holes cleared`}
+          </div>
+        )}
+        <div className="pb-1 touch:pb-2.5" />
       </div>
     </div>
   );
@@ -408,6 +433,21 @@ type Thick = (typeof THICK)[number]["value"];
 export const thickOf = (a: Pick<AreaItem, "density">): Thick => ((a.density ?? 1) < 0.75 ? "sparse" : (a.density ?? 1) > 1.4 ? "thick" : "usual");
 export const densityFor = (t: Thick) => (t === "sparse" ? 0.5 : t === "thick" ? 2 : undefined);
 
+/** A wood's tree heights, the shortest and the tallest (ft): its own, or as woods grow. */
+export const heightsOf = (a: Pick<AreaItem, "heights">): [number, number] => a.heights ?? WOODS_HEIGHTS;
+/** One end set (0 the shortest, 1 the tallest): the other moves to stay clear of it; as woods grow
+ * anyway, nothing is kept. */
+export const heightsWith = (a: Pick<AreaItem, "heights">, end: 0 | 1, v: number): Pick<AreaItem, "heights"> => {
+  const [lo, hi] = heightsOf(a);
+  const next: [number, number] = end ? [Math.min(lo, v - WOODS_HEIGHT_GAP), v] : [v, Math.max(hi, v + WOODS_HEIGHT_GAP)];
+  return { heights: next[0] === WOODS_HEIGHTS[0] && next[1] === WOODS_HEIGHTS[1] ? undefined : next };
+};
+/** The shortest's and the tallest's own ranges (each leaves room for the other). */
+export const HEIGHT_ENDS = [
+  { end: 0, id: "min", label: "Minimum", name: "Min height", long: "Minimum height", min: WOODS_HEIGHT_LIMITS[0], max: WOODS_HEIGHT_LIMITS[1] - WOODS_HEIGHT_GAP },
+  { end: 1, id: "max", label: "Maximum", name: "Max height", long: "Maximum height", min: WOODS_HEIGHT_LIMITS[0] + WOODS_HEIGHT_GAP, max: WOODS_HEIGHT_LIMITS[1] }
+] as const;
+
 /** What a wood grows: leafy trees, pines, bushes (any of them, in equal shares). */
 export type Grows = { leafy: boolean; pine: boolean; bush: boolean };
 export const growsOf = (a: Pick<AreaItem, "pines" | "bushes">, style: CourseDoc["style"]): Grows => {
@@ -455,7 +495,9 @@ export function StandSpecies({ item }: { item: AreaItem }) {
  * those inside stay. Tall grass has the underbrush only. */
 function WoodsSettings({ item }: { item: AreaItem }) {
   const measured = useCourse(s => !!s.doc.lidar?.trees.length);
-  const set = (patch: Partial<AreaItem>) => updateItem(item.id, patch as Partial<CourseItem>);
+  const u = useCourse(s => s.doc.units);
+  const set = (patch: Partial<AreaItem>, history = true) => updateItem(item.id, patch as Partial<CourseItem>, history);
+  const tall = heightsOf(item);
   const woods = item.kind === "woods";
   const brushOnly = woods && (item.bushes ?? 0) >= 1;
   return (
@@ -466,6 +508,14 @@ function WoodsSettings({ item }: { item: AreaItem }) {
           <StandSpecies item={item} />
           <Field label="How thick"><Segmented label="How thick" value={thickOf(item)} onChange={v => set({ density: densityFor(v) })} options={[...THICK]} /></Field>
         </>
+      )}
+      {woods && !brushOnly && (
+        <Field label="Tree height" help="woods">
+          <div data-testid="woods-heights" className="[&>div:last-of-type]:mb-0">
+            {HEIGHT_ENDS.map(e => <Slider key={e.id} label={e.label} min={e.min} max={e.max} step={1} value={tall[e.end]} onChange={v => set(heightsWith(item, e.end, v), false)} onDone={commit} format={v => fmtSize(v, u)} />)}
+          </div>
+          {item.heights && <button type="button" className="mt-1 text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1 touch:min-h-[44px]" onClick={() => set({ heights: undefined })} data-testid="woods-heights-reset"><RotateCcw size={12} /> Reset</button>}
+        </Field>
       )}
       {!brushOnly && (
         <Field label="Underbrush" help={woods ? "woods" : "areas"}>

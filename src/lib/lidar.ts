@@ -4,8 +4,8 @@
 // (checked against USGS 3DEP's), the canopy (roofs left out) and single trees (where each stands,
 // how tall, how wide its crown spreads; a conifer only where the survey shows one), and how high
 // a building stands.
-import type { CourseDoc, CourseItem, Hole, LidarTree, P } from "../types";
-import { areaPath, fairwayOutline } from "./course";
+import type { AreaItem, CourseDoc, CourseItem, Hole, LidarTree, P } from "../types";
+import { areaPath, drawnAreas, fairwayOutline } from "./course";
 import { boundsOf, distanceToPolygon, nearestOnSegment, pointInPolygon, smoothPath } from "./geom";
 import { FEET_PER_METER } from "./geo/core";
 import type { GeoRef } from "./geoRef";
@@ -1058,6 +1058,38 @@ export const playClearing = (doc: Pick<CourseDoc, "lidar" | "holes">) => {
 
 /** Whether a hole's trees are cleared for play: its own switch, or the course's. */
 export const holeClears = (doc: Pick<CourseDoc, "lidar">, hole: Pick<Hole, "clearTrees">) => hole.clearTrees ?? doc.lidar?.clearFairways === true;
+
+/** The woods that set their trees' heights (shortest and tallest, ft), each with its outline as
+ * drawn; and what tells one course's from another's. */
+export type HeightWoods = { pts: P[]; box: ReturnType<typeof boundsOf>; heights: [number, number] }[];
+export const heightWoods = (items: CourseItem[]): HeightWoods =>
+  (items.filter(i => i.type === "area" && i.kind === "woods" && !!i.heights && i.points.length >= 3) as AreaItem[]).map(a => {
+    const pts = drawnAreas([a])[0].points;
+    return { pts, box: boundsOf(pts), heights: a.heights! };
+  });
+export const heightWoodsKey = (w: HeightWoods) => (w.length ? JSON.stringify(w.map(x => [x.heights, x.pts.map(q => [Math.round(q.x), Math.round(q.y)])])) : "");
+/** The woods' heights at a spot (the one drawn last, where two overlap), or null. */
+export const heightsAt = (w: HeightWoods, p: P): [number, number] | null => {
+  for (let i = w.length - 1; i >= 0; i--) {
+    const b = w[i].box;
+    if (p.x >= b.minX && p.x <= b.maxX && p.y >= b.minY && p.y <= b.maxY && pointInPolygon(p, w[i].pts)) return w[i].heights;
+  }
+  return null;
+};
+
+/** A measured tree standing in woods that set their trees' heights, brought within them: a taller
+ * one comes down to the tallest, a shorter one up to the shortest (each a little inside, by its
+ * own spot, so the tops don't end in one flat line), its crown with it. One already within them
+ * is untouched, and so is one the course leaves out as too short (it stays out). */
+export const inHeights = (t: LidarTree, woods: HeightWoods, minHeight = 0): LidarTree => {
+  if (!woods.length || t[2] < minHeight || t[2] <= 0) return t;
+  const own = heightsAt(woods, { x: t[0], y: t[1] });
+  if (!own || (t[2] >= own[0] && t[2] <= own[1])) return t;
+  const [lo, hi] = own, draw = ((Math.sin(t[0] * 12.9898 + t[1] * 78.233) * 43758.5453) % 1 + 1) % 1;
+  const inset = draw * Math.min(6, (hi - lo) * 0.15);
+  const h = Math.max(minHeight, t[2] > hi ? hi - inset : lo + inset);
+  return [t[0], t[1], h, t[3] * Math.min(2, Math.max(0.4, Math.pow(h / t[2], 0.7))), t[4]];
+};
 
 /** Which measured trees stand: any taken out are gone; those on a fairway, a tee or a basket's
  * circle of a hole that clears its trees (as `cleared` says: see `playClearing`) are cut down

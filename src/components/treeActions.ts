@@ -2,7 +2,7 @@
 // and a phone: what the tree is and how tall, and to edit it or cut it down; and the thing it
 // stands over (its wood, a road, a hole's line), to pick from there.
 import { holeLabel } from "../lib/course";
-import { grownTree } from "../lib/lidar";
+import { grownTree, heightWoods, inHeights } from "../lib/lidar";
 import { fmtDist } from "../lib/units";
 import { adoptLidarTree, adoptTreeAt, cutTreeAt, select } from "../state/actions";
 import { getView } from "../state/view";
@@ -28,7 +28,8 @@ export const treesAt = (clientX: number, clientY: number, ground: P | null): Men
 export const treeTitle = (doc: CourseDoc, t: MenuTree) => {
   if (t.kind === "measured") {
     const g = doc.lidar?.trees[t.k];
-    return `Measured tree · ${fmtDist(g ? grownTree(g, doc.lidar?.growYears ?? 0)[2] : 0, doc.units)}`;
+    // (as it stands: grown, and within its woods' own heights)
+    return `Measured tree · ${fmtDist(g ? inHeights(grownTree(g, doc.lidar?.growYears ?? 0), heightWoods(doc.items), doc.lidar?.minHeight ?? 0)[2] : 0, doc.units)}`;
   }
   return `${t.height < 25 ? "Sapling" : "Planted tree"} · ${fmtDist(t.height, doc.units)}`;
 };

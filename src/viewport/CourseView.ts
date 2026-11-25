@@ -29,7 +29,7 @@ import { disposeObjectDeep } from "../three/dispose";
 import { create3dTree, getTreeSignature, retuneTrees } from "../three/trees";
 import { createRock, rockItemGeometry, rockMaterial, rockSignature, ROCK_BURIED, rockOutlinePoints, rockSpan, STONE_LOOK, STONE_K } from "../three/rocks";
 import { createMeasuredWoods, createUnderbrush, createWoods, createWoodsWhere } from "../three/woods";
-import { playClearing, standingTrees, grownTree, grownTrees } from "../lib/lidar";
+import { grownTree, grownTrees, heightWoods, heightWoodsKey, inHeights, playClearing, standingTrees } from "../lib/lidar";
 import type { WoodedGrid } from "../lib/forest";
 import { autoFlight, flightClock, flyoverOf, insertKey, keyFlight, keyTimes, keysFromFlight, type Air, type Canopy, type Crown, LENS } from "../lib/flight";
 import { VIDEO_HOLD, titleStrength } from "../lib/video";
@@ -3900,8 +3900,14 @@ export class CourseView {
     const measuredCount = course.lidar?.trees.length ?? 0;
     // (the same list while the measured trees, the growth and the cut spots are the same: the
     // forest is only rebuilt when one of them changes, not on every change to the course)
+    // (those in woods that set their trees' heights: within them. Not the saplings: young trees
+    // are young)
+    const tallWoods = course.lidar?.trees.length ? heightWoods(course.items) : [], tallKey = heightWoodsKey(tallWoods);
     const grownList = course.lidar?.trees.length
-      ? this.keep("lidar:list", course.lidar.trees, JSON.stringify([course.lidar.growYears ?? 0, course.lidar.saplings === true, course.lidar.crownSize ?? 1, cutKey]), () => grownTrees(course.lidar!).filter((t, k) => k < measuredCount || !cutAt({ x: t[0], y: t[1] })))
+      ? this.keep("lidar:list", course.lidar.trees, JSON.stringify([course.lidar.growYears ?? 0, course.lidar.saplings === true, course.lidar.crownSize ?? 1, cutKey, tallKey && [tallKey, course.lidar.minHeight ?? 0]]), () => {
+        const grown = grownTrees(course.lidar!).filter((t, k) => k < measuredCount || !cutAt({ x: t[0], y: t[1] }));
+        return tallWoods.length ? grown.map((t, k) => (k < measuredCount ? inHeights(t, tallWoods, course.lidar!.minHeight ?? 0) : t)) : grown;
+      })
       : null;
     const lidar = grownList ? { ...course.lidar!, trees: grownList } : null;
     const measured = !!lidar;
@@ -3931,7 +3937,9 @@ export class CourseView {
       // (told by which trees stand, so two views over the same course agree and never take turns)
       let sig = state.stand.length;
       for (const k of state.stand) sig = (sig * 31 + k) % 2147483647;
-      const standKey = `${state.stand.length}:${sig}:${lidar.growYears ?? 0}:${lidar.saplings === true}:${lidar.crownSize ?? 1}`;
+      let tallSig = 0;
+      for (let i = 0; i < tallKey.length; i++) tallSig = (tallSig * 31 + tallKey.charCodeAt(i)) % 2147483647;
+      const standKey = `${state.stand.length}:${sig}:${lidar.growYears ?? 0}:${lidar.saplings === true}:${lidar.crownSize ?? 1}${tallKey ? `:${tallSig}` : ""}`;
       if (measuredStanding()?.key !== standKey) setMeasuredStanding({ key: standKey, trees: state.stand.map(k => lidar.trees[k]) });
       put("woods:lidar", JSON.stringify([idOfGrid(lidar.trees), lidar.growYears ?? 0, lidar.saplings === true, lidar.crownSize ?? 1, state.cut, hv, st.trees, st.landscape, st.treeMix, st.conifers, shares]), () => {
         const woods = createMeasuredWoods(state.stand.map(k => ({ tree: lidar.trees[k], index: k })), (x, y) => this.h(x, y), st.trees, treeMixOf(st), shares);

@@ -6,7 +6,8 @@
 // things are drawn there too; the painting clears the trees from them and casts their shadows).
 import { timed } from "./perfLog";
 import { measuredStanding } from "./standing";
-import { CIRCLE_ONE_FT, LINE_KINDS, PATH_SURFACES, ROCK_LOOKS, ROCK_STONES } from "../constants";
+import { heightWoods, heightsAt } from "./lidar";
+import { CIRCLE_ONE_FT, LINE_KINDS, PATH_SURFACES, ROCK_LOOKS, ROCK_STONES, WOODS_HEIGHTS } from "../constants";
 import { rockShape } from "../three/rocks";
 import type { AreaItem, CourseDoc, LineItem, MapStyle, P, PathSurface, ReliefLook, RockItem, StructureItem, TreeItem } from "../types";
 import { toUnits } from "./units";
@@ -963,6 +964,13 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
     return hslToRgb(h + dh * 360, Math.max(0, Math.min(1, sl + ds)), Math.max(0.03, Math.min(0.95, l + dl)));
   };
   const grow = 1 + (1 - cover) * 0.7;
+  // (woods that set their trees' heights: their treetops as much taller or shorter than usual as
+  // the middle of their heights is, as in 3D; 1 everywhere else)
+  const tallWoods = heightWoods(doc.items);
+  const tallAt = (x: number, y: number) => {
+    const own = tallWoods.length ? heightsAt(tallWoods, toPlan(x, y)) : null;
+    return own ? Math.min(2, Math.max(0.4, (own[0] + own[1]) / (WOODS_HEIGHTS[0] + WOODS_HEIGHTS[1]))) : 1;
+  };
   for (let gy = -stepPx; gy < H + stepPx && !opts.under; gy += stepPx) {
     yield 0.15 + 0.35 * ((gy + stepPx) / (H + 2 * stepPx));
     for (let gx = -stepPx; gx < W + stepPx; gx += stepPx) {
@@ -983,25 +991,26 @@ function* forestSteps(doc: CourseDoc, view: ForestView, stats: HoleStats[], opts
         const clear = (r0: number) => { let r = r0; for (let tries = 0; tries < 2; tries++) { const q = r * 0.75; if (clearAt(q, 0) || clearAt(-q, 0) || clearAt(0, q) || clearAt(0, -q)) r *= 0.72; else break; } return r; };
         // (as tall as a woods' tree is, 13 to 34 ft, in every look: over a shed or a house as the
         // vector looks have it, never under its roof at a close scale)
-        const ftTop = (13 + 21 * (((Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1 + 1) % 1)) * k;
+        const tall = tallAt(x, y), wide = Math.sqrt(tall);
+        const ftTop = (13 + 21 * (((Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1 + 1) % 1)) * k * tall;
         if (vector) {
-          const r = clear(vR(u) * grow);
-          const h = r * (1.6 + rnd() * 0.8), drawnPine = rnd() < vPines, col = treeColor(rnd()), seed = rnd();
+          const r = clear(vR(u) * grow * wide);
+          const h = r * (1.6 + rnd() * 0.8) * wide, drawnPine = rnd() < vPines, col = treeColor(rnd()), seed = rnd();
           const own = standAt(x, y), pine = own ? LOOK_VARIANTS[own].shape === "conifer" : drawnPine;
           const kind = own ?? lookFor(pine ? "conifer" : "broadleaf", drawOf(Math.round(seed * 1e6), 7), shares);
           vtrees.push({ x, y, r, h, pine, col: asKind(col, kind), seed, look: kind, fill: true });
           continue;
         }
         if (natural) {
-          const r = clear(realR(u) * grow * treeScale);
-          if (rnd() < pineShare) tufted(x, y, r * 0.8, Math.max(realTop(r) * 1.15, ftTop * treeScale), t);
-          else leafy(x, y, r, Math.max(realTop(r), ftTop * treeScale), t);
+          const r = clear(realR(u) * grow * treeScale * wide);
+          if (rnd() < pineShare) tufted(x, y, r * 0.8, Math.max(realTop(r) * 1.15 * tall, ftTop * treeScale), t);
+          else leafy(x, y, r, Math.max(realTop(r) * tall, ftTop * treeScale), t);
           continue;
         }
-        const r = clear(crownR * (0.45 + u * u * 1.35) * grow * treeScale);
-        if (rnd() < pineShare) tufted(x, y, r * 0.95, Math.max(r * (2.2 + rnd() * 0.9), ftTop * treeScale), t);
-        else if (cover < 0.75 && rnd() < (0.75 - cover) * 0.8) clumpTree(x, y, r * 1.5, t, Math.max(r * 1.95, ftTop * treeScale));
-        else stamp(x, y, r, Math.max(r * (1.9 + rnd() * 0.9), ftTop * treeScale), t);
+        const r = clear(crownR * (0.45 + u * u * 1.35) * grow * treeScale * wide);
+        if (rnd() < pineShare) tufted(x, y, r * 0.95, Math.max(r * (2.2 + rnd() * 0.9) * wide, ftTop * treeScale), t);
+        else if (cover < 0.75 && rnd() < (0.75 - cover) * 0.8) clumpTree(x, y, r * 1.5, t, Math.max(r * 1.95 * wide, ftTop * treeScale));
+        else stamp(x, y, r, Math.max(r * (1.9 + rnd() * 0.9) * wide, ftTop * treeScale), t);
       }
     }
   }

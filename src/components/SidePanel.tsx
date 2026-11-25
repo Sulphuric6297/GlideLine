@@ -30,7 +30,7 @@ import { useToolbarRoom } from "./Toolbar";
 import { ExportPanel } from "./ExportPanel";
 import { useLayout } from "./useLayout";
 import { LockedRow } from "./DemoNote";
-import { InspectorBody, PANEL_INSET, SelectionHeader, useSelection } from "./Inspector";
+import { InspectorBody, PANEL_INSET, SelectionHeader, useSelection, clearEveryFairway } from "./Inspector";
 import { SERVER } from "../auth/api";
 import { holeOf, useComments } from "../auth/Comments";
 import { NearbyCourses, NearbySafety } from "../auth/Nearby";
@@ -227,9 +227,7 @@ function MeasuredSettings() {
   const change = (patch: MeasuredTune, done: boolean) => {
     if ("clearFairways" in patch) {
       // (the course's switch: every hole takes it)
-      const v = patch.clearFairways === true;
-      changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, clearFairways: v ? true : undefined }, ...everyHole(d) } : {}));
-      toast(v ? "Trees on every hole's fairway, tees and basket are cut down. A hole's own switch leaves its trees standing." : "Trees on the fairways are standing again.", "info", true);
+      clearEveryFairway(patch.clearFairways === true);
       return;
     }
     const { saplings: young, clearFairways: _course, ...rest } = patch;

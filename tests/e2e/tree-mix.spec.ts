@@ -1,5 +1,7 @@
-import { devices } from "@playwright/test";
+import { devices, test as plain, expect as plainExpect } from "@playwright/test";
 import { test, expect, blankCourse, course } from "./fixtures";
+import { heightWoods, inHeights } from "../../src/lib/lidar";
+import type { CourseItem, LidarTree } from "../../src/types";
 
 // The kinds of trees a course grows (lib/treeMix): picked in the map style's Trees part, the woods
 // and measured trees growing only those; the kinds most common in the course's region (the US
@@ -30,6 +32,78 @@ async function woodsAndTrees(page: import("@playwright/test").Page, place: { lat
   return page.getByTestId("tree-kinds");
 }
 const chip = (kinds: import("@playwright/test").Locator, name: string) => kinds.getByRole("button", { name, exact: true });
+
+test("a wood's Tree height: Minimum and Maximum in its panel keep every tree it grows between them, the two never crossing; Reset goes back to the usual", async ({ page }) => {
+  await blankCourse(page);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => {
+    (window as any).__dgEditor().set({ areaKind: "woods", tool: "select" });
+    (window as any).__dgActions.addDrawn("area", [{ x: 200, y: 200 }, { x: 700, y: 200 }, { x: 700, y: 600 }, { x: 200, y: 600 }]);
+  });
+  const id = (await course(page)).items.find((i: any) => i.kind === "woods").id;
+  await page.evaluate(id => (window as any).__dgActions.select(id), id);
+  const tops = () => page.evaluate(() => {
+    const out: number[] = [];
+    (window as any).__dgView.scene.traverse((o: any) => { if (o.name === "woods" && o.userData.spots) for (const s of o.userData.spots) if (s.shape !== "bush") out.push(s.height); });
+    return out;
+  });
+  const own = async () => (await course(page)).items.find((i: any) => i.id === id).heights;
+  // As woods grow: 16 to 80 ft, nothing kept on the wood, no Reset
+  await expect.poll(async () => (await tops()).length, { timeout: 30_000 }).toBeGreaterThan(50);
+  const usual = await tops();
+  expect(Math.min(...usual)).toBeGreaterThanOrEqual(16);
+  expect(Math.max(...usual)).toBeLessThanOrEqual(80);
+  const panel = page.getByTestId("woods-settings"), min = panel.getByRole("slider", { name: "Minimum" }), max = panel.getByRole("slider", { name: "Maximum" });
+  await expect(min).toHaveValue("16");
+  await expect(max).toHaveValue("80");
+  await expect(panel.getByTestId("woods-heights-reset")).toHaveCount(0);
+  // A young stand: 20 to 35 ft, every tree it grows within them, some near each end
+  await max.fill("35");
+  await min.fill("20");
+  await min.blur();
+  await expect.poll(own).toEqual([20, 35]);
+  await expect.poll(async () => { const h = await tops(); return h.length > 50 && Math.min(...h) >= 20 && Math.max(...h) <= 35 && Math.min(...h) < 24 && Math.max(...h) > 31; }, { timeout: 30_000 }).toBe(true);
+  // Never crossing: the minimum taken past the maximum takes it along, 5 ft over
+  await min.fill("60");
+  await min.blur();
+  await expect.poll(own).toEqual([60, 65]);
+  await max.fill("30");
+  await max.blur();
+  await expect.poll(own).toEqual([25, 30]);
+  // One undo step a slider; Reset: as woods grow again
+  await page.keyboard.press("Control+z");
+  await expect.poll(own).toEqual([60, 65]);
+  await panel.getByTestId("woods-heights-reset").click();
+  await expect.poll(own).toBeUndefined();
+  await expect(min).toHaveValue("16");
+  await expect.poll(async () => { const h = await tops(); return h.length > 50 && Math.max(...h) > 66; }, { timeout: 30_000 }).toBe(true);
+  // (set back to the usual by hand: nothing kept on the wood either)
+  await max.fill("70");
+  await max.fill("80");
+  await max.blur();
+  await expect.poll(own).toBeUndefined();
+});
+
+plain("measured trees in a wood with tree heights of its own come within them: a taller one down to the tallest, a shorter one up to the shortest, its crown with it; the rest as measured", () => {
+  const wood = { id: "w", type: "area", kind: "woods", x: 50, y: 50, rotation: 0, points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }], heights: [20, 40] } as unknown as CourseItem;
+  const woods = heightWoods([wood, { ...wood, id: "plain", heights: undefined } as unknown as CourseItem]);
+  plainExpect(woods).toHaveLength(1);
+  const tall: LidarTree = [50, 50, 70, 12, 0], short: LidarTree = [30, 60, 8, 4, 1], fits: LidarTree = [60, 40, 30, 8, 0], outside: LidarTree = [150, 50, 70, 12, 0];
+  const down = inHeights(tall, woods), up = inHeights(short, woods);
+  plainExpect(down[2]).toBeGreaterThan(36.9);
+  plainExpect(down[2]).toBeLessThanOrEqual(40);
+  plainExpect(down[3]).toBeLessThan(12);
+  plainExpect(down[3]).toBeGreaterThan(6);
+  plainExpect(up[2]).toBeGreaterThanOrEqual(20);
+  plainExpect(up[2]).toBeLessThan(23.1);
+  plainExpect(up[3]).toBeGreaterThan(4);
+  plainExpect([down[0], down[1], down[4], up[4]]).toEqual([50, 50, 0, 1]);
+  plainExpect(inHeights(fits, woods)).toBe(fits);
+  plainExpect(inHeights(outside, woods)).toBe(outside);
+  // (one the course leaves out as too short stays as it is, and stays out)
+  plainExpect(inHeights(short, woods, 10)).toBe(short);
+  plainExpect(inHeights(tall, [])).toBe(tall);
+});
 
 test("a course near Seattle: the region's kinds offered and used; the woods grow only the kinds that are on", async ({ page }) => {
   const kinds = await woodsAndTrees(page, { lat: 47.61, lon: -122.33, label: "Seattle" });

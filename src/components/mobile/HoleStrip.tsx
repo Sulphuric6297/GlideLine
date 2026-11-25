@@ -18,7 +18,7 @@ import { fmtDist } from "../../lib/units";
 import { addHoleOb, nextHomeCorner, obChoiceOf, toLineWall, pinsFull, select, setFieldKind, setFieldPlay, setLineKind, setPinPosition, setTeeLevel, shareBasket, startAnotherPin, startAnotherTee, startHoleToBasket, teesFull } from "../../state/actions";
 import { setBends, updateHole, updateItem, useCourse, useEditor } from "../../state/course";
 import type { AmenityItem, AmenityKind, AreaItem, AreaKind, BasketItem, CourseItem, FieldKind, Hole, LabelItem, LineItem, LineKind, MandoItem, PathSurface, StructureItem, StructureKind, TeeItem, TeeSurface, TreeItem, RockItem, RockKind, RockLook, RockStone } from "../../types";
-import { BRUSH_LEVELS, useTeeOwn, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
+import { BRUSH_LEVELS, HEIGHT_ENDS, heightsOf, heightsWith, useTeeOwn, bendHole, FENCE_STYLES, FieldLooks, FieldParts, GrowsPick, HoleInspector, HoleNumberInput, HoleTrees, ObPick, PLAY_OPTIONS, RULE_AREAS, StandSpecies, StructureLook, SurfacePick, THICK, TurnButtons, densityFor, growsOf, growsText, hasFieldLooks, hasParts, thickOf, useHoleTrees, amenityIcon, builtIcon, fieldKindOptions, fmtSize, fmtTurn, hasObChoice, heightLabel, homeText, obOptions, markNote } from "../Inspector";
 import { HoleChips } from "../ApplyToHoles";
 import { OnSiteButton } from "../OnSite";
 import { useTouch } from "../useLayout";
@@ -273,6 +273,11 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     if (item.type === "area" && item.kind === "woods") {
       const t = thickOf(item);
       out.push({ id: "thick", name: "Thick", value: THICK.find(x => x.value === t)!.label, control: <Segmented label="How thick" value={t} onChange={v => set({ density: densityFor(v) })} options={[...THICK]} /> });
+      // (its trees' heights, the shortest and the tallest: a dial each, as in its panel)
+      if ((item.bushes ?? 0) < 1) for (const e of HEIGHT_ENDS) {
+        const v = heightsOf(item)[e.end];
+        dial(`${e.id}-height`, e.name, fmtSize(v, u), { label: e.long, value: v, min: e.min, max: e.max, step: 1, format: x => fmtSize(x, u), onChange: x => live(heightsWith(item, e.end, x)), onDone: done });
+      }
     }
     // (woods, and tall grass when you want some; a wood of bushes only is brush already)
     if (item.type === "area" && (item.kind === "rough" || (item.kind === "woods" && (item.bushes ?? 0) < 1)))
