@@ -490,7 +490,7 @@ test("the Lines tool: Line look, each tee's line set its own way, and where line
   await expect.poll(async () => (await course(page)).items.find((i: any) => i.id === redTee.id).noLine).toBeUndefined();
 });
 
-plain("Run beside it, painted: another tee's line follows its own route, then keeps a steady lane on the side it came from, never across the main line, and ends just short of its arrowhead", () => {
+plain("Run beside it, painted: another tee's line follows its own route, then keeps a steady lane on the side it came from, never across the main line, and ends in its own arrowhead just behind the main line's", () => {
   const doc = sample();
   const [h1] = doc.holes;
   doc.style.theme = "forest";
@@ -515,7 +515,7 @@ plain("Run beside it, painted: another tee's line follows its own route, then ke
   plainExpect(lane.length).toBeGreaterThan(8);
   plainExpect(Math.min(...lane)).toBeGreaterThan(2.5);
   plainExpect(Math.max(...lane)).toBeLessThan(3.4);
-  // (and it ends short of the main line's arrowhead, which starts at the putting circle)
+  // (and it ends behind the main line's arrowhead, which has its tip at the putting circle)
   const end = red[red.length - 1];
   plainExpect(450 - end.x).toBeGreaterThan(CIRCLE_ONE_FT + 4);
   plainExpect(450 - end.x).toBeLessThan(CIRCLE_ONE_FT + 16);

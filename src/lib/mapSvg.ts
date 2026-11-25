@@ -742,9 +742,9 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     /** A line that comes to the basket where `host` does: over its last stretch it runs into that
      * line at the base of its arrowhead, in one shallow curve, and ends there under it (no stub
      * left beside the arrowhead). `gap`: how far apart the two come in. */
-    const tuckInto = (truth: P[], host: P[], gap: number): { path: P[]; rest: P[] } => {
+    const tuckInto = (truth: P[], host: P[], gap: number, at?: number): { path: P[]; rest: P[] } => {
       const hostLen = pathLength(host), len = pathLength(truth), headLen = (9.5 / k) * Math.sqrt(weight) * headSize;
-      const hostAt = Math.max(hostLen * 0.3, hostLen - ownEnd - headLen * 0.7);
+      const hostAt = at ?? Math.max(hostLen * 0.3, hostLen - ownEnd - headLen * 0.7);
       const from = Math.max(0, len - ownEnd - Math.min(len * 0.6, Math.max(px(75), gap * 12)));
       const A = pointAlong(truth, from), B = pointAlong(host, hostAt), a = A.point, b = B.point, h = dist(a, b) * 0.4;
       const c1 = { x: a.x + Math.cos(A.angle) * h, y: a.y + Math.sin(A.angle) * h }, c2 = { x: b.x - Math.cos(B.angle) * h, y: b.y - Math.sin(B.angle) * h };
@@ -784,7 +784,7 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       const tipAt = classic ? (main ? len - Math.max(12 / k, 6) : alone ? edge - al * 0.6 : len) : !toBasket ? len : atBasket && !ls.arrow ? Math.max(len * 0.5, len - 4 / k) : edge;
       // (how far short of its tip the line itself ends, under its arrowhead; an open one's tip a little short of the circle)
       const under0 = headLook === "open" ? 2 / k + W * 0.3 : headLook === "triangle" ? al * 0.5 : al * 0.9;
-      const body = main ? trimPath(line, 6 / k, classic ? len - Math.max(2.2 / k * 6, 8) : ls.arrow ? tipAt - under0 : tipAt) : toBasket ? trimPath(line, 0, ls.arrow ? tipAt - (classic ? 1.2 / k : under0) : tipAt) : line;
+      const body = main ? trimPath(line, 6 / k, classic ? len - Math.max(2.2 / k * 6, 8) : ls.arrow ? tipAt - under0 : tipAt) : toBasket ? trimPath(line, 0, ls.arrow ? tipAt - (classic ? 1.2 / k : under0) : tipAt) : ls.arrow && !classic ? trimPath(line, 0, Math.max(0, len - under0)) : line;
       if (body.length < 2) return;
       const dd = pathD(densify(body, px(3)));
       const stroke = (c: string, w: number, op = 1, extra = "") => sink.push(`<path d="${dd}" fill="none" stroke="${c}"${op < 1 ? ` stroke-opacity="${n(op)}"` : ""} stroke-width="${n(w)}" stroke-linecap="round" stroke-linejoin="round"${extra}/>`);
@@ -981,36 +981,45 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
           // (joined outside the putting circle and short of the arrowhead: inside it, only arrowheads)
           // Run beside it (the painted looks): the line it plays, as plotted, till it gets onto the main
           // line; from there in a lane of its own beside that line, on the side it came from, never
-          // across it, a second tee's in the next lane out; ending together just short of the main
-          // line's arrowhead. A tee with its own way to the basket keeps it, as when lines join.
+          // across it, a second tee's in the next lane out; each ending in its own arrowhead just behind
+          // the main line's. A tee with its own way to the basket keeps it, as when lines join.
           const beside = s.linesMeet === "alongside" && !classicLook && !mainTee?.noLine;
-          let track: P[] | null = null, side = 1, lane = 1;
+          const sideAt = (q: P) => { let best = Infinity, sg = 1; for (let i = 1; i < line.length; i++) { const m = nearestOnSegment(q, line[i - 1], line[i]); if (m.distance < best) { best = m.distance; const a = line[i - 1], b2 = line[i]; sg = Math.sign((b2.x - a.x) * (q.y - a.y) - (b2.y - a.y) * (q.x - a.x)) || 1; } } return sg; };
+          // (its own arrowhead at its lane's end, smaller than the main line's and a head's length behind
+          // the lane inside it, so the heads step back from the basket and none lies on another)
+          const laneHead = ls.arrow && s.arrowLook !== "none" ? (9.5 / k) * Math.sqrt(ls.width * weight) * 0.78 * headSize : 0;
+          /** The next free lane on a side of the main line: its track, and how far along it the lane ends. */
+          const laneOn = (sd: number) => {
+            const ln = (lanes[sd] ?? 0) + 1, gap = px(1.7), off = mainW / 2 + gap + W2 / 2 + (ln - 1) * (W2 + gap);
+            const tr = offsetPath(densify(line, px(3)), () => sd * off), L = pathLength(line);
+            const head = mainLs.arrow && s.arrowLook !== "none" ? (9.5 / k) * Math.sqrt(mainLs.width * weight) * headSize : 0;
+            // (level with where the main line's arrowhead starts; with none, where the main line ends)
+            const endAt = (head ? L - ownEnd - head * 1.05 : atBasket ? L - 4 / k : L - ownEnd) - (laneHead ? (ln - 1) * laneHead * 1.15 : 0);
+            return { ln, off, tr, end: pathLength(tr) * Math.max(0.2, Math.min(1, endAt / (L || 1))) };
+          };
+          const drawBeside = (path: P[]) => {
+            drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path, half: W2 / 2, arrow: laneHead > 0 });
+            drawLine(path, { ...ls, arrow: laneHead > 0 }, false, o, basket);
+            if (ls.distance && s.distances && !(focus && st.holeId !== focus)) ownDistances.push({ id: `dist:${st.holeId}:${tee.id}`, path, text: `${fmtDist(pathLength(played), doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, color: ls.color, o });
+            laid.push(fills.splice(from));
+          };
+          let lane: ReturnType<typeof laneOn> | null = null, side = 1;
           if (beside) {
             const offOf = (t: P[], q: P) => { let m = Infinity; for (let i = 1; i < t.length; i++) m = Math.min(m, nearestOnSegment(q, t[i - 1], t[i]).distance); return m; };
-            const sideAt = (q: P) => { let best = Infinity, sg = 1; for (let i = 1; i < line.length; i++) { const m = nearestOnSegment(q, line[i - 1], line[i]); if (m.distance < best) { best = m.distance; const a = line[i - 1], b2 = line[i]; sg = Math.sign((b2.x - a.x) * (q.y - a.y) - (b2.y - a.y) * (q.x - a.x)) || 1; } } return sg; };
             // (the side it comes from: where it is a little before it gets onto the line, clear of it)
             let t = along.length;
             while (t > 0 && offOf(plotted, along[t - 1]) <= px(6)) t--;
             let i0 = Math.max(0, t - 1), back = 0;
             while (i0 > 0 && back < px(160) && (back < px(50) || offOf(line, along[i0]) < px(4))) { back += dist(along[i0], along[i0 - 1]); i0--; }
             side = sideAt(along[i0]);
-            lane = (lanes[side] ?? 0) + 1;
-            const gap = px(1.7), offLane = mainW / 2 + gap + W2 / 2 + (lane - 1) * (W2 + gap);
-            track = offsetPath(densify(line, px(3)), () => side * offLane);
+            lane = laneOn(side);
           }
-          const j = classicLook ? joinOnto(along, trunks, clearOf) : track ? joinOnto(along, [plotted], clearOf, [track], undefined, true) : joinOnto(along, plots, clearOf, trunks, joins);
+          const j = classicLook ? joinOnto(along, trunks, clearOf) : lane ? joinOnto(along, [plotted], clearOf, [lane.tr], undefined, true) : joinOnto(along, plots, clearOf, trunks, joins);
           if (!j || j.path.length < 2 || pathLength(j.path) < px(6)) continue;
-          if (track && !j.alone) {
-            lanes[side] = lane;
-            // (level with where the main line's arrowhead starts; with none, where the main line ends)
-            const L = pathLength(line), head = mainLs.arrow && s.arrowLook !== "none" ? (9.5 / k) * Math.sqrt(mainLs.width * weight) * headSize * 1.15 : 0;
-            const endAt = head ? L - ownEnd - head : atBasket ? L - 4 / k : L - ownEnd;
-            const rest = j.rest ?? [], keep = pathLength(rest) - pathLength(track) * (1 - endAt / (L || 1));
-            along = [...j.path, ...(keep > 0 ? trimPath(rest, 0, keep) : [])];
-            drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path: along, half: W2 / 2 });
-            drawLine(along, { ...ls, arrow: false }, false, o, basket);
-            if (ls.distance && s.distances && !(focus && st.holeId !== focus)) ownDistances.push({ id: `dist:${st.holeId}:${tee.id}`, path: along, text: `${fmtDist(pathLength(played), doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, color: ls.color, o });
-            laid.push(fills.splice(from));
+          if (lane && !j.alone) {
+            lanes[side] = lane.ln;
+            const rest = j.rest ?? [], keep = pathLength(rest) - (pathLength(lane.tr) - lane.end);
+            drawBeside([...j.path, ...(keep > 0 ? trimPath(rest, 0, keep) : [])]);
             continue;
           }
           alone = j.alone;
@@ -1026,6 +1035,15 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
             const E = arrives(along), by = trunks.map(t => ({ t, at: arrives(t), d: dist(arrives(t), E) })).sort((p, q) => p.d - q.d)[0];
             // (coming in where that line does, and much its way: into the base of its arrowhead)
             const same = by && Math.abs(turn(heading(along), heading(by.t))) < 0.5 && (atBasket || by.d < headRoom * 0.55);
+            // (run beside it: one that comes in where the main line does takes a lane beside it for its
+            // last stretch, on its own side, never under the main line's arrowhead or across a lane)
+            if (beside && by && same && by.t === line) {
+              const sd = sideAt(pointAlong(mine, Math.max(0, pathLength(mine) - ownEnd - px(70))).point), ln = laneOn(sd);
+              const m = tuckInto(mine, trimPath(ln.tr, 0, ln.end), by.d + ln.off, Math.max(0, ln.end - px(16)));
+              lanes[sd] = ln.ln;
+              drawBeside([...m.path, ...m.rest]);
+              continue;
+            }
             if (by && same) {
               const m = tuckInto(mine, by.t, by.d);
               along = m.path; rest = m.rest; alone = false; onto = trunks.indexOf(by.t);

@@ -79,7 +79,7 @@ export function MapLines() {
       {levels.length > 1 && (
         <Field label="Other tees' lines">
           <Segmented label="Other tees' lines" value={s.linesMeet ?? "join"} onChange={v => setStyle({ linesMeet: v === "alongside" ? "alongside" : undefined })}
-            options={[{ value: "join", label: "Join the main line", title: "Each stops where it meets the main line" }, { value: "alongside", label: "Run beside it", title: "Each keeps to its own lane beside the main line, up to its arrowhead" }]} />
+            options={[{ value: "join", label: "Join the main line", title: "Each stops where it meets the main line" }, { value: "alongside", label: "Run beside it", title: "Each keeps to its own lane beside the main line, with its own arrowhead" }]} />
         </Field>
       )}
       {/* (every line at once: where it stops and how its bends are drawn, then its weight and its arrowhead) */}
