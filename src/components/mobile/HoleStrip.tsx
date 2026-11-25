@@ -7,7 +7,7 @@
 import { useRef, type ReactNode } from "react";
 import { Brush, Navigation, Plus, RotateCw, Scissors, Shuffle, Video } from "lucide-react";
 import { editFlyover } from "../FlyoverSettings";
-import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, stoneShown, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint, ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER } from "../../constants";
+import { AMENITY_KINDS, AMENITY_ORDER, AREA_KINDS, AREA_ORDER, FIELD_KINDS, LINE_KINDS, PATH_SURFACES, PIN_POSITIONS, STRUCTURE_KINDS, STRUCTURE_ORDER, stoneShown, TEE_LEVELS, TEE_ORDER, TEE_SURFACES, compassPoint, ROCK_KINDS, ROCK_LOOK_ORDER, ROCK_LOOKS, ROCK_ORDER, ROCK_STONES, STONE_ORDER, WOODS_HEIGHTS } from "../../constants";
 import { bendOwner, holeBaskets, holeLabel, holeTees, teeAim } from "../../lib/course";
 import { holeClears } from "../../lib/lidar";
 import { holeStats } from "../../lib/holeStats";
@@ -273,10 +273,16 @@ export function useItemSettings(item: CourseItem): BarSetting[] {
     if (item.type === "area" && item.kind === "woods") {
       const t = thickOf(item);
       out.push({ id: "thick", name: "Thick", value: THICK.find(x => x.value === t)!.label, control: <Segmented label="How thick" value={t} onChange={v => set({ density: densityFor(v) })} options={[...THICK]} /> });
-      // (its trees' heights, the shortest and the tallest: a dial each, as in its panel)
-      if ((item.bushes ?? 0) < 1) for (const e of HEIGHT_ENDS) {
-        const v = heightsOf(item)[e.end];
-        dial(`${e.id}-height`, e.name, fmtSize(v, u), { label: e.long, value: v, min: e.min, max: e.max, step: 1, format: x => fmtSize(x, u), onChange: x => live(heightsWith(item, e.end, x)), onDone: done });
+      // (its trees' heights: one setting, the shortest and the tallest a dial each under it, named
+      // as in its panel, and the way back to the usual)
+      if ((item.bushes ?? 0) < 1) {
+        const tall = heightsOf(item);
+        out.push({ id: "tree-height", name: "Tree height", value: item.heights ? `${fmtSize(tall[0], u).replace(/ (ft|m)$/, "")} to ${fmtSize(tall[1], u)}` : "Usual", wide: true, control: (
+          <div className="flex flex-col gap-0.5" data-testid="strip-tree-height">
+            {HEIGHT_ENDS.map(e => <Dial key={e.id} label={e.label} value={tall[e.end]} min={e.min} max={e.max} step={1} format={x => fmtSize(x, u)} onChange={x => live(heightsWith(item, e.end, x))} onDone={done} />)}
+            {item.heights && <ActRow label="Reset height" hint={`The usual, ${fmtSize(WOODS_HEIGHTS[0], u).replace(/ (ft|m)$/, "")} to ${fmtSize(WOODS_HEIGHTS[1], u)}`} onClick={() => set({ heights: undefined, heightsAll: undefined })} />}
+          </div>
+        ) });
       }
     }
     // (woods, and tall grass when you want some; a wood of bushes only is brush already)

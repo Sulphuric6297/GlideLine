@@ -95,11 +95,21 @@ export const clearEveryFairway = (v: boolean) => {
   toast(v ? "Trees on every hole's fairway, tees and basket are cut down. A hole's own switch leaves its trees standing." : "Trees on the fairways are standing again.", "info", true);
 };
 
+/** The holes whose own switch differs from the course's, and how they're said ("hole 3", "holes
+ * 3 and 7", "4 holes"); and every hole back in step with the course. */
+export const holesOwnClear = (doc: Pick<CourseDoc, "lidar" | "holes">) => {
+  const course = doc.lidar?.clearFairways === true;
+  const own = doc.holes.filter(h => h.clearTrees !== undefined && h.clearTrees !== course);
+  const label = (id: string) => holeLabel(useCourse.getState().doc, id);
+  return { own, said: own.length > 3 ? `${own.length} holes` : `hole${own.length === 1 ? "" : "s"} ${own.map(h => label(h.id)).join(", ").replace(/, ([^,]*)$/, " and $1")}` };
+};
+export const sameForEveryHole = () => changeDoc(d => (d.holes.some(h => h.clearTrees !== undefined) ? { holes: d.holes.map(h => (h.clearTrees === undefined ? h : { ...h, clearTrees: undefined })) } : {}));
+
 /** The measured trees on this hole's fairway (where it plays), and the hole's own switch for them:
  * cleared (cut down, but for any kept by hand) or left standing. It follows the course's switch
- * until it's set here. Under it, the course's switch itself (Clear every hole's fairway: on when
- * the course clears and no hole says otherwise; holes added later take it too), so it's set where
- * the fairways are worked on; Site's measured trees have it too. Near the top of the hole's panel, and a setting in a phone's bar. */
+ * until it's set here. Under it, the course's switch itself (Whole course: Clear trees from every
+ * fairway; holes added later take it too), saying which holes differ, so it's set where the
+ * fairways are worked on; Site's measured trees have it too. Near the top of the hole's panel, and a setting in a phone's bar. */
 export const useHoleTrees = (hole: Hole, line: P[] | null) => {
   const lidar = useCourse(s => s.doc.lidar);
   return useMemo(() => (lidar && line ? fairwayTrees({ lidar }, hole, line) : { cut: [], kept: [], standing: [] }), [lidar, hole, line]);
@@ -110,7 +120,7 @@ export function HoleTrees({ hole, line }: { hole: Hole; line: P[] }) {
   const { cut, kept, standing } = useHoleTrees(hole, line);
   if (!lidar) return null;
   const on = holeClears({ lidar }, hole);
-  const clearedN = holes.filter(h => holeClears({ lidar }, h)).length, every = lidar.clearFairways === true && clearedN === holes.length;
+  const course = lidar.clearFairways === true, differ = holesOwnClear({ lidar, holes });
   const setLidar = (patch: { kept?: number[]; removed?: number[] }) => changeDoc(d => (d.lidar ? { lidar: { ...d.lidar, ...patch } } : {}));
   const list = (v: number[]) => (v.length ? [...new Set(v)].sort((a, b) => a - b) : undefined);
   const name = () => holeLabel(useCourse.getState().doc, hole.id);
@@ -143,16 +153,18 @@ export function HoleTrees({ hole, line }: { hole: Hole; line: P[] }) {
           : on ? <>{trees(cut.length)} cut down on this hole{kept.length > 0 && <> · {kept.length.toLocaleString()} kept · <button type="button" className={link} onClick={() => setLidar({ kept: list((lidar.kept ?? []).filter(k => !kept.includes(k))) })} data-testid="trees-down">Cut {kept.length === 1 ? "it" : "them"} down</button></>}</>
           : <>{trees(standing.length)} stand{standing.length === 1 ? "s" : ""} on this fairway{cut.length > 0 && <> · {cut.length.toLocaleString()} cut down by hand · <button type="button" className={link} onClick={back} data-testid="trees-back">Bring {cut.length === 1 ? "it" : "them"} back</button></>}</>}
       </div>
-      {/* (the course's switch, where the fairways are worked on: on when the course clears and no
-          hole says otherwise) */}
-      <div className="border-t border-white/[0.08] mt-0.5">
-        <label className="dg-toggle flex items-start gap-2.5 pt-2 touch:pt-2.5 cursor-pointer select-none">
-          <input type="checkbox" className={`switch mt-0.5 ${FOCUS}`} checked={every} onChange={e => clearEveryFairway(e.target.checked)} data-testid="every-hole-clear" />
-          <span className="text-[13.5px] touch:text-sm text-zinc-200 whitespace-nowrap">Clear every hole's fairway</span>
+      {/* (the course's switch, where the fairways are worked on: marked as the whole course's, and
+          saying which holes differ from it, as Site's does) */}
+      <div className="border-t border-white/[0.08] mt-0.5 pt-2">
+        <div className="text-[11px] touch:text-[12.5px] font-semibold text-zinc-400">Whole course</div>
+        <label className="dg-toggle flex items-start gap-2.5 pt-1 touch:pt-2 cursor-pointer select-none">
+          <input type="checkbox" className={`switch mt-0.5 ${FOCUS}`} checked={course} onChange={e => clearEveryFairway(e.target.checked)} data-testid="every-hole-clear" />
+          <span className="text-[13.5px] touch:text-sm text-zinc-200 whitespace-nowrap">Clear trees from every fairway</span>
         </label>
-        {(every || (clearedN > 0 && holes.length > 1)) && (
+        {(course || differ.own.length > 0) && (
           <div className="text-xs text-zinc-400 mt-[3px] pl-[44px]" data-testid="every-hole-said">
-            {every ? (holes.length > 1 ? `All ${holes.length} holes, and any you add` : "This hole, and any you add") : `${clearedN} of ${holes.length} holes cleared`}
+            {differ.own.length ? <>{course ? "Not on" : "Only on"} {differ.said} · <button type="button" className={link} onClick={sameForEveryHole} data-testid="every-hole-same">Same for every hole</button></>
+              : holes.length > 1 ? `All ${holes.length} holes, and any you add` : "This hole, and any you add"}
           </div>
         )}
         <div className="pb-1 touch:pb-2.5" />
@@ -444,8 +456,8 @@ export const heightsWith = (a: Pick<AreaItem, "heights">, end: 0 | 1, v: number)
 };
 /** The shortest's and the tallest's own ranges (each leaves room for the other). */
 export const HEIGHT_ENDS = [
-  { end: 0, id: "min", label: "Minimum", name: "Min height", long: "Minimum height", min: WOODS_HEIGHT_LIMITS[0], max: WOODS_HEIGHT_LIMITS[1] - WOODS_HEIGHT_GAP },
-  { end: 1, id: "max", label: "Maximum", name: "Max height", long: "Maximum height", min: WOODS_HEIGHT_LIMITS[0] + WOODS_HEIGHT_GAP, max: WOODS_HEIGHT_LIMITS[1] }
+  { end: 0, id: "min", label: "Minimum", min: WOODS_HEIGHT_LIMITS[0], max: WOODS_HEIGHT_LIMITS[1] - WOODS_HEIGHT_GAP },
+  { end: 1, id: "max", label: "Maximum", min: WOODS_HEIGHT_LIMITS[0] + WOODS_HEIGHT_GAP, max: WOODS_HEIGHT_LIMITS[1] }
 ] as const;
 
 /** What a wood grows: leafy trees, pines, bushes (any of them, in equal shares). */
@@ -511,10 +523,15 @@ function WoodsSettings({ item }: { item: AreaItem }) {
       )}
       {woods && !brushOnly && (
         <Field label="Tree height" help="woods">
-          <div data-testid="woods-heights" className="[&>div:last-of-type]:mb-0">
+          <div data-testid="woods-heights" className="[&>div]:mb-1.5">
             {HEIGHT_ENDS.map(e => <Slider key={e.id} label={e.label} min={e.min} max={e.max} step={1} value={tall[e.end]} onChange={v => set(heightsWith(item, e.end, v), false)} onDone={commit} format={v => fmtSize(v, u)} />)}
           </div>
-          {item.heights && <button type="button" className="mt-1 text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1 touch:min-h-[44px]" onClick={() => set({ heights: undefined, heightsAll: undefined })} data-testid="woods-heights-reset"><RotateCcw size={12} /> Reset</button>}
+          {/* (one line, always there, so nothing below moves: the usual heights said, or the way back to them) */}
+          <div className="h-5 touch:h-[44px] flex items-center text-[11px] touch:text-[12.5px] text-zinc-500" data-testid="woods-heights-said">
+            {item.heights
+              ? <button type="button" className="text-xs text-orange-300 hover:text-orange-200 flex items-center gap-1" onClick={() => set({ heights: undefined, heightsAll: undefined })} data-testid="woods-heights-reset"><RotateCcw size={12} /> Reset height</button>
+              : "The usual heights"}
+          </div>
         </Field>
       )}
       {!brushOnly && (

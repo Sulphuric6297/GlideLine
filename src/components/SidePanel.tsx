@@ -18,7 +18,6 @@ import { measureLidar } from "../state/lidar";
 import { newCourse } from "../state/files";
 import { sourceOf } from "../lib/importReview";
 import { photoDateText } from "../lib/geo/photoSources";
-import { holeLabel } from "../lib/course";
 import { surveyWhen } from "../lib/lidar";
 import { MeasuredTuning, type MeasuredTune } from "./MeasuredTrees";
 import { getView } from "../state/view";
@@ -30,7 +29,7 @@ import { useToolbarRoom } from "./Toolbar";
 import { ExportPanel } from "./ExportPanel";
 import { useLayout } from "./useLayout";
 import { LockedRow } from "./DemoNote";
-import { InspectorBody, PANEL_INSET, SelectionHeader, useSelection, clearEveryFairway } from "./Inspector";
+import { InspectorBody, PANEL_INSET, SelectionHeader, useSelection, clearEveryFairway, holesOwnClear } from "./Inspector";
 import { SERVER } from "../auth/api";
 import { holeOf, useComments } from "../auth/Comments";
 import { NearbyCourses, NearbySafety } from "../auth/Nearby";
@@ -221,8 +220,7 @@ function MeasuredSettings() {
   // (trees placed by hand standing on a measured one: the survey has them already)
   const doubled = doc.items.filter(i => i.type === "tree" && !i.importSource && lidar.trees.some(t => Math.hypot(t[0] - i.x, t[1] - i.y) < Math.max(6, t[3] * 0.5)));
   // (holes whose own switch differs from the course's)
-  const own = doc.holes.filter(h => h.clearTrees !== undefined && h.clearTrees !== (lidar.clearFairways === true));
-  const ownSaid = own.length > 3 ? `${own.length} holes` : `hole${own.length === 1 ? "" : "s"} ${own.map(h => holeLabel(doc, h.id)).join(", ").replace(/, ([^,]*)$/, " and $1")}`;
+  const { own, said: ownSaid } = holesOwnClear(doc);
   const everyHole = (d: CourseDoc) => (d.holes.some(h => h.clearTrees !== undefined) ? { holes: d.holes.map(h => (h.clearTrees === undefined ? h : { ...h, clearTrees: undefined })) } : {});
   const change = (patch: MeasuredTune, done: boolean) => {
     if ("clearFairways" in patch) {

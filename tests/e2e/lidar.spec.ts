@@ -775,8 +775,9 @@ test("the import's Trees step has Site's tree settings, and they come in with th
   await expect(page.getByTestId("every-hole-said")).toHaveText("This hole, and any you add");
   await page.getByTestId("hole-clear-trees").uncheck();
   await expect.poll(async () => (await course(page)).holes[0].clearTrees).toBe(false);
-  await expect(page.getByTestId("every-hole-clear")).not.toBeChecked();
-  await expect(page.getByTestId("every-hole-said")).toHaveCount(0);
+  // (the course still clears: its switch stays on and says which hole differs)
+  await expect(page.getByTestId("every-hole-clear")).toBeChecked();
+  await expect(page.getByTestId("every-hole-said")).toContainText("Not on hole 1");
   await page.getByRole("button", { name: /^1\s*Site$/ }).click();
   // (the fold is shut again on coming back to the step)
   await page.getByTestId("site-trees").locator("summary").click();
@@ -797,7 +798,12 @@ test("the import's Trees step has Site's tree settings, and they come in with th
   await page.evaluate(id => (window as any).__dgActions.select(id), second.id);
   await expect(page.getByTestId("hole-clear-trees")).not.toBeChecked();
   await expect(page.getByTestId("every-hole-clear")).not.toBeChecked();
-  await expect(page.getByTestId("every-hole-said")).toHaveText("1 of 2 holes cleared");
+  await expect(page.getByTestId("every-hole-said")).toContainText("Only on hole 1");
+  // (Same for every hole: the hole's own setting dropped, the course's as it was)
+  await page.getByTestId("every-hole-same").click();
+  await expect.poll(async () => { const d = await course(page); return [d.lidar.clearFairways, d.holes[0].clearTrees]; }).toEqual([undefined, undefined]);
+  await expect(page.getByTestId("every-hole-said")).toHaveCount(0);
+  await page.evaluate(id => (window as any).__dgActions.hole(id, { clearTrees: true }), hole.id);
   await page.getByTestId("every-hole-clear").check();
   await expect.poll(async () => { const d = await course(page); return [d.lidar.clearFairways, d.holes[0].clearTrees, d.holes[1].clearTrees]; }).toEqual([true, undefined, undefined]);
   await expect(page.getByTestId("hole-clear-trees")).toBeChecked();

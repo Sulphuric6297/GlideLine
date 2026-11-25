@@ -58,6 +58,7 @@ test("a wood's Tree height: Minimum and Maximum in its panel keep every tree it 
   await expect(min).toHaveValue("16");
   await expect(max).toHaveValue("80");
   await expect(panel.getByTestId("woods-heights-reset")).toHaveCount(0);
+  await expect(panel.getByTestId("woods-heights-said")).toHaveText("The usual heights");
   // A young stand: 20 to 35 ft, every tree it grows within them, some near each end
   await max.fill("35");
   await min.fill("20");
