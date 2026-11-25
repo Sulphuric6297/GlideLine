@@ -1,6 +1,7 @@
 // Denmark: the ground and the trees from Danmarks Højdemodel (Dataforsyningen, with a token), the
 // token row in the import, the spring photo's address, and the Danish kinds of trees. The place
 // is made up and lies off the coast; the height model is stubbed.
+import { deflateSync } from "zlib";
 import { type Page } from "@playwright/test";
 import { test, expect, course, importSite } from "./fixtures";
 import { dkTokenLike, inDenmark, toUtm32 } from "../../src/lib/geo/denmark";
@@ -25,6 +26,18 @@ const floatTiff = (w: number, h: number, v: (i: number, j: number) => number) =>
   return buf;
 };
 
+/** One plain green map tile, 256 px a side, made once: the made-up spot has no map of its own, and
+ * a tile drawn for every square of it slows the page past the tests' waits on a slow machine. */
+const TILE = (() => {
+  const crc = (b: Buffer) => { let n = ~0; for (const x of b) { let c = (n ^ x) & 255; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; n = (n >>> 8) ^ c; } return ~n >>> 0; };
+  const chunk = (type: string, data: Buffer) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const body = Buffer.concat([Buffer.from(type, "latin1"), data]); const sum = Buffer.alloc(4); sum.writeUInt32BE(crc(body)); return Buffer.concat([len, body, sum]); };
+  const size = 256, row = Buffer.alloc(1 + size * 3);
+  for (let i = 0; i < size; i++) row.set([86, 132, 62], 1 + i * 3);
+  const head = Buffer.alloc(13);
+  head.writeUInt32BE(size, 0); head.writeUInt32BE(size, 4); head[8] = 8; head[9] = 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", head), chunk("IDAT", deflateSync(Buffer.concat(Array.from({ length: size }, () => row)))), chunk("IEND", Buffer.alloc(0))]);
+})();
+
 /** Five trees round the site's middle (UTM 32, m), each 14 m tall and 4 m round. */
 const mid = toUtm32(DK.lat, DK.lon);
 const TREES = [[0, 0], [40, 30], [-40, 30], [40, -30], [-40, -30]].map(([e, n]) => ({ x: mid.x + e, y: mid.y + n }));
@@ -37,6 +50,7 @@ const treeAt = (x: number, y: number) => Math.abs(x - TOWER.x) < 8 && Math.abs(y
 const inDenmarkHere = async (page: Page, opts: { token?: boolean; busyFirst?: boolean } = {}) => {
   const asked: string[] = [];
   let busy = !!opts.busyFirst;
+  await page.route(/arcgisonline\.com\/.*\/tile\/\d+\/\d+\/\d+|tile\.openstreetmap\.org\/\d+\/\d+\/\d+/, route => route.fulfill({ contentType: "image/png", body: TILE }));
   await page.route(/GeocodeServer\/suggest/, route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ suggestions: [{ text: `${DK.label}, Denmark`, magicKey: "k1", isCollection: false }] }) }));
   await page.route(/GeocodeServer\/findAddressCandidates/, route => route.fulfill({ contentType: "application/json", body: JSON.stringify({ candidates: [{ address: DK.label, score: 100, location: { x: DK.lon, y: DK.lat } }] }) }));
   await page.route(/api\.dataforsyningen\.dk\/dhm_wcs_DAF/, route => {
@@ -104,7 +118,8 @@ test("in Denmark the import asks for a Dataforsyningen token; saved, it shows Sa
   await row.getByPlaceholder("Token").press("Enter");
   await expect(row).toContainText("Saved");
   expect(await page.evaluate(() => localStorage.getItem("glideline-dk-token"))).toBe("test-token");
-  await expect(page.getByTestId("bring-ground")).toContainText("DHM 0.4 m");
+  // (what the spot has is looked up again with the token: up to 7 s by itself)
+  await expect(page.getByTestId("bring-ground")).toContainText("DHM 0.4 m", { timeout: 30_000 });
   await expect(page.getByTestId("bring-lidar")).toContainText("DHM");
   // Change: the field again, the token kept until a new one is saved
   await row.getByTestId("dk-token-change").click();
@@ -115,7 +130,7 @@ test("in Denmark the import asks for a Dataforsyningen token; saved, it shows Sa
   await row.getByTestId("dk-token-remove").click();
   await expect(row.getByPlaceholder("Token")).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem("glideline-dk-token"))).toBeNull();
-  await expect(page.getByTestId("bring-ground")).not.toContainText("DHM");
+  await expect(page.getByTestId("bring-ground")).not.toContainText("DHM", { timeout: 30_000 });
   await expect(page.getByTestId("bring-lidar")).toHaveCount(0);
 });
 
