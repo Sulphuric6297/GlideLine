@@ -8,6 +8,7 @@ import { extrasSvg, keepsItsSize, keepsItsTurn, turned } from "./pieces";
 import { fitAttr } from "./fitText";
 import { SCRIPT_FONTS } from "./fontKinds";
 import { GOV_CREDITS } from "./geo/usgov";
+import { DHM_CREDIT } from "./geo/dkArea";
 import { latitudeOf, sunFromOf } from "./mapLook";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, FIELD_KINDS, FT_PER_M, LINE_KINDS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER } from "../constants";
 import type { AmenityItem, AreaItem, BasketItem, CourseDoc, DropZoneItem, LabelItem, LineItem, LineStyle, MandoItem, MapStyle, MapTheme, P, PageElementId, PageElementStyle, PaperSize, StructureItem, StructureKind, TeeItem, TeeLevel, TreeItem } from "../types";
@@ -763,7 +764,8 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       while (end > 1 && off(path[end - 1]) < hide) end--;
       return end < path.length - 1 ? path.slice(0, end + 1) : path;
     };
-    const drawLine = (line: P[], ls0: ReturnType<typeof lineStyleOf>, main: boolean, o: number, basket: P, alone = false) => {
+    // (`lane`: in a lane beside the main line, its dashes in step with the lanes beside it)
+    const drawLine = (line: P[], ls0: ReturnType<typeof lineStyleOf>, main: boolean, o: number, basket: P, alone = false, lane = false) => {
       let ls = ls0;
       const classic = look === "classic";
       const W = px((main ? (classic ? 2.4 : 3.2) : classic ? 2 : 2.2) * ls.width * weight);
@@ -791,7 +793,10 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       // (dashes three widths long, a gap of one and a third, fitted to the line so it ends on a whole
       // dash; Classic's as they were)
       const fit = (d0: number, g0: number) => { const L = pathLength(body), nn = Math.max(1, Math.round((L + g0) / (d0 + g0))), f = L / (nn * d0 + (nn - 1) * g0); return ` stroke-dasharray="${n(d0 * f)} ${n(g0 * f)}"`; };
-      const dash = ls.dash === "dashed" ? (classic ? ` stroke-dasharray="${n(W * 2.1)} ${n(W * 1.25)}"` : fit(W * 2, W * 2.3)) : ls.dash === "dotted" ? ` stroke-dasharray="0 ${n(W * 2)}"` : "";
+      // (lanes side by side: one dash and gap all along, the pattern set from each one's end, so
+      // where they end together their dashes do too)
+      const stepped = (d0: number, g0: number) => { const L = pathLength(body), P = d0 + g0; return ` stroke-dasharray="${n(d0)} ${n(g0)}" stroke-dashoffset="${n((((d0 - L) % P) + P) % P)}"`; };
+      const dash = ls.dash === "dashed" ? (classic ? ` stroke-dasharray="${n(W * 2.1)} ${n(W * 1.25)}"` : lane ? stepped(W * 2, W * 2.3) : fit(W * 2, W * 2.3)) : ls.dash === "dotted" ? ` stroke-dasharray="0 ${n(W * 2)}"` : "";
       const soft = softEdge(ls.color);
       const painted = main && !classic && ls.dash === "solid";
       // (a see-through line all in one piece, over the others: its color hides its own outline's middle)
@@ -991,15 +996,23 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
           /** The next free lane on a side of the main line: its track, and how far along it the lane ends. */
           const laneOn = (sd: number) => {
             const ln = (lanes[sd] ?? 0) + 1, gap = px(1.7), off = mainW / 2 + gap + W2 / 2 + (ln - 1) * (W2 + gap);
-            const tr = offsetPath(densify(line, px(3)), () => sd * off), L = pathLength(line);
+            const L = pathLength(line);
             const head = mainLs.arrow && s.arrowLook !== "none" ? (9.5 / k) * Math.sqrt(mainLs.width * weight) * headSize : 0;
+            // (no arrowheads and the lines run on to the basket: the lanes close in on it over their
+            // last 40 ft, ending at it with the main line, not beside it)
+            const pinch = !head && !laneHead && atBasket ? Math.min(L * 0.4, 40) : 0, from = (L - pinch) / (L || 1);
+            const tr = offsetPath(densify(line, px(3)), t => {
+              if (!pinch || t <= from) return sd * off;
+              const u = Math.min(1, (t - from) / (1 - from));
+              return sd * off * (1 - u * u * (3 - 2 * u));
+            });
             // (level with where the main line's arrowhead starts; with none, where the main line ends)
             const endAt = (head ? L - ownEnd - head * 1.05 : atBasket ? L - 4 / k : L - ownEnd) - (laneHead ? (ln - 1) * laneHead * 1.15 : 0);
-            return { ln, off, tr, end: pathLength(tr) * Math.max(0.2, Math.min(1, endAt / (L || 1))) };
+            return { ln, off, tr, end: pinch ? pathLength(tr) : pathLength(tr) * Math.max(0.2, Math.min(1, endAt / (L || 1))) };
           };
           const drawBeside = (path: P[]) => {
             drawnLines.push({ own: `dist:${st.holeId}:${tee.id}`, path, half: W2 / 2, arrow: laneHead > 0 });
-            drawLine(path, { ...ls, arrow: laneHead > 0 }, false, o, basket);
+            drawLine(path, { ...ls, arrow: laneHead > 0 }, false, o, basket, false, true);
             if (ls.distance && s.distances && !(focus && st.holeId !== focus)) ownDistances.push({ id: `dist:${st.holeId}:${tee.id}`, path, text: `${fmtDist(pathLength(played), doc.units, false)}${doc.units === "ft" ? "'" : " m"}`, color: ls.color, o });
             laid.push(fills.splice(from));
           };
@@ -1940,7 +1953,9 @@ export const requiredCredit = (doc: CourseDoc) => [
   doc.items.some(i => i.type === "structure" && i.importSource === "traced") ? "Buildings © Overture Maps Foundation, Microsoft" : "",
   doc.items.some(i => (i.type === "line" || i.type === "area") && i.importSource === "usgs") ? GOV_CREDITS.usgs : "",
   doc.items.some(i => i.type === "area" && i.importSource === "nwi") ? GOV_CREDITS.nwi : "",
-  doc.items.some(i => i.type === "structure" && i.importSource === "fema") ? GOV_CREDITS.fema : ""
+  doc.items.some(i => i.type === "structure" && i.importSource === "fema") ? GOV_CREDITS.fema : "",
+  // (Denmark's height model: the ground or the measured trees from it)
+  doc.site.elevationSource?.startsWith("Danmarks Højdemodel") || doc.site.elevationSource === "DHM" || doc.lidar?.source === "DHM" ? DHM_CREDIT : ""
 ].filter(Boolean).join(" · ");
 
 const posterPage = (doc: CourseDoc, opts: PosterOptions) => {

@@ -280,8 +280,20 @@ export const wallAsBuilt = (l: LineItem): StructureItem => ({
   id: l.id, type: "structure", kind: "wall", points: linePath(l), width: wallThick(l), height: wallTall(l), x: l.x, y: l.y, rotation: 0, holeId: l.holeId, alsoHoles: l.alsoHoles
 });
 
-/** A line as it is drawn: a smooth curve through its points, or straight between them. */
-export const linePath = (l: Pick<LineItem, "kind" | "straight" | "points">, perSegment = 8) => (curves(l) ? smoothPath(l.points, l.points.length > 60 ? 3 : perSegment) : l.points);
+/** Whether a line is a loop: drawn back to where it starts, and its ends still together. */
+export const lineLoops = (l: Pick<LineItem, "points" | "closed">) => {
+  const n = l.points.length;
+  return l.closed === true && n >= 4 && Math.hypot(l.points[0].x - l.points[n - 1].x, l.points[0].y - l.points[n - 1].y) < 0.01;
+};
+/** A line as it is drawn: a smooth curve through its points, or straight between them. A loop
+ * curves round through where it starts and ends, with no corner there. */
+export const linePath = (l: Pick<LineItem, "kind" | "straight" | "points" | "closed">, perSegment = 8) => {
+  if (!curves(l)) return l.points;
+  const per = l.points.length > 60 ? 3 : perSegment;
+  if (!lineLoops(l)) return smoothPath(l.points, per);
+  const ring = smoothClosed(l.points.slice(0, -1), per);
+  return [...ring, { ...ring[0] }];
+};
 
 /** Where along a line it is out of bounds, as fractions of it as drawn (in order): its stretches,
  * or all of it. */

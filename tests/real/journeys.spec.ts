@@ -697,6 +697,10 @@ test("Hand painted's trees on the graphics chip: two paintings at once, and one 
 });
 
 test("Hand painted: the demo (made before) stays Classic, a new course starts in Hand painted, and its map paints in time", async () => {
+  // (a browser of its own with the whole demo loaded on an emulated chip, then the full-size paint
+  // after the timed one: more than the usual 3 minutes on the test machine; the speed limit below
+  // is what this checks)
+  test.setTimeout(480_000);
   expect((await course(page)).style.mapLook).toBeUndefined();
   expect(createEmptyCourse().style.mapLook).toBe("handpainted");
   expect(normalizeCourse({ ...createEmptyCourse(), style: { ...createEmptyCourse().style, mapLook: undefined } }).style.mapLook).toBeUndefined();
@@ -719,13 +723,19 @@ test("Hand painted: the demo (made before) stays Classic, a new course starts in
     p2.on("console", m => { if (/Hand painted|webgl|WebGL/i.test(m.text())) console.log("[page]", m.text().slice(0, 300)); });
     const ticker = setInterval(() => void p2.evaluate(() => [(window as any).__dgPainting(), JSON.stringify((window as any).__times)]).then(v => console.log("painting", v[0], v[1])).catch(() => {}), 15_000);
     await p2.evaluate(() => (window as any).__dgEditor().set({ step: "map", tool: "select" }));
-    await p2.getByTestId("map-style-handpainted").click();
+    // (the map's Style first: the page may open on another of its tools, as last left)
+    // (pressed from the page itself: on the emulated chip the view draws so seldom that a click's
+    // wait for the button to hold still can outlast the test)
+    const press = (id: string) => p2.evaluate(t => { const el = document.querySelector(`[data-testid="${t}"]`) as HTMLElement | null; el?.click(); return !!el; }, id);
+    await press("page-tool-map-style");
+    await expect.poll(() => press("map-style-handpainted"), { timeout: 60_000 }).toBe(true);
     await expect.poll(async () => (await course(p2)).style.mapLook).toBe("handpainted");
     await p2.waitForFunction(() => !!(window as any).__dgTreeTiming, null, { timeout: 170_000 });
     const t = await p2.evaluate(() => (window as any).__dgTreeTiming);
     console.log("Hand painted trees:", JSON.stringify(t));
     expect(t.how).toContain("graphics chip");
-    await p2.waitForFunction(() => !(window as any).__dgPainting(), null, { timeout: 120_000 });
+    // (the whole map at full size after it, every leaf brushed, on the emulated chip: minutes)
+    await p2.waitForFunction(() => !(window as any).__dgPainting(), null, { timeout: 240_000 });
     await p2.waitForTimeout(1500);
     clearInterval(ticker);
     await p2.getByTestId("design-page").first().screenshot({ path: "test-results/handpainted-map.png" });

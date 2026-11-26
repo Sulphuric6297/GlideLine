@@ -1,5 +1,6 @@
 import { test as plain, expect as plainExpect } from "@playwright/test";
 import { treeSpread } from "../../src/three/treeKit";
+import { linePath } from "../../src/lib/course";
 import { test, expect, addHole, blankCourse, clickPlan, course, drag, editorState, handleCenter, screenOf } from "./fixtures";
 
 test("drawing an OB area: click corners, double-click to finish; Backspace and Esc", async ({ page }) => {
@@ -59,6 +60,60 @@ test("an area's corners can be dragged, a mid dot adds one, and the picked area 
   const edge = await screenOf(page, on.x, on.y);
   await drag(page, edge, { x: edge.x + 60, y: edge.y });
   await expect.poll(async () => (await course(page)).items[0].points[1].x).toBeGreaterThan(before + 20);
+});
+
+test("a fence closed on its first point is a loop: joined where it started, curved through the join; that corner moves both ends, and taken out the loop holds", async ({ page }) => {
+  await blankCourse(page);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => (window as any).__dgEditor().set({ tool: "draw-line", lineKind: "fence", drawShape: "points", selectedId: null }));
+  for (const [x, y] of [[500, 500], [900, 500], [900, 800], [500, 800]]) await clickPlan(page, x, y);
+  // (the first point again: a loop, not one more point beside it)
+  const first = page.locator('[data-handle="draw"][data-index="0"]');
+  await expect(first).toHaveAttribute("title", "Click to close the line");
+  const fb = (await first.boundingBox())!;
+  await page.mouse.click(fb.x + fb.width / 2, fb.y + fb.height / 2);
+  await expect.poll(async () => (await course(page)).items.filter((i: any) => i.type === "line").length).toBe(1);
+  const fence = async () => (await course(page)).items.find((i: any) => i.type === "line");
+  let f = await fence();
+  expect(f.closed).toBe(true);
+  expect(f.points).toHaveLength(5);
+  expect(f.points[4]).toEqual(f.points[0]);
+  // (curved through the join: it turns there no more than at any other corner of the square, where
+  // a line with ends would turn it sharp; as drawn, a corner is every 8th point)
+  const path = linePath(f), n = path.length;
+  const turnAt = (i: number) => { const a = path[(i - 1 + n - 1) % (n - 1)], b = path[i], c = path[i + 1]; const d = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(b.y - a.y, b.x - a.x); return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))); };
+  expect(n).toBe(33);
+  expect(Math.abs(turnAt(0) - turnAt(16))).toBeLessThan(0.05);
+  expect(path[n - 1]).toEqual(path[0]);
+  // (picked: one handle for the join, none to carry it on past an end)
+  await page.evaluate(id => (window as any).__dgActions.select(id), f.id);
+  await expect(page.locator('[data-handle="corner"]')).toHaveCount(4);
+  await expect(page.locator('[data-handle="extend"]')).toHaveCount(0);
+  // Dragged, the join moves both ends
+  await drag(page, await handleCenter(page, "corner", 0), { x: (await handleCenter(page, "corner", 0)).x - 40, y: (await handleCenter(page, "corner", 0)).y - 40 });
+  await expect.poll(async () => { const g = await fence(); return g.points[0].x !== f.points[0].x && g.points[0].x === g.points[4].x && g.points[0].y === g.points[4].y; }).toBe(true);
+  // Taken out (double-click), it starts and ends at the next corner: still a loop of three
+  f = await fence();
+  const c = await handleCenter(page, "corner", 0);
+  await page.mouse.dblclick(c.x, c.y);
+  await expect.poll(async () => (await fence()).points.length).toBe(4);
+  f = await fence();
+  expect(f.points[3]).toEqual(f.points[0]);
+  expect(f.closed).toBe(true);
+});
+
+test("a line with only one point after its first: the first point again finishes it as it is, end to end", async ({ page }) => {
+  await blankCourse(page);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => (window as any).__dgEditor().set({ tool: "draw-line", lineKind: "path", drawShape: "points", selectedId: null }));
+  await clickPlan(page, 500, 500);
+  await clickPlan(page, 900, 500);
+  const fb = (await page.locator('[data-handle="draw"][data-index="0"]').boundingBox())!;
+  await page.mouse.click(fb.x + fb.width / 2, fb.y + fb.height / 2);
+  await expect.poll(async () => (await course(page)).items.filter((i: any) => i.type === "line").length).toBe(1);
+  const l = (await course(page)).items.find((i: any) => i.type === "line");
+  expect(l.points).toHaveLength(2);
+  expect(l.closed).toBeUndefined();
 });
 
 test("lines: an OB line and a walking path with its width", async ({ page }) => {

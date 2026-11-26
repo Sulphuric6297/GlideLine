@@ -432,6 +432,8 @@ export function toolHint(ed: Editor, touch = false): string | undefined {
     return touch ? `One finger to ${what} · two fingers move the map` : `Drag to ${what} · Space+drag moves the map`;
   }
   if (drawing && shape !== "points") return (touch ? TOUCH_SHAPE_HINTS : SHAPE_HINTS)[shape];
+  // (a line can close: back to its first point)
+  if (ed.tool === "draw-line") return `${click} along the line · ${click.toLowerCase()} its first point to close it`;
   if (ed.tool === "select") {
     // (none with Select itself on a computer: the map stays clear; its gestures are in the shortcuts dialog)
     if (ed.dragSelect) return touch ? "Drag a box around things · tap to add or take one out · two fingers move the map" : "Drag a box around things · Shift+click adds or takes one out · Space+drag moves the map";

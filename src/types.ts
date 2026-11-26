@@ -278,6 +278,9 @@ export interface LineItem extends BaseItem {
   type: "line";
   kind: LineKind;
   points: P[];
+  /** Drawn back to where it starts (its first point clicked to finish it): a loop. Its last point
+   * is its first, and a curved one runs round through that point with no corner. */
+  closed?: true;
   /** Drawn width in feet (paths, roads and streams). */
   width?: number;
   /** How much wider or narrower than `width` it is at each point (1: as wide; one per point; unset:
