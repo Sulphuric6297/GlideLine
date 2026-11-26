@@ -370,17 +370,17 @@ plain("a line's length and a hole's number keep clear of pads, lines and each ot
   const at = (svg: string, id: string) => { const m = svg.match(new RegExp(`<g data-label="${id}">(?:<g[^>]*>)?<text x="([-\\d.]+)" y="([-\\d.]+)"`))!; return { x: +m[1], y: +m[2] }; };
   const plainMap = draw(doc);
   const len = at(plainMap, `dist:${h1.id}`), num = at(plainMap, `num:${h1.id}`), tee1 = on({ x: 100, y: 500 });
-  // (as they always went: the length above its line a little past the middle, the number beside its tee)
-  plainExpect(Math.hypot(len.x - on({ x: 292.5, y: 500 }).x, len.y - (on({ x: 0, y: 500 }).y - 9))).toBeLessThan(0.2);
+  // (where they go: the length 11 px above its line a little past the middle, the number beside its tee)
+  plainExpect(Math.hypot(len.x - on({ x: 292.5, y: 500 }).x, len.y - (on({ x: 0, y: 500 }).y - 11))).toBeLessThan(0.2);
   plainExpect(Math.hypot(num.x - (tee1.x - 4), num.y - (tee1.y - 14))).toBeLessThan(0.2);
   // Another tee's pad right where the length goes: the length takes a clear place by its line
   const pad = createTee(h1.id, off(len), "red");
   const padded = { ...doc, items: [...doc.items, pad] };
   const moved = at(draw(padded), `dist:${h1.id}`);
   plainExpect(dist(moved, len)).toBeGreaterThan(8);
-  // (still right by its line: 9 px off it, or a little nearer on its other side)
-  plainExpect(Math.abs(moved.y - on({ x: 0, y: 500 }).y)).toBeGreaterThan(7.9);
-  plainExpect(Math.abs(moved.y - on({ x: 0, y: 500 }).y)).toBeLessThan(9.2);
+  // (still right by its line: 11 px off it, or a little nearer on its other side)
+  plainExpect(Math.abs(moved.y - on({ x: 0, y: 500 }).y)).toBeGreaterThan(9.9);
+  plainExpect(Math.abs(moved.y - on({ x: 0, y: 500 }).y)).toBeLessThan(11.2);
   // (one dragged before lengths kept clear: still that far from where it went then; dragged since: from its clear place)
   const key = `dist:${h1.id}`;
   const dragged = (placed?: boolean) => at(draw({ ...padded, style: { ...doc.style, labelAt: { [key]: { dx: 0, dy: -20, placed } } } }), key);
