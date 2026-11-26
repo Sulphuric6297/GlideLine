@@ -724,9 +724,11 @@ test("Hand painted: the demo (made before) stays Classic, a new course starts in
     const ticker = setInterval(() => void p2.evaluate(() => [(window as any).__dgPainting(), JSON.stringify((window as any).__times)]).then(v => console.log("painting", v[0], v[1])).catch(() => {}), 15_000);
     await p2.evaluate(() => (window as any).__dgEditor().set({ step: "map", tool: "select" }));
     // (the map's Style first: the page may open on another of its tools, as last left)
-    const styleTool = p2.getByTestId("page-tool-map-style");
-    if (await styleTool.isVisible().catch(() => false)) await styleTool.click();
-    await p2.getByTestId("map-style-handpainted").click();
+    // (pressed from the page itself: on the emulated chip the view draws so seldom that a click's
+    // wait for the button to hold still can outlast the test)
+    const press = (id: string) => p2.evaluate(t => { const el = document.querySelector(`[data-testid="${t}"]`) as HTMLElement | null; el?.click(); return !!el; }, id);
+    await press("page-tool-map-style");
+    await expect.poll(() => press("map-style-handpainted"), { timeout: 60_000 }).toBe(true);
     await expect.poll(async () => (await course(p2)).style.mapLook).toBe("handpainted");
     await p2.waitForFunction(() => !!(window as any).__dgTreeTiming, null, { timeout: 170_000 });
     const t = await p2.evaluate(() => (window as any).__dgTreeTiming);
