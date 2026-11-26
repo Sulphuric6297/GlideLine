@@ -104,6 +104,33 @@ test("the ground under the pointer on hills: the terrain's own triangles, lookin
   expect(edge.nan).toBeNull();
 });
 
+test("the wheel turned while the view tilts from 2D to 3D zooms as far as with the view still", async ({ page }) => {
+  await blankCourse(page);
+  await page.keyboard.press("Escape");
+  const scale = () => page.evaluate(() => (window as any).__dgView.viewInfo().pxPerUnit as number);
+  const p = await mapPoint(page, 0.6, 0.5), at = { x: Math.round(p.x), y: Math.round(p.y) };
+  const notches = async () => { for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, -120); await page.waitForTimeout(60); } };
+  // (three notches with the view still, tilted)
+  await page.evaluate(() => (window as any).__dgView.setPose("tilt", false));
+  await settled(page);
+  await page.mouse.move(at.x, at.y);
+  const s0 = await scale();
+  await notches();
+  await settled(page);
+  const still = (await scale()) / s0;
+  expect(still).toBeGreaterThan(1.5);
+  // (the same three while it eases from straight down to tilted)
+  await page.evaluate(() => (window as any).__dgView.setPose("top", false));
+  await settled(page);
+  const s1 = await scale();
+  await page.evaluate(() => (window as any).__dgView.setPose("tilt", true));
+  await page.waitForTimeout(120);
+  await notches();
+  await expect.poll(async () => (await scale()) / s1, { timeout: 15_000 }).toBeGreaterThan(still * 0.95);
+  await settled(page);
+  expect((await scale()) / s1).toBeLessThan(still * 1.05);
+});
+
 test("the wheel zooms to the ground under the pointer: right after a turn about the pointer, notch on notch, and close in", async ({ page }) => {
   await blankCourse(page);
   await page.keyboard.press("Escape");

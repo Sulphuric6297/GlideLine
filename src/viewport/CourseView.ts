@@ -2691,7 +2691,11 @@ export class CourseView {
         const k = Math.tan((this.camera.fov * DEG) / 2) / Math.tan((fov * DEG) / 2);
         this.camera.fov = fov;
         this.camera.updateProjectionMatrix();
+        // (where it is and where a zoom under way is taking it, both moved in alike: set to where it
+        // is alone, a zoom made while the view tilts was lost)
+        const going = this.controls.getSpherical(new THREE.Spherical(), true).radius;
         void this.controls.dollyTo(this.controls.distance * k, false);
+        if (Math.abs(going / Math.max(1e-6, this.controls.distance / k) - 1) > 1e-4) void this.controls.dollyTo(going * k, true);
         this.controls.update(0);
       }
     }
