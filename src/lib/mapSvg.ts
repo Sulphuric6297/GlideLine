@@ -1277,6 +1277,9 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     // other side it's set that much nearer, so it's as close to the line there as on its own side)
     const sag = narrow ? 0.09 : font.startsWith("Bitter") ? -0.09 : 0;
     const bar = (text: string, size: number) => { const rad = size * 0.46, w = text.length * size * (narrow ? 0.45 : 0.58); return { half: Math.max(0, w / 2 - rad * 0.6), rad }; };
+    // (a length clear of its line by the same gap whatever the Line weight: a heavier line, set out
+    // by as much more as the line is wider)
+    const wider = (own: string) => { const d = drawnLines.find(l => l.own === own); return d && weight > 1 ? d.half * k * (1 - 1 / weight) : 0; };
     const upright = (angle: number) => {
       let ang = (angle * 180) / Math.PI - view.rotation;
       while (ang > 90) ang -= 180;
@@ -1291,9 +1294,10 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
       // Along the line, clear of mandos, drop zones and the like
       const busy = items.filter(i => i.type === "mando" || i.type === "dropzone" || i.type === "amenity").map(i => toScreen(i));
       const clear = (q: P) => busy.every(b => Math.hypot(b.x - q.x, b.y - q.y) > 26 * ts);
+      const more = wider(`dist:${st.holeId}`);
       const spot = (m: { point: P; angle: number }, side: number, out = 0) => {
         const ang = upright(m.angle);
-        const off = side > 0 ? (9 + out) * ts : -(9 + out - sag * 10) * ts;
+        const off = (side > 0 ? (11 + out) * ts : -(11 + out - sag * 10) * ts) + side * more;
         const sp = toScreen(m.point);
         const nrm = { x: -Math.sin((ang * Math.PI) / 180), y: Math.cos((ang * Math.PI) / 180) };
         return { at: { x: sp.x - nrm.x * off, y: sp.y - nrm.y * off }, ang, on: sp };
@@ -1312,11 +1316,11 @@ export const renderMapLayers = (doc: CourseDoc, view: MapView, layers: MapLayers
     }
     // (another tee's own length, along its line, in its color: where it's clear of the other lengths)
     for (const d of ownDistances) {
-      const len = pathLength(d.path);
+      const len = pathLength(d.path), more = wider(d.id);
       const spot = (f: number, side: number) => {
         const m = pointAlong(d.path, len * f), sp = toScreen(m.point);
         const ang = upright(m.angle);
-        const r = (ang * Math.PI) / 180, off = 8 * ts * side;
+        const r = (ang * Math.PI) / 180, off = (10 * ts + more) * side;
         return { at: { x: sp.x + Math.sin(r) * off, y: sp.y - Math.cos(r) * off }, ang };
       };
       const tries = [0.5, 0.35, 0.65, 0.25, 0.75, 0.42, 0.58, 0.3, 0.7, 0.2, 0.8].flatMap(f => [spot(f, 1), spot(f, -1)]).filter(c => placedDist.every(q => Math.hypot(q.x - c.at.x, q.y - c.at.y) > 24 * ts));
