@@ -8,6 +8,7 @@ import { extrasSvg, keepsItsSize, keepsItsTurn, turned } from "./pieces";
 import { fitAttr } from "./fitText";
 import { SCRIPT_FONTS } from "./fontKinds";
 import { GOV_CREDITS } from "./geo/usgov";
+import { DHM_CREDIT } from "./geo/dkArea";
 import { latitudeOf, sunFromOf } from "./mapLook";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, FIELD_KINDS, FT_PER_M, LINE_KINDS, STRUCTURE_KINDS, STRUCTURE_ORDER, TEE_LEVELS, TEE_ORDER } from "../constants";
 import type { AmenityItem, AreaItem, BasketItem, CourseDoc, DropZoneItem, LabelItem, LineItem, LineStyle, MandoItem, MapStyle, MapTheme, P, PageElementId, PageElementStyle, PaperSize, StructureItem, StructureKind, TeeItem, TeeLevel, TreeItem } from "../types";
@@ -1952,7 +1953,9 @@ export const requiredCredit = (doc: CourseDoc) => [
   doc.items.some(i => i.type === "structure" && i.importSource === "traced") ? "Buildings © Overture Maps Foundation, Microsoft" : "",
   doc.items.some(i => (i.type === "line" || i.type === "area") && i.importSource === "usgs") ? GOV_CREDITS.usgs : "",
   doc.items.some(i => i.type === "area" && i.importSource === "nwi") ? GOV_CREDITS.nwi : "",
-  doc.items.some(i => i.type === "structure" && i.importSource === "fema") ? GOV_CREDITS.fema : ""
+  doc.items.some(i => i.type === "structure" && i.importSource === "fema") ? GOV_CREDITS.fema : "",
+  // (Denmark's height model: the ground or the measured trees from it)
+  doc.site.elevationSource?.startsWith("Danmarks Højdemodel") || doc.site.elevationSource === "DHM" || doc.lidar?.source === "DHM" ? DHM_CREDIT : ""
 ].filter(Boolean).join(" · ");
 
 const posterPage = (doc: CourseDoc, opts: PosterOptions) => {

@@ -13,7 +13,7 @@ export { DK_REGIONS, inDenmark } from "./dkArea";
 export const DATAFORSYNINGEN = "https://api.dataforsyningen.dk";
 /** Where a free token is made. */
 export const DK_TOKEN_PAGE = "https://dataforsyningen.dk/";
-export const DHM_CREDIT = "Danmarks Højdemodel © Klimadatastyrelsen";
+export { DHM_CREDIT } from "./dkArea";
 export const ORTO_CREDIT = "GeoDanmark ortofoto © Klimadatastyrelsen";
 
 // ---------------------------------------------------------------- the token

@@ -5,6 +5,10 @@
 // it in Denmark?" pulls nothing else in.
 import type { GeoBounds } from "./core";
 
+/** The height model's credit, on any map whose ground or trees came from it (here, so the maps
+ * credit it without pulling the Danish maps in). */
+export const DHM_CREDIT = "Danmarks Højdemodel © Klimadatastyrelsen";
+
 /** Rough boxes over Denmark (what a photo service covers; they reach over the borders). */
 export const DK_REGIONS: GeoBounds[] = [
   { west: 8.0, south: 54.55, east: 12.8, north: 57.8 },

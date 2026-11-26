@@ -7,6 +7,9 @@ import { test, expect, course, importSite } from "./fixtures";
 import { dkTokenLike, inDenmark, toUtm32 } from "../../src/lib/geo/denmark";
 import { serviceImageUrl } from "../../src/lib/geo/photoSources";
 import { LOOK_VARIANTS, regionAt } from "../../src/lib/treeMix";
+import { findStateOrtho } from "../../src/lib/geo/imagery";
+import { requiredCredit } from "../../src/lib/mapSvg";
+import { createEmptyCourse } from "../../src/lib/course";
 
 const DK = { lat: 55.0, lon: 10.95, label: "Springfield Park, Springfield" };
 
@@ -92,6 +95,14 @@ test("Denmark: where it is, UTM 32, the spring photo's WMS and the Danish kinds 
   const url = new URL(serviceImageUrl("https://api.dataforsyningen.dk/orto_foraar_DAF", { wms: { layer: "orto_foraar" } }, "1,2,3,4", 64, 32));
   expect(Object.fromEntries(url.searchParams)).toMatchObject({ service: "WMS", request: "GetMap", layers: "orto_foraar", crs: "EPSG:3857", bbox: "1,2,3,4", width: "64", height: "32", format: "image/jpeg" });
   expect(LOOK_VARIANTS.beech.shape).toBe("broadleaf");
+  // (the spring photo in the site picker over Bornholm too, not only Jutland and the islands)
+  expect(findStateOrtho(55.1, 14.7)?.id).toBe("dk");
+  expect(findStateOrtho(56.16, 10.2)?.id).toBe("dk");
+  // (the height model credited on a map whose ground or trees came from it, and not otherwise)
+  const doc = createEmptyCourse();
+  expect(requiredCredit(doc)).not.toContain("Højdemodel");
+  expect(requiredCredit({ ...doc, site: { ...doc.site, elevationSource: "Danmarks Højdemodel (0.4 m)" } })).toContain("Danmarks Højdemodel © Klimadatastyrelsen");
+  expect(requiredCredit({ ...doc, lidar: { source: "DHM", trees: [] } } as typeof doc)).toContain("Danmarks Højdemodel");
   const r = await regionAt(55.4, 10.4);
   expect(r?.name).toBe("Denmark");
   expect(r?.recommended).toEqual(["spruce", "beech", "oak"]);
