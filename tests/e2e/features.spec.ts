@@ -78,10 +78,13 @@ test("a fence closed on its first point is a loop: joined where it started, curv
   expect(f.closed).toBe(true);
   expect(f.points).toHaveLength(5);
   expect(f.points[4]).toEqual(f.points[0]);
-  // (curved through the join: as drawn it starts and ends heading the same way round, no corner)
+  // (curved through the join: it turns there no more than at any other corner of the square, where
+  // a line with ends would turn it sharp; as drawn, a corner is every 8th point)
   const path = linePath(f), n = path.length;
-  const into = Math.atan2(path[n - 1].y - path[n - 2].y, path[n - 1].x - path[n - 2].x), out = Math.atan2(path[1].y - path[0].y, path[1].x - path[0].x);
-  expect(Math.abs(Math.atan2(Math.sin(into - out), Math.cos(into - out)))).toBeLessThan(0.15);
+  const turnAt = (i: number) => { const a = path[(i - 1 + n - 1) % (n - 1)], b = path[i], c = path[i + 1]; const d = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(b.y - a.y, b.x - a.x); return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))); };
+  expect(n).toBe(33);
+  expect(Math.abs(turnAt(0) - turnAt(16))).toBeLessThan(0.05);
+  expect(path[n - 1]).toEqual(path[0]);
   // (picked: one handle for the join, none to carry it on past an end)
   await page.evaluate(id => (window as any).__dgActions.select(id), f.id);
   await expect(page.locator('[data-handle="corner"]')).toHaveCount(4);
