@@ -697,6 +697,10 @@ test("Hand painted's trees on the graphics chip: two paintings at once, and one 
 });
 
 test("Hand painted: the demo (made before) stays Classic, a new course starts in Hand painted, and its map paints in time", async () => {
+  // (a browser of its own with the whole demo loaded on an emulated chip, then the full-size paint
+  // after the timed one, and a picture of it: past the usual 3 minutes on the test machine, though
+  // the trees themselves paint in a few seconds; the speed limit below is what this checks)
+  test.setTimeout(330_000);
   expect((await course(page)).style.mapLook).toBeUndefined();
   expect(createEmptyCourse().style.mapLook).toBe("handpainted");
   expect(normalizeCourse({ ...createEmptyCourse(), style: { ...createEmptyCourse().style, mapLook: undefined } }).style.mapLook).toBeUndefined();
