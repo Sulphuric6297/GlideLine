@@ -14,7 +14,7 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { INK, MANDO, RESTRICTED, amenitySymbol, dropZoneSymbol, symbolSvg } from "../lib/symbols";
 import { AMENITY_KINDS, AREA_KINDS, CIRCLE_ONE_FT, EYE_HEIGHT_FT, LINE_KINDS, OBJECT_ELEVATION_OFFSET, PATH_SURFACES, STAND_HERE, STAND_NEAR_FT, STRUCTURE_KINDS, TEE_LEVELS, clamp, ROCK_KINDS, ROCK_LOOKS, stoneShown, STEEP_NEVER } from "../constants";
-import { FAIRWAY_STATIONS, wallThick, bendOwner, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked } from "../lib/course";
+import { FAIRWAY_STATIONS, wallThick, bendOwner, beyondSides, areaObEdges, areaRing, isRing, ringStretch, sharedWalks, teeLines, walkRoutes, autoWalks, areaCurves, areaPath, basketFor, basketHoles, curves, fairwayOutline, mergeStretches, obFor, obPicked, obRanges, widthAlong, widthFactors, widthsWithEnd, widthsWithPoint, widthsWithout, widthVaries, holeLabel, fairwayShiftAt, fairwayWidthAt, linePath, stationsOf, withStation, withoutStation, holeBaskets, holeNumber, holeTees, teeAim, throwLine, amenityMarked, lineLoops } from "../lib/course";
 import { boundsOf, centroid, dist, distanceToPath, inBounds, nearestAlong, offsetPath, pathLength, pointAlong, pointBoundsGap, pointInPolygon, polygonArea, simplify, smoothPath, subPath } from "../lib/geom";
 import { isOutOfPlay, parForDistance } from "../lib/holeStats";
 import { heightAt } from "../lib/terrainGrid";
@@ -5315,11 +5315,17 @@ export class CourseView {
     }
     if (drawing > 0) {
       for (let i = 0; i < this.drawPts.length; i++) {
+        // (a line's, not a bridge's or stairs': those go from one end to the other)
+        const loops = this.tool.mode === "draw-line";
         add("draw", () => { const p = this.drawPts[i]; return p ? new THREE.Vector3(p.x, this.h(p.x, p.y), p.y) : null; }, () => {
-          // Clicking the first point closes an area
+          // Clicking the first point closes an area; a line's, it finishes it back where it started
+          // (a loop: a fence round a field, a path round a pond). With only one point after it, it
+          // just finishes, as a line from one to the other.
           if (i === 0 && this.drawn() === "area") this.finishDrawing();
+          else if (i === 0 && loops && this.drawPts.length >= 3) this.finishDrawing(true);
+          else if (i === 0 && loops && this.drawPts.length === 2) this.finishDrawing();
           return null;
-        }, { index: i, title: i === 0 ? "Click to close the shape" : undefined });
+        }, { index: i, title: i === 0 ? (loops ? "Click to close the line" : "Click to close the shape") : undefined });
       }
       if (this.size.width > 1) this.layout();
       return;
@@ -5952,7 +5958,9 @@ export class CourseView {
     const first = it();
     if (!first) return;
     const closed = first.type === "area" || (first.type === "structure" && !isLineKind(first.kind));
-    const min = closed ? 3 : 2;
+    // (a line drawn back to where it starts: its first point is its last, one corner to move)
+    const loop = first.type === "line" && lineLoops(first);
+    const min = closed ? 3 : loop ? 4 : 2;
     const drag = (index: number, start: P[]): Drag => {
       const pts = start.map(p => ({ ...p }));
       const y = this.h(pts[index].x, pts[index].y);
@@ -5961,6 +5969,7 @@ export class CourseView {
           const hit = this.planeAt(ev.clientX, ev.clientY, y);
           if (!hit) return;
           pts[index] = { x: hit.x, y: hit.z };
+          if (loop && index === 0) pts[pts.length - 1] = { x: hit.x, y: hit.z };
           this.cb.onChange(id, { points: pts.map(p => ({ ...p })) });
         },
         end: () => this.cb.onCommit()
@@ -5978,7 +5987,9 @@ export class CourseView {
       return !!s;
     };
     for (let i = 0; i < n; i++) {
-      add("corner", () => { const p = it()?.points[i]; return p ? at(p) : null; }, e => {
+      // (a loop's last point is its first: one handle for both)
+      const shown = !(loop && i === n - 1);
+      if (shown) add("corner", () => { const p = it()?.points[i]; return p ? at(p) : null; }, e => {
         const cur = it();
         if (!cur) return null;
         const now = performance.now();
@@ -5989,6 +6000,11 @@ export class CourseView {
         if (e.altKey || (last && last.id === id && last.index === i && now - last.time < 400)) {
           this.lastCorner = null;
           if (cur.points.length > min) {
+            // (a loop's first point taken out: it starts and ends at the next one instead)
+            if (cur.type === "line" && loop && i === 0) {
+              const rest = cur.points.slice(1, -1);
+              this.cb.onChange(id, { points: [...rest, { ...rest[0] }], widths: cur.widths ? [...cur.widths.slice(1, -1), cur.widths[1]] : undefined });
+            } else
             this.cb.onChange(id, { points: cur.points.filter((_, k) => k !== i), ...(cur.type === "line" ? { widths: widthsWithout(cur, i) } : {}), ...(cur.type === "structure" ? wallsAfter(cur, "merge", i) : {}) });
             this.cb.onCommit();
           } else toast(`Needs at least ${min} points.`, "info");
@@ -6020,8 +6036,8 @@ export class CourseView {
         }
       });
     }
-    // A line goes on from either end: pull the + beyond an end for another point there
-    if (closed) return;
+    // A line goes on from either end: pull the + beyond an end for another point there (a loop has no ends)
+    if (closed || loop) return;
     for (const end of [0, 1] as const) {
       const spot = () => {
         const pts = it()?.points;
@@ -8488,19 +8504,20 @@ export class CourseView {
     return Array.from({ length: 36 }, (_, i) => ({ x: a.x + Math.cos((i / 36) * Math.PI * 2) * r, y: a.y + Math.sin((i / 36) * Math.PI * 2) * r }));
   }
 
-  /** Ends drawing an area or line (Enter, double-click, or clicking the first point). */
-  finishDrawing() {
+  /** Ends drawing an area or line (Enter, double-click, or clicking the first point). `loop`: a line
+   * back to where it started. */
+  finishDrawing(loop = false) {
     // (a painted shape done with a finger: its ring goes too)
     if (COARSE && this.brushRing?.obj.visible) this.showBrush(null, 0);
     if (this.plotHole) return this.finishPlot();
     const kind = this.drawn();
-    const pts = this.drawPts;
+    const pts = loop && kind === "line" ? [...this.drawPts, { ...this.drawPts[0] }] : this.drawPts;
     if (kind && pts.length >= (kind === "area" ? 3 : 2)) {
       this.drawPts = [];
       this.clearDraft();
       this.cb.onDrawProgress(0);
       // (a rectangle stays square-cornered)
-      this.cb.onDrawn(this.tool.mode === "draw-structure" ? "structure" : kind, pts, { straight: this.laidStraight() });
+      this.cb.onDrawn(this.tool.mode === "draw-structure" ? "structure" : kind, pts, { straight: this.laidStraight(), ...(loop && kind === "line" ? { closed: true } : {}) });
       this.handleKey = "";
       this.syncHandles();
       return true;

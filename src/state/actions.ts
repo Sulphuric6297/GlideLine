@@ -282,12 +282,14 @@ const addField = (item: AreaItem) => {
 const standOf = (k: TreeKind): Partial<AreaItem> => ({ pines: k === "conifer" ? 1 : 0, bushes: k === "bush" ? 1 : undefined });
 
 /** An area, line or built thing (bridge, building...) drawn with the drawing tools. */
-export const addDrawn = (kind: "area" | "line" | "structure", points: P[], opts: { straight?: boolean; pick?: boolean } = {}) => {
+export const addDrawn = (kind: "area" | "line" | "structure", points: P[], opts: { straight?: boolean; pick?: boolean; closed?: boolean } = {}) => {
   const ed = editor();
   // (a field by its corners: the Park tool's kind; fields are straight between their corners anyway)
   if (kind === "area" && ed.areaKind === "field") return addField(createField(ed.fieldKind, points));
   const made = kind === "area" ? createArea(ed.areaKind, points) : kind === "structure" ? createStructure(ed.structureKind, points) : createLine(ed.lineKind, points);
-  const drawn = opts.straight && made.type !== "structure" ? { ...made, straight: true } : made;
+  const shaped = opts.straight && made.type !== "structure" ? { ...made, straight: true } : made;
+  // (a line drawn back to where it started: a loop)
+  const drawn = opts.closed && shaped.type === "line" ? { ...shaped, closed: true as const } : shaped;
   const sp = ed.standOf && ed.standOf !== "bush" ? ed.treeSpecies[ed.standOf] : undefined;
   const item = drawn.type === "area" && drawn.kind === "woods" && ed.standOf ? { ...drawn, ...standOf(ed.standOf), ...(sp ? { species: sp } : {}) } : drawn;
   // (a building, road, parking or water drawn over trees: those standing in it go, the same step)

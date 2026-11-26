@@ -100,7 +100,7 @@ export type ViewCallbacks = {
   /** A new hole: where its tee and basket go. */
   onHole: (tee: P, basket: P) => void;
   /** An area, line or built thing finished drawing. */
-  onDrawn: (kind: "area" | "line" | "structure", points: P[], opts?: { straight?: boolean }) => void;
+  onDrawn: (kind: "area" | "line" | "structure", points: P[], opts?: { straight?: boolean; closed?: boolean }) => void;
   /** Live edits while dragging (no undo step); onCommit ends the gesture. */
   onChange: (id: string, patch: Record<string, unknown>) => void;
   /** Live edits to a hole (doglegs, fairway width). */
